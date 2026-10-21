@@ -1,0 +1,34 @@
+name: Extension
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true # reference/WebToEpub: the test checks the generated site rules against its parsers
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run package # builds, and zips the Firefox and Chrome add-ons and the source (the one addons.mozilla.org asks for)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: heavenlydao-reader-chrome
+          path: dist/chrome
+      - uses: actions/upload-artifact@v4
+        with:
+          name: heavenlydao-reader-firefox
+          path: dist/firefox
+      - uses: actions/upload-artifact@v4
+        with:
+          name: heavenlydao-reader-zips # the Firefox upload and its source zip, ready to upload
+          path: dist/package/*.zip

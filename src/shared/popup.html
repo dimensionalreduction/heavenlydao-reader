@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>heavenlydao.com Reader</title>
+<style>
+  /* The library site's look (site/style.css: the novel page, its About and Table of Contents): the same colours, cards, tabs and rows */
+  :root { --bg: #fafaf8; --fg: #1d2127; --muted: #747b86; --card: #f0f0ec; --accent: #3b82c4; --border: rgba(20,25,35,.12); color-scheme: light; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #14171c; --fg: #d6dae0; --muted: #8a909b; --card: #1c2027; --accent: #5aa0e0; --border: rgba(255,255,255,.12); color-scheme: dark; }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { width: 380px; margin: 0; padding: 10px; background: var(--bg); color: var(--fg); font: 13.5px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  a { color: var(--accent); }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  button { cursor: pointer; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 7px 12px; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .4; cursor: default; }
+  .btn-primary { background: var(--accent); border-color: transparent; color: #fff; font-weight: 600; }
+  .btn-secondary { background: var(--bg); }
+  .icon-btn { padding: 3px 8px; font-size: 12px; }
+  .gear { padding: 5px 8px; }
+  input[type=text], input[type=password], input[type=number], select, .edit-input { width: 100%; padding: 7px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+  textarea.edit-input { font-size: 12px; min-height: 120px; resize: vertical; line-height: 1.4; }
+
+  /* cards (.np-card) */
+  .card, #header, #lock { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
+  .card { margin-top: 10px; }
+  .section { padding: 0; }
+  /* small capitals, as the About tab's keys (.np-dk) */
+  .label { font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+  /* a heading in a tab (.np-sh) */
+  .pane .label { margin: 14px 0 8px; padding-left: 8px; border-left: 3px solid var(--accent); font-size: 14px; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--fg); }
+  .pane .label:first-child, .pane .label-row:first-child .label { margin-top: 2px; }
+  .title { font-size: 15px; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
+  #novelName { font-size: 18px; }
+  .subtitle, .method { font-size: 12px; color: var(--muted); margin-top: 3px; line-height: 1.45; }
+  .muted { color: var(--muted); font-size: 12.5px; }
+  .label-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .btn-group { display: flex; gap: 4px; flex-shrink: 0; }
+  .switch { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; cursor: pointer; user-select: none; }
+  .switch input { width: auto; margin: 0; accent-color: var(--accent); }
+
+  /* the tabs (.np-tabs) */
+  .tabs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 3px; padding: 4px; background: var(--bg); border-radius: 10px; margin-bottom: 4px; }
+  .tabs button { padding: 7px 2px; background: transparent; border: 1px solid transparent; border-radius: 8px; color: var(--muted); font-size: 12.5px; }
+  .tabs button[aria-selected="true"] { background: var(--card); border-color: var(--border); color: var(--fg); }
+
+  /* a box of rows (.np-details / .tocgrp): every list in the tabs */
+  .box { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .box > * { padding: 9px 12px; border-top: 1px solid var(--border); }
+  .box > *:first-child { border-top: 0; }
+  .box:empty { display: none; }
+  .box:not(:has(> *)) { padding: 9px 12px; } /* (a message, not rows) */
+  .work { display: flex; align-items: center; gap: 6px; }
+  .work .what { flex: 1; min-width: 0; }
+  .work .what b { display: block; font-size: 13.5px; font-weight: 600; }
+  .work .what span { font-size: 11.5px; color: var(--muted); }
+  .work input[type=number] { width: 48px; padding: 6px 4px; text-align: center; font-weight: 600; }
+  .work button { flex: none; padding: 6px 10px; }
+  .det { display: grid; grid-template-columns: 14px 98px minmax(0, 1fr) auto; align-items: center; gap: 6px; }
+  .det > span:nth-child(2) { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .det .mark { text-align: center; font-weight: 700; }
+  .det .mark.ok { color: #3fb950; } .det .mark.no { color: #e5534b; }
+  .det .val { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .stat { display: grid; grid-template-columns: 116px minmax(0, 1fr); gap: 10px; align-items: center; }
+  .stat span { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .stat b { font-weight: 500; overflow-wrap: anywhere; }
+  .term { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; }
+  .term .to { color: var(--muted); text-align: right; }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .box > .subtitle { margin: 0; }
+  details.prompt > summary { display: flex; justify-content: space-between; align-items: center; gap: 8px; cursor: pointer; list-style: none; font-weight: 600; }
+  details.prompt > summary::-webkit-details-marker { display: none; }
+  details.prompt > summary .subtitle { margin: 0; font-weight: 400; }
+  details.prompt[open] > summary { margin-bottom: 8px; }
+  details.prompt textarea { min-height: 170px; }
+  details.prompt .prompt-list { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+
+  /* the lock screen */
+  #lock .lock-input { margin: 8px 0; }
+  #lock .lock-text { color: var(--muted); line-height: 1.5; margin: 0 0 6px; }
+  #lock button { flex: 1; }
+  #lockSite { display: block; margin: 0 0 6px; font-weight: 600; }
+</style>
+</head>
+<body>
+  <!-- Until this extension is a device of your library, only this shows (popup-lock.js) -->
+  <div id="lock" hidden>
+    <div class="label">JOIN YOUR LIBRARY</div>
+    <p class="lock-text" id="lockText"></p>
+    <a id="lockSite" target="_blank" rel="noopener" hidden></a>
+    <input class="lock-input" id="lockPass" type="password" autocomplete="off" spellcheck="false" placeholder="Your library's passphrase">
+    <div style="display:flex;gap:8px;align-items:center;">
+      <button class="btn-primary" id="lockJoin">Join</button>
+      <button class="btn-secondary" id="lockStop" hidden>Stop asking</button>
+    </div>
+    <p class="lock-text" id="lockNote" style="margin-top:8px;"></p>
+  </div>
+
+  <div id="app" hidden>
+  <!-- sites the browser has not let the extension read yet (popup.js, site-access.js): one Allow button each -->
+  <div class="section" id="accessBar" hidden></div>
+  <!-- the page in front of you: which novel, which chapter (popup.js) -->
+  <div class="section" id="header">
+    <div class="label-row">
+      <label class="switch" title="On: the novels you open are recorded in your library (their details, cover and chapter list). Off: this extension records nothing there."><input type="checkbox" id="libraryCopy"> Library copy</label>
+      <button class="icon-btn" id="showOriginalBtn" title="Reload the page without the translation">Show original</button>
+    </div>
+    <div class="label-row" style="margin:6px 0 0;">
+      <span class="label" style="margin:0;">NOVEL</span>
+      <div class="btn-group">
+        <button class="icon-btn" id="novelPickBtn" title="Pick the element that holds the novel name">⌖</button>
+        <button class="icon-btn" id="novelEditBtn" title="Type the novel name">✎</button>
+        <button class="icon-btn" id="novelDefaultBtn" title="Back to the one found on the page">↺</button>
+      </div>
+    </div>
+    <div class="title" id="novelName">—</div>
+    <div class="label-row" style="margin:6px 0 0;">
+      <span class="label" style="margin:0;">CHAPTER</span>
+      <div class="btn-group">
+        <button class="icon-btn" id="pickTitleBtn" title="Pick the element that holds the chapter title">⌖</button>
+        <button class="icon-btn" id="titleEditBtn" title="Type the chapter title">✎</button>
+        <button class="icon-btn" id="titleDefaultBtn" title="Back to the one found on the page">↺</button>
+      </div>
+    </div>
+    <div class="title" id="pageTitle">—</div>
+  </div>
+
+  <div class="card">
+  <div class="tabs" role="tablist">
+    <button role="tab" data-pane="read" aria-selected="true">Read</button>
+    <button role="tab" data-pane="novel" aria-selected="false">Novel</button>
+    <button role="tab" data-pane="gemini" aria-selected="false">Gemini</button>
+    <button role="tab" data-pane="terms" aria-selected="false">Terms</button>
+    <button role="tab" data-pane="library" aria-selected="false">Library</button>
+  </div>
+
+  <!-- 1: what the chapter footer does on the library site -->
+  <div class="pane section" id="pane-read">
+    <div class="box">
+    <div class="work">
+      <div class="what"><b>Fetch the next</b><span>chapters' text into your library</span></div>
+      <input type="number" id="fetchN" min="0" max="50" value="5">
+      <button class="btn-secondary" id="fetchBtn">Fetch</button>
+    </div>
+    <div class="work">
+      <div class="what"><b>Translate the next</b><span>this one now, then that many</span></div>
+      <input type="number" id="translateN" min="0" max="20" value="0">
+      <button class="btn-primary" id="translateBtn">Translate</button>
+      <button class="gear" data-goto="gemini" data-prompt="translate" title="The translation prompt (Gemini tab)">⚙</button>
+    </div>
+    <div class="work">
+      <div class="what"><b>Gemini notes</b><span>on this one's terms, then that many</span></div>
+      <input type="number" id="notesN" min="0" max="10" value="0">
+      <button class="btn-secondary" id="notesBtn">Notes</button>
+      <button class="gear" data-goto="gemini" data-prompt="notes" title="The notes prompt (Gemini tab)">⚙</button>
+    </div>
+    </div>
+    <div class="subtitle" id="readNote"></div>
+  </div>
+
+  <!-- 2: where this site keeps each part of a novel, and whether it is found on this page -->
+  <div class="pane section" id="pane-novel" hidden>
+    <div class="label">Detection</div>
+    <div id="detList" class="box muted">Looking at the page…</div>
+    <div class="method" id="detInfo"></div>
+    <div class="btn-group" style="margin-top:8px;flex-wrap:wrap;">
+      <button class="icon-btn" id="detectBtn" title="Ask Gemini which parts of this page are what: on a book's page its title, author, synopsis, cover, genres and chapter list; on a chapter's page the next and previous chapter links. They are saved as a rule for this site">✦ Detect with AI</button>
+      <button class="icon-btn" data-goto="gemini" data-prompt="detect" title="The prompt Detect with AI sends (Gemini tab)">⚙ Prompt</button>
+      <button class="icon-btn" id="siteRuleBtn" title="Write or change this site's rule by hand">Site rule…</button>
+    </div>
+  </div>
+
+  <!-- 3: Gemini -->
+  <div class="pane section" id="pane-gemini" hidden>
+    <div class="label-row">
+      <span class="label" style="margin:0;">API key</span>
+      <button class="icon-btn" id="apiKeyBtn">🔑 Add API key</button>
+    </div>
+    <div class="label">Model</div>
+    <select id="modelSelect"><option>Loading…</option></select>
+    <div class="label">Prompts</div>
+    <div id="prompts" class="box"></div>
+  </div>
+
+  <!-- 4: glossaries, and the terms you made -->
+  <div class="pane section" id="pane-terms" hidden>
+    <div class="label">Glossaries</div>
+    <input type="text" class="edit-input" id="libSearch" placeholder='Search saved glossaries' autocomplete="off">
+    <div id="libResults" class="box muted" style="margin-top:6px;">Loading…</div>
+    <div class="subtitle" id="libApplies" style="margin-top:6px;"></div>
+    <div class="label">Your terms</div>
+    <div id="myTermsList" class="box muted">—</div>
+  </div>
+
+  <!-- 5: your library -->
+  <div class="pane section" id="pane-library" hidden>
+    <div class="label-row">
+      <span class="label" style="margin:0;">Your library</span>
+      <span class="subtitle" id="myLibCode" style="margin:0;"></span>
+    </div>
+    <div id="libStats" class="box muted" style="margin-top:6px;">Loading…</div>
+    <div class="subtitle" id="myLibText" style="margin-top:8px;">Checking…</div>
+    <div id="myLibJoins"></div>
+    <div class="label">Passphrase</div>
+    <input type="password" class="edit-input" id="p2pPassphrase" placeholder="Your library's passphrase" autocomplete="off">
+    <div class="subtitle" id="p2pStatus" style="margin-top:6px;"></div>
+    <div class="subtitle" id="p2pBackground" style="margin-top:4px;" hidden></div>
+  </div>
+  </div>
+  </div>
+
+  <script src="popup-lock.js"></script>
+  <script src="gemini.js"></script>
+  <script src="wtr-terms.js"></script>
+  <script src="raw-sources.js"></script>
+  <script src="site-access.js"></script>
+  <script src="user-rules.js"></script>
+  <script src="popup.js"></script>
+  <script src="popup-library.js"></script>
+</body>
+</html>

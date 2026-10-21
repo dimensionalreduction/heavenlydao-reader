@@ -1,0 +1,2842 @@
+{
+  "list": [
+    {
+      "en": "Sect Master",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "宗主"
+    },
+    {
+      "en": "Sect Head",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "掌门"
+    },
+    {
+      "en": "Clan Chief",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "族长"
+    },
+    {
+      "en": "Elder",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "长老"
+    },
+    {
+      "en": "Grand Elder",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "太上长老"
+    },
+    {
+      "en": "Protector",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "护法"
+    },
+    {
+      "en": "Disciple",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "弟子"
+    },
+    {
+      "en": "Core Disciple",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "核心弟子"
+    },
+    {
+      "en": "Inner Sect Disciple",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "内门弟子"
+    },
+    {
+      "en": "Outer Sect Disciple",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "外门弟子"
+    },
+    {
+      "en": "True Disciple",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "真传弟子"
+    },
+    {
+      "en": "Personal Disciple",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "亲传弟子"
+    },
+    {
+      "en": "Named Disciple",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "记名弟子"
+    },
+    {
+      "en": "Utility Disciple",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "杂役弟子"
+    },
+    {
+      "en": "Master",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "师父"
+    },
+    {
+      "en": "Revered Master",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "师尊"
+    },
+    {
+      "en": "Grandmaster",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "师祖"
+    },
+    {
+      "en": "Senior Martial Uncle",
+      "entity_type": "person",
+      "gender": "male",
+      "zh": "师伯"
+    },
+    {
+      "en": "Junior Martial Uncle",
+      "entity_type": "person",
+      "gender": "male",
+      "zh": "师叔"
+    },
+    {
+      "en": "Martial Aunt",
+      "entity_type": "person",
+      "gender": "female",
+      "zh": "师姑"
+    },
+    {
+      "en": "Senior Martial Brother",
+      "entity_type": "person",
+      "gender": "male",
+      "zh": "师兄"
+    },
+    {
+      "en": "Senior Martial Sister",
+      "entity_type": "person",
+      "gender": "female",
+      "zh": "师姐"
+    },
+    {
+      "en": "Junior Martial Brother",
+      "entity_type": "person",
+      "gender": "male",
+      "zh": "师弟"
+    },
+    {
+      "en": "Junior Martial Sister",
+      "entity_type": "person",
+      "gender": "female",
+      "zh": "师妹"
+    },
+    {
+      "en": "Dao",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "道"
+    },
+    {
+      "en": "Dao Heart",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "道心"
+    },
+    {
+      "en": "Profound Truth",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "奥义"
+    },
+    {
+      "en": "Yin and Yang",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "阴阳"
+    },
+    {
+      "en": "Heavenly Dao",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "天道"
+    },
+    {
+      "en": "Law",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "法则"
+    },
+    {
+      "en": "Karma",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "因果"
+    },
+    {
+      "en": "Luck",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "气运"
+    },
+    {
+      "en": "Opportunity",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "机缘"
+    },
+    {
+      "en": "Lightning Tribulation",
+      "entity_type": "event",
+      "gender": "neutral",
+      "zh": "雷劫"
+    },
+    {
+      "en": "Cauldron",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "炉鼎"
+    },
+    {
+      "en": "Face",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "面子"
+    },
+    {
+      "en": "Jianghu",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "江湖"
+    },
+    {
+      "en": "Wuxia",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "武侠"
+    },
+    {
+      "en": "Xianxia",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "仙侠"
+    },
+    {
+      "en": "Xuanhuan",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "玄幻"
+    },
+    {
+      "en": "System",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "系统"
+    },
+    {
+      "en": "Golden Finger",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "金手指"
+    },
+    {
+      "en": "Protagonist Halo",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "主角光环"
+    },
+    {
+      "en": "Heaven-Defying",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "逆天"
+    },
+    {
+      "en": "Prodigy",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "妖孽"
+    },
+    {
+      "en": "Genius",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "天才"
+    },
+    {
+      "en": "Trash",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "废柴"
+    },
+    {
+      "en": "Qi Deviation",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "走火入魔"
+    },
+    {
+      "en": "Destiny",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "因缘"
+    },
+    {
+      "en": "Mortal World",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "红尘"
+    },
+    {
+      "en": "Qi Sea",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "气海"
+    },
+    {
+      "en": "Life Palace",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "命宫"
+    },
+    {
+      "en": "Five Elements",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "五行"
+    },
+    {
+      "en": "Origin",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "本源"
+    },
+    {
+      "en": "Chaos",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "混沌"
+    },
+    {
+      "en": "Grandmist",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "鸿蒙"
+    },
+    {
+      "en": "Possession",
+      "entity_type": "event",
+      "gender": "neutral",
+      "zh": "夺舍"
+    },
+    {
+      "en": "Rebirth",
+      "entity_type": "event",
+      "gender": "neutral",
+      "zh": "重生"
+    },
+    {
+      "en": "Reincarnation",
+      "entity_type": "event",
+      "gender": "neutral",
+      "zh": "转世"
+    },
+    {
+      "en": "Transmigration",
+      "entity_type": "event",
+      "gender": "neutral",
+      "zh": "穿越"
+    },
+    {
+      "en": "Awakening",
+      "entity_type": "event",
+      "gender": "neutral",
+      "zh": "觉醒"
+    },
+    {
+      "en": "Cultivate",
+      "entity_type": "technique",
+      "gender": "neutral",
+      "zh": "修炼"
+    },
+    {
+      "en": "Dual Cultivation",
+      "entity_type": "technique",
+      "gender": "neutral",
+      "zh": "双修"
+    },
+    {
+      "en": "Qi",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "气"
+    },
+    {
+      "en": "Internal Energy",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "内力"
+    },
+    {
+      "en": "Primordial Qi",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "鸿蒙之气"
+    },
+    {
+      "en": "Chaos Qi",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "混沌之气"
+    },
+    {
+      "en": "Death Qi",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "死气"
+    },
+    {
+      "en": "Life Qi",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "生气"
+    },
+    {
+      "en": "Sword Qi",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "剑气"
+    },
+    {
+      "en": "Saber Qi",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "刀气"
+    },
+    {
+      "en": "Five Elements Qi",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "五行之气"
+    },
+    {
+      "en": "Yin Qi",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "阴气"
+    },
+    {
+      "en": "Yang Qi",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "阳气"
+    },
+    {
+      "en": "Profound Qi",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "玄气"
+    },
+    {
+      "en": "Dragon Qi",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "龙气"
+    },
+    {
+      "en": "Phoenix Qi",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "凤气"
+    },
+    {
+      "en": "Star Power",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "星力"
+    },
+    {
+      "en": "Demonic Energy",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "魔能"
+    },
+    {
+      "en": "Holy Light",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "圣光"
+    },
+    {
+      "en": "Buddha Power",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "佛力"
+    },
+    {
+      "en": "Mental Energy",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "精神力"
+    },
+    {
+      "en": "Soul Power",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "魂力"
+    },
+    {
+      "en": "Bloodline Power",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "血脉之力"
+    },
+    {
+      "en": "Nine Nether Qi",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "九幽之气"
+    },
+    {
+      "en": "Nether Qi",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "冥气"
+    },
+    {
+      "en": "Pure Yang Qi",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "纯阳之气"
+    },
+    {
+      "en": "Pure Yin Qi",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "纯阴之气"
+    },
+    {
+      "en": "Origin True Fire",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "本源真火"
+    },
+    {
+      "en": "Heaven And Earth Spiritual Essence",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "天地灵机"
+    },
+    {
+      "en": "Power Of Faith",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "信仰之力"
+    },
+    {
+      "en": "Power Of Will",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "愿力"
+    },
+    {
+      "en": "Primordial Beginning Qi",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "太初之气"
+    },
+    {
+      "en": "Magnetic Force",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "元磁之力"
+    },
+    {
+      "en": "Internal Skill",
+      "entity_type": "skill",
+      "gender": "neutral",
+      "zh": "内功"
+    },
+    {
+      "en": "Demonic Qi",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "妖气"
+    },
+    {
+      "en": "True Qi",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "真气"
+    },
+    {
+      "en": "Origin Qi",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "元气"
+    },
+    {
+      "en": "Spiritual Qi",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "灵气"
+    },
+    {
+      "en": "Heaven and Earth Spiritual Qi",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "天地灵气"
+    },
+    {
+      "en": "Protective Aura",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "罡气"
+    },
+    {
+      "en": "Evil Qi",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "煞气"
+    },
+    {
+      "en": "Demonic Qi",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "妖气"
+    },
+    {
+      "en": "Devilish Qi",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "魔气"
+    },
+    {
+      "en": "Immortal Qi",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "仙气"
+    },
+    {
+      "en": "Divine Qi",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "神气"
+    },
+    {
+      "en": "Qi Circulation",
+      "entity_type": "technique",
+      "gender": "neutral",
+      "zh": "行气"
+    },
+    {
+      "en": "Reincarnation",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "轮回"
+    },
+    {
+      "en": "Karma",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "业力"
+    },
+    {
+      "en": "Karmic Obstruction",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "业障"
+    },
+    {
+      "en": "Karma",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "功德"
+    },
+    {
+      "en": "Realm",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "境界"
+    },
+    {
+      "en": "Rank",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "等级"
+    },
+    {
+      "en": "Early Stage",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "初期"
+    },
+    {
+      "en": "Middle Stage",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "中期"
+    },
+    {
+      "en": "Late Stage",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "后期"
+    },
+    {
+      "en": "Peak",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "巅峰"
+    },
+    {
+      "en": "Qi Refinement Stage",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "炼气期"
+    },
+    {
+      "en": "Foundation Establishment Stage",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "筑基期"
+    },
+    {
+      "en": "Golden Core Stage",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "金丹期"
+    },
+    {
+      "en": "Nascent Soul Stage",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "元婴期"
+    },
+    {
+      "en": "Soul Transformation Stage",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "化神期"
+    },
+    {
+      "en": "Perfection",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "圆满"
+    },
+    {
+      "en": "Great Perfection",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "大圆满"
+    },
+    {
+      "en": "Qi Refining",
+      "entity_type": "technique",
+      "gender": "neutral",
+      "zh": "气炼"
+    },
+    {
+      "en": "Spiritual Void",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "灵寂"
+    },
+    {
+      "en": "False Core",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "假丹"
+    },
+    {
+      "en": "Core Formation",
+      "entity_type": "event",
+      "gender": "neutral",
+      "zh": "结丹"
+    },
+    {
+      "en": "Qi Condensation",
+      "entity_type": "technique",
+      "gender": "neutral",
+      "zh": "凝气"
+    },
+    {
+      "en": "Qi Gathering",
+      "entity_type": "technique",
+      "gender": "neutral",
+      "zh": "聚气"
+    },
+    {
+      "en": "Acquired",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "后天"
+    },
+    {
+      "en": "Innate",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "先天"
+    },
+    {
+      "en": "Entry-Level",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "入门级"
+    },
+    {
+      "en": "Elementary",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "初级"
+    },
+    {
+      "en": "Intermediate",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "中级"
+    },
+    {
+      "en": "Advanced",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "高级"
+    },
+    {
+      "en": "Earth-Grade",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "地级"
+    },
+    {
+      "en": "Heaven-Grade",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "天级"
+    },
+    {
+      "en": "Saint-Grade",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "圣级"
+    },
+    {
+      "en": "Divine-Grade",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "神级"
+    },
+    {
+      "en": "Dao-Grade",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "道级"
+    },
+    {
+      "en": "Yellow Rank",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "黄阶"
+    },
+    {
+      "en": "Profound Rank",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "玄阶"
+    },
+    {
+      "en": "Earth Rank",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "地阶"
+    },
+    {
+      "en": "Heaven Rank",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "天阶"
+    },
+    {
+      "en": "Spirit Rank",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "灵阶"
+    },
+    {
+      "en": "King Rank",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "王阶"
+    },
+    {
+      "en": "Emperor Rank",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "皇阶"
+    },
+    {
+      "en": "Imperial Rank",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "帝阶"
+    },
+    {
+      "en": "Minor Achievement",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "小成"
+    },
+    {
+      "en": "Major Achievement",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "大成"
+    },
+    {
+      "en": "Transcendent",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "化境"
+    },
+    {
+      "en": "Incomplete Manual",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "残卷"
+    },
+    {
+      "en": "Complete Manual",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "全本"
+    },
+    {
+      "en": "Body Refining",
+      "entity_type": "technique",
+      "gender": "neutral",
+      "zh": "炼体"
+    },
+    {
+      "en": "Body Tempering",
+      "entity_type": "technique",
+      "gender": "neutral",
+      "zh": "淬体"
+    },
+    {
+      "en": "Fusion",
+      "entity_type": "event",
+      "gender": "neutral",
+      "zh": "融合"
+    },
+    {
+      "en": "Spiritual Void",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "灵寂"
+    },
+    {
+      "en": "False Core",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "假丹"
+    },
+    {
+      "en": "Core Formation",
+      "entity_type": "event",
+      "gender": "neutral",
+      "zh": "结丹"
+    },
+    {
+      "en": "Qi Condensation",
+      "entity_type": "technique",
+      "gender": "neutral",
+      "zh": "凝气"
+    },
+    {
+      "en": "Qi Gathering",
+      "entity_type": "technique",
+      "gender": "neutral",
+      "zh": "聚气"
+    },
+    {
+      "en": "Qi Refining",
+      "entity_type": "technique",
+      "gender": "neutral",
+      "zh": "炼气"
+    },
+    {
+      "en": "Foundation Establishment",
+      "entity_type": "event",
+      "gender": "neutral",
+      "zh": "筑基"
+    },
+    {
+      "en": "Golden Core",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "金丹"
+    },
+    {
+      "en": "Nascent Soul",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "元婴"
+    },
+    {
+      "en": "Soul Transformation",
+      "entity_type": "event",
+      "gender": "neutral",
+      "zh": "化神"
+    },
+    {
+      "en": "Soul Emergence",
+      "entity_type": "event",
+      "gender": "neutral",
+      "zh": "出窍"
+    },
+    {
+      "en": "Divided Soul",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "分神"
+    },
+    {
+      "en": "Void Refining",
+      "entity_type": "technique",
+      "gender": "neutral",
+      "zh": "炼虚"
+    },
+    {
+      "en": "Body Integration",
+      "entity_type": "event",
+      "gender": "neutral",
+      "zh": "合体"
+    },
+    {
+      "en": "Body Integration Stage",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "合体期"
+    },
+    {
+      "en": "Mahayana",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "大乘"
+    },
+    {
+      "en": "Void Tempering",
+      "entity_type": "technique",
+      "gender": "neutral",
+      "zh": "洞虚"
+    },
+    {
+      "en": "Void Gazer",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "空冥"
+    },
+    {
+      "en": "Nirvana",
+      "entity_type": "event",
+      "gender": "neutral",
+      "zh": "涅槃"
+    },
+    {
+      "en": "Life and Death Realm",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "生死境"
+    },
+    {
+      "en": "Samsara Realm",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "轮回境"
+    },
+    {
+      "en": "Saint",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "圣人"
+    },
+    {
+      "en": "Emperor Realm",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "帝境"
+    },
+    {
+      "en": "God Realm",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "神境"
+    },
+    {
+      "en": "Bottleneck",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "瓶颈"
+    },
+    {
+      "en": "Impurities",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "杂质"
+    },
+    {
+      "en": "Breakthrough",
+      "entity_type": "event",
+      "gender": "neutral",
+      "zh": "突破"
+    },
+    {
+      "en": "Undergoing Tribulation",
+      "entity_type": "event",
+      "gender": "neutral",
+      "zh": "渡劫"
+    },
+    {
+      "en": "Heavenly Tribulation",
+      "entity_type": "event",
+      "gender": "neutral",
+      "zh": "天劫"
+    },
+    {
+      "en": "Inner Demon Tribulation",
+      "entity_type": "event",
+      "gender": "neutral",
+      "zh": "情劫"
+    },
+    {
+      "en": "Three Calamities and Nine Tribulations",
+      "entity_type": "event",
+      "gender": "neutral",
+      "zh": "三灾九难"
+    },
+    {
+      "en": "Heart Demon",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "心魔"
+    },
+    {
+      "en": "Ascension",
+      "entity_type": "event",
+      "gender": "neutral",
+      "zh": "飞升"
+    },
+    {
+      "en": "Immortal Ascension",
+      "entity_type": "event",
+      "gender": "neutral",
+      "zh": "成仙"
+    },
+    {
+      "en": "Physical Body",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "肉身"
+    },
+    {
+      "en": "Meridians",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "经脉"
+    },
+    {
+      "en": "Acupoints",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "穴位"
+    },
+    {
+      "en": "Dantian",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "丹田"
+    },
+    {
+      "en": "Soul",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "灵魂"
+    },
+    {
+      "en": "Primordial Spirit",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "元神"
+    },
+    {
+      "en": "Divine Soul",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "神魂"
+    },
+    {
+      "en": "Divine Sense",
+      "entity_type": "ability",
+      "gender": "neutral",
+      "zh": "神识"
+    },
+    {
+      "en": "Divine Thought",
+      "entity_type": "ability",
+      "gender": "neutral",
+      "zh": "神念"
+    },
+    {
+      "en": "Sea of Consciousness",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "识海"
+    },
+    {
+      "en": "Purple Mansion",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "紫府"
+    },
+    {
+      "en": "Three Ethereal Souls and Seven Corporeal Spirits",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "三魂七魄"
+    },
+    {
+      "en": "Primordial Spirit Leaving the Body",
+      "entity_type": "ability",
+      "gender": "neutral",
+      "zh": "元神出窍"
+    },
+    {
+      "en": "Soul Flying Away and Spirit Scattering",
+      "entity_type": "event",
+      "gender": "neutral",
+      "zh": "魂飞魄散"
+    },
+    {
+      "en": "Physique",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "体质"
+    },
+    {
+      "en": "Spiritual Root",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "灵根"
+    },
+    {
+      "en": "Heavenly Spiritual Root",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "天灵根"
+    },
+    {
+      "en": "Earthly Spiritual Root",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "地灵根"
+    },
+    {
+      "en": "Bloodline",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "血脉"
+    },
+    {
+      "en": "Foundation",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "根基"
+    },
+    {
+      "en": "Aptitude",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "资质"
+    },
+    {
+      "en": "Comprehension Ability",
+      "entity_type": "ability",
+      "gender": "neutral",
+      "zh": "悟性"
+    },
+    {
+      "en": "Heart-Nature",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "心性"
+    },
+    {
+      "en": "Lifespan",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "寿元"
+    },
+    {
+      "en": "Heavenly Eye",
+      "entity_type": "ability",
+      "gender": "neutral",
+      "zh": "天眼"
+    },
+    {
+      "en": "Wisdom Eye",
+      "entity_type": "ability",
+      "gender": "neutral",
+      "zh": "慧眼"
+    },
+    {
+      "en": "Dharma Eye",
+      "entity_type": "ability",
+      "gender": "neutral",
+      "zh": "法眼"
+    },
+    {
+      "en": "Gu",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "蛊"
+    },
+    {
+      "en": "Legacy",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "传承"
+    },
+    {
+      "en": "Cultivation Technique",
+      "entity_type": "technique",
+      "gender": "neutral",
+      "zh": "功法"
+    },
+    {
+      "en": "Mind-Cultivation Technique",
+      "entity_type": "technique",
+      "gender": "neutral",
+      "zh": "心法"
+    },
+    {
+      "en": "Secret Manual",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "秘籍"
+    },
+    {
+      "en": "Spell",
+      "entity_type": "skill",
+      "gender": "neutral",
+      "zh": "法术"
+    },
+    {
+      "en": "Daoist Magic",
+      "entity_type": "skill",
+      "gender": "neutral",
+      "zh": "道术"
+    },
+    {
+      "en": "Demonic Technique",
+      "entity_type": "technique",
+      "gender": "neutral",
+      "zh": "妖术"
+    },
+    {
+      "en": "Demonic Technique",
+      "entity_type": "technique",
+      "gender": "neutral",
+      "zh": "魔功"
+    },
+    {
+      "en": "Spirit Refining",
+      "entity_type": "technique",
+      "gender": "neutral",
+      "zh": "炼神"
+    },
+    {
+      "en": "Soul Refining",
+      "entity_type": "technique",
+      "gender": "neutral",
+      "zh": "炼魂"
+    },
+    {
+      "en": "Move",
+      "entity_type": "skill",
+      "gender": "neutral",
+      "zh": "招式"
+    },
+    {
+      "en": "Divine Ability",
+      "entity_type": "ability",
+      "gender": "neutral",
+      "zh": "神通"
+    },
+    {
+      "en": "Concept",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "意境"
+    },
+    {
+      "en": "Domain",
+      "entity_type": "ability",
+      "gender": "neutral",
+      "zh": "领域"
+    },
+    {
+      "en": "Incarnation",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "化身"
+    },
+    {
+      "en": "Clone",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "分身"
+    },
+    {
+      "en": "Puppet",
+      "entity_type": "creature",
+      "gender": "neutral",
+      "zh": "傀儡"
+    },
+    {
+      "en": "Spear Intent",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "枪意"
+    },
+    {
+      "en": "Divine Power",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "神力"
+    },
+    {
+      "en": "Epiphany",
+      "entity_type": "event",
+      "gender": "neutral",
+      "zh": "顿悟"
+    },
+    {
+      "en": "Sword Intent",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "剑意"
+    },
+    {
+      "en": "Saber Intent",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "刀意"
+    },
+    {
+      "en": "Fist Intent",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "拳意"
+    },
+    {
+      "en": "Killing Intent",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "杀气"
+    },
+    {
+      "en": "Battle Intent",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "战意"
+    },
+    {
+      "en": "Aura",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "气势"
+    },
+    {
+      "en": "Divine Might",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "神威"
+    },
+    {
+      "en": "Spiritual Pressure",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "灵压"
+    },
+    {
+      "en": "Mortal Weapon",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "凡器"
+    },
+    {
+      "en": "Sharp Weapon",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "利器"
+    },
+    {
+      "en": "Profound Weapon",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "玄器"
+    },
+    {
+      "en": "Earth-Grade Weapon",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "地器"
+    },
+    {
+      "en": "Heaven-Grade Weapon",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "天器"
+    },
+    {
+      "en": "Emperor Weapon",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "帝器"
+    },
+    {
+      "en": "Innate Spirit Treasure",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "先天灵宝"
+    },
+    {
+      "en": "Acquired Spirit Treasure",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "后天灵宝"
+    },
+    {
+      "en": "Chaos Supreme Treasure",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "混沌至宝"
+    },
+    {
+      "en": "Primordial Spirit Treasure",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "鸿蒙灵宝"
+    },
+    {
+      "en": "Lifebound Weapon",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "本命武器"
+    },
+    {
+      "en": "Growth-Type Weapon",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "成长型武器"
+    },
+    {
+      "en": "Damaged Weapon",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "残缺武器"
+    },
+    {
+      "en": "Sealed Weapon",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "封印武器"
+    },
+    {
+      "en": "Cursed Weapon",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "诅咒武器"
+    },
+    {
+      "en": "Demonic Weapon",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "邪器"
+    },
+    {
+      "en": "Flying Sword",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "飞剑"
+    },
+    {
+      "en": "Magic Treasure",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "法宝"
+    },
+    {
+      "en": "Spirit Treasure",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "灵宝"
+    },
+    {
+      "en": "Immortal Treasure",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "仙宝"
+    },
+    {
+      "en": "Immortal Artifact",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "仙器"
+    },
+    {
+      "en": "Divine Artifact",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "神器"
+    },
+    {
+      "en": "Sacred Artifact",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "圣器"
+    },
+    {
+      "en": "Dao Artifact",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "道器"
+    },
+    {
+      "en": "Magical Artifact",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "法器"
+    },
+    {
+      "en": "Spiritual Artifact",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "灵器"
+    },
+    {
+      "en": "Treasure Artifact",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "宝器"
+    },
+    {
+      "en": "Medicinal Pill",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "丹药"
+    },
+    {
+      "en": "Spirit Pill",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "灵丹"
+    },
+    {
+      "en": "Immortal Pill",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "仙丹"
+    },
+    {
+      "en": "Divine Pill",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "神丹"
+    },
+    {
+      "en": "Soul Transformation Stage Pill",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "化神丹"
+    },
+    {
+      "en": "Pill Formula",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "丹方"
+    },
+    {
+      "en": "Spiritual Plant",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "灵草"
+    },
+    {
+      "en": "Immortal Plant",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "仙草"
+    },
+    {
+      "en": "Divine Plant",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "神草"
+    },
+    {
+      "en": "Spirit Medicine",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "灵药"
+    },
+    {
+      "en": "Alchemy",
+      "entity_type": "technique",
+      "gender": "neutral",
+      "zh": "炼丹"
+    },
+    {
+      "en": "Alchemist",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "炼丹师"
+    },
+    {
+      "en": "Pill Furnace",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "丹炉"
+    },
+    {
+      "en": "Medicine Cauldron",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "药鼎"
+    },
+    {
+      "en": "Artifact Refining",
+      "entity_type": "technique",
+      "gender": "neutral",
+      "zh": "炼器"
+    },
+    {
+      "en": "Artifact Refiner",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "炼器师"
+    },
+    {
+      "en": "Refining Cauldron",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "器鼎"
+    },
+    {
+      "en": "Talisman",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "符箓"
+    },
+    {
+      "en": "Talismanic Incantation",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "符咒"
+    },
+    {
+      "en": "Talisman Maker",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "制符师"
+    },
+    {
+      "en": "Formation",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "阵法"
+    },
+    {
+      "en": "Formation Plate",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "阵盘"
+    },
+    {
+      "en": "Formation Flag",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "阵旗"
+    },
+    {
+      "en": "Formation Master",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "阵法师"
+    },
+    {
+      "en": "Spirit Stone",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "灵石"
+    },
+    {
+      "en": "Low-Grade Spirit Stone",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "下品灵石"
+    },
+    {
+      "en": "Mid-Grade Spirit Stone",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "中品灵石"
+    },
+    {
+      "en": "High-Grade Spirit Stone",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "上品灵石"
+    },
+    {
+      "en": "Top-Grade Spirit Stone",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "极品灵石"
+    },
+    {
+      "en": "Immortal Stone",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "仙石"
+    },
+    {
+      "en": "Divine Stone",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "神石"
+    },
+    {
+      "en": "Materials",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "材料"
+    },
+    {
+      "en": "Ore",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "矿石"
+    },
+    {
+      "en": "Restriction",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "禁制"
+    },
+    {
+      "en": "Seal",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "封印"
+    },
+    {
+      "en": "Low Grade",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "下品"
+    },
+    {
+      "en": "Medium Grade",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "中品"
+    },
+    {
+      "en": "High Grade",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "上品"
+    },
+    {
+      "en": "Peerless Grade",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "绝品"
+    },
+    {
+      "en": "Saint Grade",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "圣品"
+    },
+    {
+      "en": "Divine Grade",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "神品"
+    },
+    {
+      "en": "Spirit Rank",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "灵级"
+    },
+    {
+      "en": "Immortal Rank",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "仙级"
+    },
+    {
+      "en": "Divine Rank",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "神级"
+    },
+    {
+      "en": "Martial Skill",
+      "entity_type": "skill",
+      "gender": "neutral",
+      "zh": "武技"
+    },
+    {
+      "en": "Storage Pouch",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "储物袋"
+    },
+    {
+      "en": "Storage Ring",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "储物戒指"
+    },
+    {
+      "en": "Jade Slip",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "玉简"
+    },
+    {
+      "en": "Lifebound Treasure",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "本命法宝"
+    },
+    {
+      "en": "Heaven And Earth Treasure",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "天材地宝"
+    },
+    {
+      "en": "Mortal",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "凡人"
+    },
+    {
+      "en": "Martial Artist",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "武者"
+    },
+    {
+      "en": "Cultivator",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "修士"
+    },
+    {
+      "en": "Cultivator",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "修者"
+    },
+    {
+      "en": "Demonic Cultivator",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "邪道修者"
+    },
+    {
+      "en": "Demonic Cultivation Sect",
+      "entity_type": "organization",
+      "gender": "neutral",
+      "zh": "邪道门派"
+    },
+    {
+      "en": "Body Cultivator",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "体修"
+    },
+    {
+      "en": "Loose Cultivator",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "散修"
+    },
+    {
+      "en": "Spell Cultivator",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "法修"
+    },
+    {
+      "en": "Sword Cultivator",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "剑修"
+    },
+    {
+      "en": "Soul Cultivator",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "魂修"
+    },
+    {
+      "en": "Divine Being",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "神人"
+    },
+    {
+      "en": "True Immortal",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "真仙"
+    },
+    {
+      "en": "True God",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "真神"
+    },
+    {
+      "en": "Immortal Master",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "真人"
+    },
+    {
+      "en": "Heavenly God",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "天神"
+    },
+    {
+      "en": "Immortal",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "仙人"
+    },
+    {
+      "en": "Human Immortal",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "人仙"
+    },
+    {
+      "en": "Earth Immortal",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "地仙"
+    },
+    {
+      "en": "Heavenly Immortal",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "天仙"
+    },
+    {
+      "en": "Profound Immortal",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "玄仙"
+    },
+    {
+      "en": "Nine Heavens Profound Immortal",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "九天玄仙"
+    },
+    {
+      "en": "Golden Immortal",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "金仙"
+    },
+    {
+      "en": "Grand Unity Golden Immortal",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "大罗金仙"
+    },
+    {
+      "en": "Immortal Lord",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "仙君"
+    },
+    {
+      "en": "Immortal King",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "仙王"
+    },
+    {
+      "en": "Immortal Emperor",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "仙帝"
+    },
+    {
+      "en": "Immortal Venerable",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "仙尊"
+    },
+    {
+      "en": "Loose Immortal",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "散仙"
+    },
+    {
+      "en": "Divine Lord",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "神君"
+    },
+    {
+      "en": "God King",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "神王"
+    },
+    {
+      "en": "God Emperor",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "神帝"
+    },
+    {
+      "en": "Divine Venerable",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "神尊"
+    },
+    {
+      "en": "Supreme",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "至尊"
+    },
+    {
+      "en": "Dominator",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "主宰"
+    },
+    {
+      "en": "Devil Head",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "魔头"
+    },
+    {
+      "en": "Demonic Lord",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "魔君"
+    },
+    {
+      "en": "Devil King",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "魔王"
+    },
+    {
+      "en": "Devil Emperor",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "魔帝"
+    },
+    {
+      "en": "Loose Devil",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "散魔"
+    },
+    {
+      "en": "Yao Beast",
+      "entity_type": "creature",
+      "gender": "neutral",
+      "zh": "妖兽"
+    },
+    {
+      "en": "Demonic Beast",
+      "entity_type": "creature",
+      "gender": "neutral",
+      "zh": "魔兽"
+    },
+    {
+      "en": "Spirit Beast",
+      "entity_type": "creature",
+      "gender": "neutral",
+      "zh": "灵兽"
+    },
+    {
+      "en": "Immortal Beast",
+      "entity_type": "creature",
+      "gender": "neutral",
+      "zh": "仙兽"
+    },
+    {
+      "en": "Divine Beast",
+      "entity_type": "creature",
+      "gender": "neutral",
+      "zh": "神兽"
+    },
+    {
+      "en": "Vicious Beast",
+      "entity_type": "creature",
+      "gender": "neutral",
+      "zh": "凶兽"
+    },
+    {
+      "en": "Auspicious Beast",
+      "entity_type": "creature",
+      "gender": "neutral",
+      "zh": "瑞兽"
+    },
+    {
+      "en": "Essence Spirit",
+      "entity_type": "creature",
+      "gender": "neutral",
+      "zh": "精怪"
+    },
+    {
+      "en": "Yao Race",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "妖族"
+    },
+    {
+      "en": "Demon Race",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "魔族"
+    },
+    {
+      "en": "Human Race",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "人族"
+    },
+    {
+      "en": "God Race",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "神族"
+    },
+    {
+      "en": "Dragon",
+      "entity_type": "creature",
+      "gender": "neutral",
+      "zh": "龙"
+    },
+    {
+      "en": "Phoenix",
+      "entity_type": "creature",
+      "gender": "neutral",
+      "zh": "凤"
+    },
+    {
+      "en": "Qilin",
+      "entity_type": "creature",
+      "gender": "neutral",
+      "zh": "麒麟"
+    },
+    {
+      "en": "Kunpeng",
+      "entity_type": "creature",
+      "gender": "neutral",
+      "zh": "鲲鹏"
+    },
+    {
+      "en": "Spirit Monster",
+      "entity_type": "creature",
+      "gender": "neutral",
+      "zh": "精怪"
+    },
+    {
+      "en": "Sacred Beast",
+      "entity_type": "creature",
+      "gender": "neutral",
+      "zh": "圣兽"
+    },
+    {
+      "en": "Sect",
+      "entity_type": "organization",
+      "gender": "neutral",
+      "zh": "宗门"
+    },
+    {
+      "en": "Gang",
+      "entity_type": "organization",
+      "gender": "neutral",
+      "zh": "帮派"
+    },
+    {
+      "en": "Alliance",
+      "entity_type": "organization",
+      "gender": "neutral",
+      "zh": "联盟"
+    },
+    {
+      "en": "Imperial Dynasty",
+      "entity_type": "organization",
+      "gender": "neutral",
+      "zh": "皇朝"
+    },
+    {
+      "en": "Dynasty",
+      "entity_type": "organization",
+      "gender": "neutral",
+      "zh": "王朝"
+    },
+    {
+      "en": "Empire",
+      "entity_type": "organization",
+      "gender": "neutral",
+      "zh": "帝国"
+    },
+    {
+      "en": "Righteous Path",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "正道"
+    },
+    {
+      "en": "Demonic Path",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "魔道"
+    },
+    {
+      "en": "Evil Path",
+      "entity_type": "other",
+      "gender": "neutral",
+      "zh": "邪道"
+    },
+    {
+      "en": "School",
+      "entity_type": "organization",
+      "gender": "neutral",
+      "zh": "门派"
+    },
+    {
+      "en": "Family",
+      "entity_type": "organization",
+      "gender": "neutral",
+      "zh": "家族"
+    },
+    {
+      "en": "Personal Disciple",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "亲传弟子"
+    },
+    {
+      "en": "Guest Elder",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "客卿"
+    },
+    {
+      "en": "Hidden Family",
+      "entity_type": "organization",
+      "gender": "neutral",
+      "zh": "隐世家族"
+    },
+    {
+      "en": "Ancient Sect",
+      "entity_type": "organization",
+      "gender": "neutral",
+      "zh": "古教"
+    },
+    {
+      "en": "Holy Land",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "圣地"
+    },
+    {
+      "en": "Forbidden Ground",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "禁地"
+    },
+    {
+      "en": "Spiritual Vein",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "灵脉"
+    },
+    {
+      "en": "Scripture Pavilion",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "藏经阁"
+    },
+    {
+      "en": "Pill Refining Room",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "炼丹房"
+    },
+    {
+      "en": "Artifact Refining Room",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "炼器室"
+    },
+    {
+      "en": "Trial Grounds",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "试炼之地"
+    },
+    {
+      "en": "Secret Realm",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "秘境"
+    },
+    {
+      "en": "Ancient Tomb",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "古墓"
+    },
+    {
+      "en": "Treasure Trove",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "宝藏"
+    },
+    {
+      "en": "Sword Tomb",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "剑冢"
+    },
+    {
+      "en": "Heart Refining Road",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "炼心路"
+    },
+    {
+      "en": "Martial Forest",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "武林"
+    },
+    {
+      "en": "Lower Realm",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "下界"
+    },
+    {
+      "en": "Upper Realm",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "上界"
+    },
+    {
+      "en": "Mortal Realm",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "凡界"
+    },
+    {
+      "en": "Human Realm",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "人界"
+    },
+    {
+      "en": "Spirit Realm",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "灵界"
+    },
+    {
+      "en": "Immortal Realm",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "仙界"
+    },
+    {
+      "en": "Divine Realm",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "神界"
+    },
+    {
+      "en": "Demon Realm",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "魔界"
+    },
+    {
+      "en": "Monster Realm",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "妖界"
+    },
+    {
+      "en": "Netherworld",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "冥界"
+    },
+    {
+      "en": "Hell",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "地狱"
+    },
+    {
+      "en": "Yellow Springs",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "黄泉"
+    },
+    {
+      "en": "Three Realms",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "三界"
+    },
+    {
+      "en": "Nine Heavens",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "九天"
+    },
+    {
+      "en": "Nine Heavens",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "九重天"
+    },
+    {
+      "en": "Minor Thousand Worlds",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "小千世界"
+    },
+    {
+      "en": "Middle Thousand Worlds",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "中千世界"
+    },
+    {
+      "en": "Major Thousand Worlds",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "大千世界"
+    },
+    {
+      "en": "Universe",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "宇宙"
+    },
+    {
+      "en": "Yao Realm",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "妖界"
+    },
+    {
+      "en": "Immortal Cave",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "洞府"
+    },
+    {
+      "en": "Small World",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "小世界"
+    },
+    {
+      "en": "Forbidden Land",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "禁地"
+    },
+    {
+      "en": "Star Domain",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "星域"
+    },
+    {
+      "en": "Void Realm",
+      "entity_type": "location",
+      "gender": "neutral",
+      "zh": "虚空"
+    },
+    {
+      "en": "Mahayana Realm",
+      "entity_type": "class",
+      "gender": "neutral",
+      "zh": "大乘境"
+    },
+    {
+      "en": "Sect Master",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "宗主"
+    },
+    {
+      "en": "Sect Leader",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "掌门"
+    },
+    {
+      "en": "Clan Chief",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "族长"
+    },
+    {
+      "en": "Elder",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "长老"
+    },
+    {
+      "en": "Grand Elder",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "太上长老"
+    },
+    {
+      "en": "Protector",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "护法"
+    },
+    {
+      "en": "Dao Companion",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "道侣"
+    },
+    {
+      "en": "Disciple",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "弟子"
+    },
+    {
+      "en": "Core Disciple",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "核心弟子"
+    },
+    {
+      "en": "Inner Sect Disciple",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "内门弟子"
+    },
+    {
+      "en": "Outer Sect Disciple",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "外门弟子"
+    },
+    {
+      "en": "True Disciple",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "真传弟子"
+    },
+    {
+      "en": "Great Master",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "大师"
+    },
+    {
+      "en": "Master",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "师父"
+    },
+    {
+      "en": "Master",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "师尊"
+    },
+    {
+      "en": "Grandmaster",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "师祖"
+    },
+    {
+      "en": "Senior Martial Uncle",
+      "entity_type": "person",
+      "gender": "male",
+      "zh": "师伯"
+    },
+    {
+      "en": "Junior Martial Uncle",
+      "entity_type": "person",
+      "gender": "male",
+      "zh": "师叔"
+    },
+    {
+      "en": "Martial Aunt",
+      "entity_type": "person",
+      "gender": "female",
+      "zh": "师姑"
+    },
+    {
+      "en": "Senior Brother",
+      "entity_type": "person",
+      "gender": "male",
+      "zh": "师兄"
+    },
+    {
+      "en": "Senior Sister",
+      "entity_type": "person",
+      "gender": "female",
+      "zh": "师姐"
+    },
+    {
+      "en": "Junior Brother",
+      "entity_type": "person",
+      "gender": "male",
+      "zh": "师弟"
+    },
+    {
+      "en": "Junior Sister",
+      "entity_type": "person",
+      "gender": "female",
+      "zh": "师妹"
+    },
+    {
+      "en": "Young Master",
+      "entity_type": "person",
+      "gender": "male",
+      "zh": "公子"
+    },
+    {
+      "en": "Young Miss",
+      "entity_type": "person",
+      "gender": "female",
+      "zh": "小姐"
+    },
+    {
+      "en": "Senior",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "前辈"
+    },
+    {
+      "en": "Junior",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "晚辈"
+    },
+    {
+      "en": "Fellow Daoist",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "道友"
+    },
+    {
+      "en": "Fairy",
+      "entity_type": "person",
+      "gender": "female",
+      "zh": "仙子"
+    },
+    {
+      "en": "Saintess",
+      "entity_type": "person",
+      "gender": "female",
+      "zh": "圣女"
+    },
+    {
+      "en": "Saint",
+      "entity_type": "person",
+      "gender": "male",
+      "zh": "圣子"
+    },
+    {
+      "en": "Your Majesty",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "陛下"
+    },
+    {
+      "en": "Your Highness",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "殿下"
+    },
+    {
+      "en": "Sect Leader",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "门主"
+    },
+    {
+      "en": "Young Lord",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "少主"
+    },
+    {
+      "en": "Your Excellency",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "阁下"
+    },
+    {
+      "en": "Ancestral Master",
+      "entity_type": "person",
+      "gender": "neutral",
+      "zh": "祖师"
+    }
+  ]
+}

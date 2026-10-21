@@ -1,0 +1,137 @@
+# heavenlydao.com Reader
+
+A browser extension for Chrome and Firefox that works with your [heavenlydao.com](https://p2p-library.pages.dev/) library. It fetches
+web-novel chapters from the sites that publish them, translates them with Gemini, and keeps them in your library on all your devices.
+
+The extension is one more device of your library. Your chapters, glossaries and settings live on your own devices and pass between them
+peer-to-peer. There is no account and no central server that holds them.
+
+## Features
+
+- **Fetch chapters** from over 500 novel sites, either the next few from the chapter you are on or a novel's whole list.
+- **Translate with Gemini** using your own API key. Glossaries keep names and terms consistent from chapter to chapter, and chapters can be
+  translated into about 90 languages.
+- **Record the novels you open**: their title, author, synopsis, cover and full chapter list.
+- **Teach it a new site.** *Detect with AI* finds a page's title, chapter list and next-chapter links. You can also pick the parts with the
+  element picker or write the site's rule by hand.
+- **Watch for new chapters** on a schedule and fetch them as they come out. You get notifications even with the library site closed.
+- **Sync between your own devices** over WebRTC, and keep the libraries you follow available for other readers.
+
+## Install
+
+There is no store listing yet. Build it from source, then load it unpacked:
+
+```sh
+npm ci
+npm run build        # creates dist/chrome and dist/firefox
+```
+
+- **Chrome, Edge, Brave:** open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and pick `dist/chrome`.
+- **Firefox:** open `about:debugging#/runtime/this-firefox`, click **Load Temporary Add-on…** and pick `dist/firefox/manifest.json`.
+
+**To upload to addons.mozilla.org** (or the Chrome Web Store): `npm run package` builds and writes `dist/package/heavenlydao-reader-<version>-firefox.zip`
+(the add-on), `-source.zip` (the source the add-ons site asks for, with a BUILD.txt) and `-chrome.zip`, from the files on disk: nothing has to
+be committed first. The version is in `src/firefox/manifest.json`, `src/chrome/manifest.json` and `package.json` (change all three). The
+Extension workflow makes the same zips as the `heavenlydao-reader-zips` artifact.
+  A temporary add-on is removed when Firefox closes. A permanent install has to be signed through
+  [addons.mozilla.org](https://addons.mozilla.org/developers/).
+
+Every push also builds both extensions in GitHub Actions. Each run has them as the `heavenlydao-reader-chrome` and
+`heavenlydao-reader-firefox` artifacts.
+
+## Set up
+
+The extension does nothing until it has joined your library.
+
+1. Open the [library site](https://p2p-library.pages.dev/). Your library is created on your first visit.
+2. On the site, go to **Settings › Library › Passphrase** and press **Copy**.
+3. Click the extension's toolbar icon, paste the passphrase and press **Join**.
+4. The site shows "… asks to join". Press **Allow**.
+5. In the popup's **Gemini** tab, press **🔑 Add API key** and paste a key from [Google AI Studio](https://aistudio.google.com/apikey).
+   Without a key, everything except the Gemini features still works.
+
+## The popup
+
+| Tab | What it is for |
+|---|---|
+| **Read** | Fetch the next *N* chapters, translate the next *N*, or ask for Gemini's notes on the terms in them. |
+| **Novel** | What the extension found on this page (title, chapter list, cover, author, synopsis), with *Detect with AI*, the element picker and the site's rule. |
+| **Gemini** | Your API key, the model, and the prompts in use. You change the prompts in the library's Settings. |
+| **Terms** | The saved glossaries and the terms you made in the library's reader. |
+| **Library** | Your library's devices, letting a new one in, and how much it holds. |
+
+The extension's options page (**My site rules**) lists the rules you wrote for sites it does not know.
+
+## Permissions
+
+| Permission | Why |
+|---|---|
+| `storage`, `unlimitedStorage` | Chapters, glossaries and your library are kept in the browser. |
+| `tabs`, `activeTab`, `scripting` | To read the page in front of you, translate it in place, and run the element picker and *Detect with AI* on it. |
+| `cookies` | Sites behind a bot check (Cloudflare) refuse the extension until the browser's pass for that site is copied over. |
+| `offscreen` (Chrome) | WebRTC sync cannot run in a Manifest V3 service worker, so it runs in an offscreen page. |
+| `alarms` | A once-a-minute tick for scheduled checks of new chapters, and to keep the sync running. |
+| `notifications` | Join requests, new chapters and pull requests while no page of the site is open. |
+| `background` (Chrome) | Lets the browser keep the extension running with every window closed, if you turn that on in the browser. |
+| `generativelanguage.googleapis.com` | Gemini, with your key. |
+| `translate.googleapis.com` | Google Translate, for titles and book details. |
+| `heavenlydao.com` (the library site) | The script that lets the library site talk to the extension. |
+| The built-in novel sites (optional) | To read their chapters, chapter lists and book pages. Nothing is asked at install: each site is asked for the first time you use it (the popup's **Allow** button, or **Fetch** on its page). The scripts that record a book on a site's pages are added once the site is allowed. |
+| Any other `https://` site (optional) | Asked for one site at a time, when you save a rule of your own for it. |
+
+## Privacy
+
+- **What reaches Gemini:** the chapter text you translate, the glossary terms found in it, and their notes if Gemini notes are on.
+  *Detect with AI* sends short snippets of the page's elements, not the whole page. Requests are made with your own key, which never
+  leaves your browser except to call Gemini.
+- **What reaches Google Translate:** titles and book details, when your library's title translation uses it (the default).
+- **What reaches novel sites:** requests for the pages you ask for or that your watches check, made with your browser's own cookies for
+  that site.
+- **What reaches the trackers** (`tracker.heavenlydao.com`, `tracker.webtorrent.dev`): an id derived from your passphrase, so your devices
+  can find each other. Chapters go directly between devices over WebRTC. Only devices that have proved they belong to your library get them,
+  plus the readers of anything you choose to share.
+- **The public pool** (`pool.heavenlydao.com`): the extension downloads it once a day, with no cookies and no referrer. It sends terms to it only if you
+  turn on *Add my terms to the public pool* in the library's settings, after it has shown you exactly what would be added.
+- There is no analytics or telemetry, and the extension makes no other requests. The full policy is in [PRIVACY.md](PRIVACY.md).
+
+## Development
+
+```sh
+npm run build:dev    # also lets a copy of the site on localhost:3000 talk to the extension and keeps every novel site in the manifest (for local work; never ship it)
+npm test             # every test in test/, one after the other
+node test/<name>.test.js
+```
+
+```
+  src/shared/         code used by both browsers: the popup, the library (library-host.js), sync (p2p-core.js, p2p-host.js),
+                      Gemini (gemini.js), the site engine (raw-sources.js) and the site rules (sources/)
+  src/chrome/         Manifest V3: manifest, service worker, offscreen page
+  src/firefox/        Manifest V2: manifest, background page
+  tools/              gen-sources.js (makes site rules from WebToEpub's parsers), test.js
+  test/               unit and integration tests (plain Node, no framework)
+  vendor/             chapters.js, shared with the library site (how chapters are put together into novels)
+  reference/          WebToEpub, a git submodule
+  build.js            joins src/shared and src/<browser> into dist/<browser> and adds every site's permission
+```
+
+- **Adding a site:** add a file to [`src/shared/sources/`](src/shared/sources/README.md). The build adds its permission and capture script.
+- **Regenerating the rules from WebToEpub:** `git submodule update --init` fetches `reference/WebToEpub`, then run `node tools/gen-sources.js`.
+  Building and testing do not need the submodule.
+
+## Credits
+
+- Most built-in site rules are generated from the parsers of [WebToEpub](https://github.com/dteviot/WebToEpub) (GPL-3.0) by
+  `tools/gen-sources.js`.
+- Sync finds peers through [WebTorrent](https://github.com/webtorrent/webtorrent) (MIT) trackers.
+- The element picker's interaction follows [uBlock Origin](https://github.com/gorhill/uBlock)'s, without its code.
+
+## License
+
+Copyright (C) 2026 dimensionalreduction (heavenlydao.com)
+
+GPL-3.0, see [LICENSE](LICENSE). The site rules are generated from [WebToEpub](https://github.com/dteviot/WebToEpub)'s parsers, which are GPL-3.0
+as well; [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) lists what else is included.
+
+## Support
+
+support@heavenlydao.com

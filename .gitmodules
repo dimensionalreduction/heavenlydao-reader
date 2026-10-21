@@ -1,0 +1,3 @@
+[submodule "reference/WebToEpub"]
+	path = reference/WebToEpub
+	url = https://github.com/dteviot/WebToEpub.git

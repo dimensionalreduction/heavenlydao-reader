@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My site rules</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #ffffff; --line: #d3d8df; --fg: #1b1f27; --muted: #5a6270; --accent: #2f6fd8; --ok: #1f7a46; --bad: #b3402f; --code: #eef0f3;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #14171c; --card: #1d222a; --line: #394151; --fg: #e6e9ee; --muted: #9aa3b1; --accent: #6ea0f5; --ok: #5fcf8f; --bad: #ee8372; --code: #11141a; color-scheme: dark; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 920px; margin: 0 auto; padding: 24px 16px 64px; display: grid; gap: 22px; }
+  h1 { margin: 0; font-size: 24px; }
+  h2 { margin: 0 0 8px; font-size: 16px; }
+  h3 { margin: 18px 0 4px; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  p { margin: 0; color: var(--muted); max-width: 72ch; }
+  code, pre, input.mono, textarea { font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; font-size: 12.5px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  button { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: transparent; color: #fff; font-weight: 600; }
+  button.danger { color: var(--bad); }
+  button:disabled { opacity: .5; cursor: default; }
+  input[type=text], input[type=number], select, textarea { width: 100%; padding: 7px 9px; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+  input.mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12.5px; }
+  textarea { min-height: 130px; resize: vertical; }
+  .bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .spacer { flex: 1; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 600; padding: 6px 8px; }
+  td { padding: 8px; border-top: 1px solid var(--line); vertical-align: middle; overflow-wrap: anywhere; }
+  td.sel { color: var(--muted); font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+  .chip { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 16px; }
+  .field { display: grid; gap: 4px; align-content: start; }
+  .field label { font-weight: 600; font-size: 13px; }
+  .field .hint { color: var(--muted); font-size: 12px; }
+  .field .err { color: var(--bad); font-size: 12px; }
+  .field.check { display: flex; align-items: center; gap: 8px; }
+  .field.check label { font-weight: 400; }
+  .field.wide { grid-column: 1 / -1; }
+  .note { padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--code); }
+  .note.bad { border-color: var(--bad); color: var(--bad); }
+  .note.ok { border-color: var(--ok); color: var(--ok); }
+  pre.out { margin: 8px 0 0; padding: 10px 12px; background: var(--code); border: 1px solid var(--line); border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 340px; overflow: auto; }
+  [hidden] { display: none !important; }
+  details summary { cursor: pointer; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>My site rules</h1>
+    <p>The sites the extension knows come built in. Add a rule here to read any other site: it says where the chapter text is and, if you like, where the chapter list and the book's details are. A rule is only selectors (nothing in it is run), and it can only read pages of its own site, with your login there. Add rules for sites you trust. A rule you add for a built-in site is used instead of the built-in one.</p>
+  </header>
+
+  <section class="card" id="listBox">
+    <div class="bar"><h2 style="margin:0">Your rules</h2><span class="spacer"></span><button id="addBtn" class="primary">Add a site</button></div>
+    <p id="emptyNote" style="margin-top:8px">No rules yet.</p>
+    <table id="rulesTable" hidden>
+      <thead><tr><th>Site</th><th>Chapter text</th><th>Also</th><th>On</th><th></th></tr></thead>
+      <tbody id="rulesBody"></tbody>
+    </table>
+  </section>
+
+  <section class="card" id="editor" hidden>
+    <div class="bar"><h2 id="editorTitle" style="margin:0">Add a site</h2><span class="spacer"></span><button id="cancelBtn">Close</button></div>
+    <div id="formHost"></div>
+
+    <h3>Try it</h3>
+    <p>Paste the address of a page of that site, then check what the rule makes of it. This reads the page the way the extension will.</p>
+    <div class="bar" style="margin-top:8px">
+      <input type="text" id="tryUrl" class="mono" placeholder="https://example.com/book/123/chapter-1" style="flex:1; min-width:260px">
+      <button id="tryChapter">As a chapter</button>
+      <button id="tryList">As a chapter list</button>
+      <button id="tryBook">As a book page</button>
+    </div>
+    <pre class="out" id="tryOut" hidden></pre>
+
+    <h3>Rule file</h3>
+    <details>
+      <summary>Show or paste the rule as JSON</summary>
+      <p style="margin:6px 0">Copy this to share the rule, or paste a rule and load it into the form (nothing is saved until you press Save).</p>
+      <textarea id="json" class="mono" spellcheck="false"></textarea>
+      <div class="bar" style="margin-top:6px"><button id="loadJson">Load into the form</button><button id="copyJson">Copy</button></div>
+    </details>
+
+    <div class="bar" style="margin-top:18px">
+      <button id="saveBtn" class="primary">Save</button>
+      <span id="saveNote"></span>
+    </div>
+    <p style="margin-top:8px">Saving asks the browser for permission to read pages of this site. Without it the rule cannot be used.</p>
+  </section>
+</main>
+<script src="raw-sources.js"></script>
+<script src="user-rules.js"></script>
+<script src="book-capture.js"></script>
+<script src="rules.js"></script>
+</body>
+</html>
