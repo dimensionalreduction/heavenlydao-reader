@@ -149,8 +149,10 @@
   }
   // The title the library shows: "Chapter <index>: <english>", where the index is the chapter's place in the site's list, so every chapter of
   // a source has an index followed by its name (an afterword is "Chapter 120: Afterword").
+  // (a title that already begins "Chapter 12" or "Chapter 12: " has that dropped: the index is the number the library shows, so it would be said twice)
+  const noChapterWord = (t) => String(t || "").replace(/^chapter\s*\d+(?:\.\d+)?\s*[:\uff1a.\-\u2013\u2014]?\s*/i, "").trim();
   function composeTitle(num, original, english) {
-    const body = String(english || "").trim() || splitTitle(original).body;
+    const body = noChapterWord(String(english || "").trim() || splitTitle(original).body);
     return "Chapter " + num + (body ? ": " + body : "");
   }
 

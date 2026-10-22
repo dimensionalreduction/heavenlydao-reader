@@ -312,6 +312,9 @@ function p2pStorageOp(op, args) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || message.target !== "p2p-bg") return;
+  // (it reads and writes any stored key: only this extension's own pages ask, never a content script, which runs inside a site's page)
+  if (!sender || sender.id !== chrome.runtime.id || (sender.tab && !(typeof sender.url === "string" && sender.url.startsWith(chrome.runtime.getURL("")))))
+    return void sendResponse({ error: "not this extension's own page" });
   p2pStorageOp(message.op, message.args || [])
     .then((result) => sendResponse({ result }))
     .catch((e) => sendResponse({ error: e.message }));

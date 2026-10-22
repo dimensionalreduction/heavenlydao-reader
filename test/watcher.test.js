@@ -171,6 +171,11 @@ const watch = (over = {}) => ({ id: "wtr-lab:1|wtr-lab.com", novel: "wtr-lab:1",
   assert.deepStrictEqual(W.splitTitle("10.第10章 这就是巫师吗"), { prefixed: true, body: "这就是巫师吗" }, "a leading '10.' is ignored");
   assert.deepStrictEqual(W.splitTitle("后记"), { prefixed: false, body: "后记" });
   assert.strictEqual(W.composeTitle(12, "第12章 重生", "Rebirth"), "Chapter 12: Rebirth");
+  // a site whose titles already say "Chapter N" (asurascans.com, English sites): said once
+  assert.strictEqual(W.composeTitle(1, "Chapter 1", "Chapter 1"), "Chapter 1", "a title that is only its number");
+  assert.strictEqual(W.composeTitle(7, "Chapter 12: The Fall", "Chapter 12: The Fall"), "Chapter 7: The Fall", "the site's own number is not shown beside the index");
+  assert.strictEqual(W.composeTitle(3, "Chapter 3.5 - Side Story", ""), "Chapter 3: Side Story");
+  assert.strictEqual(W.composeTitle(4, "Chapterhouse", ""), "Chapter 4: Chapterhouse", "a word that only begins like it stays");
   assert.strictEqual(W.composeTitle(12, "第12章", ""), "Chapter 12", "a chapter with no title words");
   assert.strictEqual(W.composeTitle(5, "后记", "Afterword"), "Chapter 5: Afterword", "an unnumbered title is its place in the list, then its translation");
   assert.deepStrictEqual(W.splitTitle("001傅家三爷，信佛如魔新书求收（2/3）"), { prefixed: false, body: "傅家三爷，信佛如魔新书求收（2/3）" }, "a leading list number before Chinese words is dropped");
