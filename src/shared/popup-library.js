@@ -48,6 +48,7 @@
       st = await call("status");
     } catch (e) {
       textEl.textContent = "The library can't be reached: " + e.message;
+      textEl.hidden = false;
       shown = "";
       return;
     }
@@ -59,13 +60,12 @@
     const tail = busy ? " " + busy : note ? " " + note : "";
     if (st.state === "unsupported") {
       textEl.textContent = "This browser can't make the library's keys (Ed25519). Update it to keep a library here.";
+      textEl.hidden = false;
       return;
     }
     if (st.state !== "member") return; // (the lock screen is shown instead)
-    const others = st.devices.filter((d) => !d.me).map((d) => d.name + (d.main ? " (main)" : ""));
-    textEl.textContent = "Your glossaries, terms and notes are kept here and on your other devices. This device: " +
-      st.device.name + (st.main ? " — the main device, which lets new devices in" : "") + ". " +
-      (others.length ? "Also: " + others.join(", ") + "." : "No other device yet.") + tail;
+    textEl.textContent = tail.trim(); // (only what is being done or was just done)
+    textEl.hidden = !textEl.textContent; // (nothing to say: no gap either)
     for (const j of st.joins) {
       const row = document.createElement("div");
       row.className = "label-row";
