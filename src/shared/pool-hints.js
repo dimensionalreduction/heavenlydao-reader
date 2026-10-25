@@ -64,12 +64,18 @@ var PoolHints = (function () {
 
   // Adds terms to the novel's own glossary ("adopted:<novel key>": only terms it has none of, so the first rendering of a source stays and one the person changed or deleted
   // is theirs) and binds it to the novel. from: "pool" or "gemini". -> terms added. Never throws: a chapter is not lost for it.
-  async function keep(url, from, rows) {
+  // The name a novel's kept terms are listed under: "Kept terms · Lord of Mysteries (69shuba.com/txt/56376)" (the title when the page gave one, else only the address).
+  function keptName(url, title) {
+    const key = WtrTerms.bindingKey(url);
+    const t = String(title || "").trim().slice(0, 100);
+    return "Kept terms · " + (t ? t + " (" + key + ")" : key);
+  }
+  async function keep(url, from, rows, title) {
     try {
       if (!rows.length) return 0;
       const key = WtrTerms.bindingKey(url);
       const id = "adopted:" + key;
-      const r = await GlossaryServer.api("POST", "/api/glossaries/" + encodeURIComponent(id) + "/add", { from, name: key + " (kept while translating)", site: "adopted", terms: rows });
+      const r = await GlossaryServer.api("POST", "/api/glossaries/" + encodeURIComponent(id) + "/add", { from, name: keptName(url, title), site: "adopted", terms: rows });
       const { glossaryBindings } = await ext.storage.local.get("glossaryBindings");
       const ids = WtrTerms.bindingIds((glossaryBindings || {})[key]);
       if (!ids.includes(id)) await GlossaryServer.setBinding(key, ids.concat(id));
@@ -79,7 +85,7 @@ var PoolHints = (function () {
     }
   }
   // The pool terms a chapter was sent.
-  const adopt = (url, entries) => keep(url, "pool", entries.map((e) => [e.terms[0], e.translation, "pool"]));
+  const adopt = (url, entries, title) => keep(url, "pool", entries.map((e) => [e.terms[0], e.translation, "pool"]), title);
 
   // Another language (a chapter translated into it): the terms of the glossary asked for with no rendering in it yet are given the pool's of that language when it has one, and the
   // pool's terms the chapter has that the glossary has no entry for go with it. -> { glossary, used: [[source, rendering]] } (the pool terms the chapter was sent, to be kept).
@@ -125,7 +131,7 @@ var PoolHints = (function () {
 
   // The terms Gemini suggested from this chapter ({ term, translation, kind }): those that are in its text, are a term (not a character or a sentence), and the glossary it was
   // sent with has no rendering of. At most 60 a chapter.
-  async function keepSuggestions(url, text, suggestions, glossary) {
+  async function keepSuggestions(url, text, suggestions, glossary, title) {
     if (!(await settings()).keepTerms || !Array.isArray(suggestions)) return 0;
     const have = new Set();
     for (const e of glossary || []) for (const t of e.terms || [e.term]) if (t && (e.translation || "")) have.add(t);
@@ -138,10 +144,10 @@ var PoolHints = (function () {
       rows.push([term, en]);
       if (rows.length >= 60) break;
     }
-    return keep(url, "gemini", rows);
+    return keep(url, "gemini", rows, title);
   }
 
-  return { entriesFor, adopt, keepSuggestions, forLanguage, keepInLanguage, pool, enabled };
+  return { entriesFor, adopt, keepSuggestions, forLanguage, keepInLanguage, keptName, pool, enabled };
 })();
 
 if (typeof module !== "undefined" && module.exports) module.exports = PoolHints;

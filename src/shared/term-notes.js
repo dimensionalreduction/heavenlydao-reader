@@ -188,7 +188,7 @@ var TermNotes = (function () {
       }
     }
     for (const [term, translation] of made) if (!given.has(term)) glossary.push({ terms: [term], translation, scope: "global", hostname: null, source: "suggested" });
-    const name = ((bound && bound.name) || id) + " (" + lang + ")";
+    const name = (id.startsWith("adopted:") && typeof PoolHints !== "undefined" ? PoolHints.keptName(job.url, job.novelName) : (bound && bound.name) || id) + " (" + lang + ")";
     const keep = async (suggestions) => {
       if (!id) return;
       const rows = (suggestions || []).filter((s) => s && s.term && s.translation).map((s) => [sourceOf.get(s.term) || s.term, s.translation]);
@@ -232,9 +232,9 @@ var TermNotes = (function () {
       if (pooled.length) glossary = (glossary || []).concat(pooled);
     }
     const response = await translateText(job.text, glossary, job.model, ctx, lang, extra);
-    if (pooled.length && response && !response.error && job.url) await PoolHints.adopt(job.url, pooled);
+    if (pooled.length && response && !response.error && job.url) await PoolHints.adopt(job.url, pooled, job.novelName);
     // and the terms Gemini suggested from the chapter (English, from its original: a rendering of a source term), kept in the novel for the chapters after
-    if (!other && !job.english && !noGlossary && response && !response.error && job.url && typeof PoolHints !== "undefined") await PoolHints.keepSuggestions(job.url, String(job.text), response.suggestions, glossary);
+    if (!other && !job.english && !noGlossary && response && !response.error && job.url && typeof PoolHints !== "undefined") await PoolHints.keepSuggestions(job.url, String(job.text), response.suggestions, glossary, job.novelName);
     if (other && response && !response.error) { await other.keep(response.suggestions); await other.keepPool(); }
     if (ctx && response && !response.error && response.notes) await save(ctx, response.notes, job.novelName);
     if (response) delete response.notes;
