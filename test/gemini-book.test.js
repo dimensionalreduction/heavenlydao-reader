@@ -48,5 +48,15 @@ const answer = (list) => ({ json: { candidates: [{ content: { parts: [{ text: JS
   assert.deepStrictEqual(Array.from(await ctx.listGeminiModels()), Array.from(ctx.GEMINI_MODELS_FALLBACK), "no key: the model list is the built-in one");
   assert.strictEqual(sent, null, "no key: nothing goes to Gemini");
 
+  // the key the library's page hands over (profileKeys, by Google's address) is the one used; the one typed in the popup before is the fallback
+  const GOOGLE = "https://generativelanguage.googleapis.com/v1beta/openai";
+  reply = answer(texts);
+  stored = { profileKeys: { [GOOGLE]: "from-the-site", "https://other.example/v1": "not-this" }, geminiApiKey: "old-popup-key" };
+  await book(texts);
+  assert.ok(sent.url.includes("key=from-the-site"), "the key handed over by the site is used first");
+  stored = { profileKeys: { "https://other.example/v1": "not-this" }, geminiApiKey: "old-popup-key" };
+  await book(texts);
+  assert.ok(sent.url.includes("key=old-popup-key"), "another provider's key is not Gemini's; the older one is the fallback");
+
   console.log("OK — gemini book checks passed");
 })().catch((e) => { console.error("FAIL:", e); process.exit(1); });

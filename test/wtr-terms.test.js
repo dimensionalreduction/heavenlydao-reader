@@ -150,4 +150,52 @@ assert.strictEqual(swap("The Morning Bell, a bellow, a bell.", "bell", "gong", t
 assert.strictEqual(swap("Key and key", "Key", "Kei", false), "Kei and key", "case sensitive");
 assert.strictEqual(swap("他看见宁奇走来", "宁奇", "Ning Qi", false), "他看见Ning Qi走来", "Chinese anywhere");
 assert.strictEqual(swap("cost $5 (x)", "$5 (x)", "five", false), "cost five", "regex characters are text");
+const fixes = (text, from, to) => W.applyReplacements(text, [{ terms: [from], translation: to, source: "replace", mine: true, ci: true }]);
+assert.strictEqual(fixes("A ju jun, two ju juns.", "ju jun", "jade slip"), "A jade slip, two jade slips.", "a plural ending is found too and shown as a plural");
+assert.strictEqual(fixes("a ju junk", "ju jun", "jade slip"), "a ju junk", "a longer word is left alone");
+assert.strictEqual(fixes("two bells", "bell", "lily"), "two lilies");
+assert.strictEqual(fixes("boxes", "box", "chest"), "chests");
+// ---- which of a novel's glossaries are sent: its lists, in a fixed order, each ticked or not (docs/GLOSSARY.md "Choosing the glossaries sent") ----
+const o = (x) => ({ o: x });
+const glib = {
+  "wtr-lab:8053": { name: "Sky Sword", terms: [["林动", "Lin Dong", "wtr", o("novel")], ["道", "Dao", "wtr", o("shared:Cultivation")], ["武祖", "Martial Ancestor (AI)", "wtr", o("ai")], ["林动", "dup", "wtr", o("ai")], ["苏白", "Su Bai (mine)", "wtr", o("yours")]] },
+  "file:abc": { name: "My names", terms: [["武祖", "Martial Ancestor", "copied", o("file")], ["林动", "Lin Dong (file)", "copied", o("file")]] },
+  "shared:Cultivation": { name: "Cultivation (shared list)", terms: [["道", "the Dao", "copied", o("shared:Cultivation")], ["气", "Qi", "copied", o("shared:Cultivation")]] },
+  "shared:BTTH": { name: "BTTH (shared list)", terms: [["斗气", "Dou Qi", "copied", o("shared:BTTH")]] },
+  "adopted:69shuba.com/txt/77582": { name: "Kept", terms: [["药老", "Yao Lao", "pool", o("pool")]] }
+};
+const SKEY = "69shuba.com/txt/77582";
+const gb = { [SKEY]: { ids: ["file:abc", "adopted:69shuba.com/txt/77582", "shared:BTTH", "wtr-lab:8053"] } };
+let lists = W.novelLists({ glossaries: glib, bindings: gb, keys: [SKEY], book: SKEY });
+assert.deepStrictEqual(lists.filter((l) => !l.hidden).map((l) => l.id),
+  ["wtr-lab:8053#yours", "wtr-lab:8053#novel", "file:abc", "wtr-lab:8053#ai", "adopted:69shuba.com/txt/77582", "shared:BTTH", "wtr-lab:8053#shared:Cultivation"],
+  "a site novel's glossary is a list for each part; the order: yours, the novel's, files, AI, kept, shared, Cultivation");
+assert.ok(lists.every((l) => l.on), "every list is sent until it is unticked");
+assert.deepStrictEqual(lists.filter((l) => l.hidden).map((l) => l.id), ["shared:Cultivation"], "Cultivation for every novel (none said: the default), and the site glossary's Cultivation, are one list");
+const sent = (ls) => Object.fromEntries(W.pickedRows(ls).map(({ row }) => [row[0], row[1]]));
+assert.deepStrictEqual(sent(lists), { "苏白": "Su Bai (mine)", "林动": "Lin Dong", "武祖": "Martial Ancestor", "药老": "Yao Lao", "斗气": "Dou Qi", "道": "Dao", "气": "Qi" },
+  "the first list with a term gives it: the novel's over a file, a file over the AI's, the site's Cultivation over the bundled one (which still adds what it has)");
+// unticked for this novel: the binding off:<book>
+lists = W.novelLists({ glossaries: glib, bindings: { ...gb, [W.offKey(SKEY)]: ["wtr-lab:8053#novel", "file:abc", "wtr-lab:8053#shared:Cultivation"] }, keys: [SKEY], book: SKEY });
+assert.deepStrictEqual(lists.filter((l) => !l.on).map((l) => l.id), ["wtr-lab:8053#novel", "file:abc", "wtr-lab:8053#shared:Cultivation", "shared:Cultivation"], "unticked lists are not sent (the hidden Cultivation follows the one shown)");
+assert.deepStrictEqual(sent(lists), { "苏白": "Su Bai (mine)", "武祖": "Martial Ancestor (AI)", "林动": "dup", "药老": "Yao Lao", "斗气": "Dou Qi" }, "and the next list gives a term then");
+assert.ok(W.novelLists({ glossaries: glib, bindings: { ...gb, [W.offKey("other")]: ["file:abc"] }, keys: [SKEY], book: SKEY }).every((l) => l.on), "another novel's ticks are its own");
+// for every novel: the binding EVERY (none: Cultivation); a site novel's glossary needs no binding (implicit)
+lists = W.novelLists({ glossaries: glib, bindings: { [W.EVERY]: ["file:abc"] }, keys: ["uuread.tw/chapter/1"], book: "uuread.tw/chapter/1" });
+assert.deepStrictEqual(lists.map((l) => [l.id, l.every]), [["file:abc", true]], "a file for every novel; Cultivation taken off every novel");
+assert.deepStrictEqual(W.novelLists({ glossaries: glib, bindings: {}, keys: ["uuread.tw/chapter/1"], book: "uuread.tw/chapter/1" }).map((l) => l.id), ["shared:Cultivation"], "a novel with nothing: Cultivation");
+assert.deepStrictEqual(W.novelLists({ glossaries: {}, bindings: {}, keys: ["x"], book: "x" }), [], "Cultivation not in the library (yet): nothing");
+assert.deepStrictEqual(W.novelLists({ glossaries: glib, bindings: { [W.EVERY]: [] }, keys: ["wtr-lab:8053"], book: "wtr-lab:8053", implicit: ["wtr-lab:8053"] }).map((l) => l.id).slice(0, 2), ["wtr-lab:8053#yours", "wtr-lab:8053#novel"], "a site novel, its own glossary");
+assert.ok(W.isListKey(W.EVERY) && W.isListKey(W.offKey("x")) && !W.isListKey(SKEY), "these bindings are not a novel's");
+// the book of a chapter: a site chapter's novel, else its site and folder
+assert.strictEqual(W.bookOf("https://wtr-lab.com/en/novel/8053/sky/chapter-3"), "wtr-lab:8053");
+assert.strictEqual(W.bookOf("https://www.69shuba.com/txt/77582/38804612"), SKEY);
+// what the extension sends (boundEntries): the same lists, the ticks for the novel the chapter is of
+const gbOff = { ...gb, [W.offKey(SKEY)]: ["wtr-lab:8053#ai"] };
+const be = W.boundEntries({ library: glib, bindings: gbOff, url: "https://www.69shuba.com/txt/77582/1", ownEntries: [], hostname: "69shuba.com" });
+assert.deepStrictEqual(be.map((e) => e.terms[0] + "=" + e.translation + "@" + e.lib), ["苏白=Su Bai (mine)@wtr-lab:8053", "林动=Lin Dong@wtr-lab:8053", "武祖=Martial Ancestor@file:abc", "药老=Yao Lao@adopted:69shuba.com/txt/77582", "斗气=Dou Qi@shared:BTTH", "道=Dao@wtr-lab:8053", "气=Qi@shared:Cultivation"], "in the lists' order, the unticked one left out, Cultivation for every novel");
+assert.strictEqual(be.find((e) => e.terms[0] === "道").origin.o, "shared:Cultivation", "each with where it came from");
+const viaWtr = W.boundEntries({ library: glib, bindings: { "uuread.tw/chapter/1": { ids: ["wtr-lab:8053"] }, [W.offKey("wtr-lab:8053")]: ["wtr-lab:8053#yours"] }, url: "https://uuread.tw/chapter/1/2.html", ownEntries: [], hostname: "uuread.tw", book: "wtr-lab:8053" });
+assert.ok(!viaWtr.some((e) => e.terms[0] === "苏白") && viaWtr.some((e) => e.terms[0] === "林动"), "a site novel's chapter read from its source: the ticks of the site novel (book)");
+
 console.log("OK — wtr-terms checks passed");

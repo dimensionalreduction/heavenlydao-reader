@@ -24,13 +24,14 @@ var OriginalTranslate = (function () {
     };
   }
 
-  // The terms that apply to this chapter: yours, plus the library glossaries bound to its novel. (The terms picked in the library's reader change
-  // only what is shown, after the translation: none of them is sent.)
-  async function termsFor(url) {
+  // The terms that apply to this chapter: yours, plus the library's glossaries of its novel, the lists ticked for it (WtrTerms.boundEntries). (The terms
+  // picked in the library's reader change only what is shown, after the translation: none of them is sent.) book: the novel's, when the chapter is
+  // saved as another's (a site chapter read from its source site).
+  async function termsFor(url, book) {
     const hostname = new URL(url).hostname.replace(/^www\./, "");
     const stored = await ext.storage.local.get(["glossary", "glossaryLibrary", "glossaryBindings"]);
     const own = (stored.glossary || []).map(ownEntry);
-    const bound = WtrTerms.boundEntries({ library: stored.glossaryLibrary, bindings: stored.glossaryBindings, url, ownEntries: own, hostname }).map(ownEntry);
+    const bound = WtrTerms.boundEntries({ library: stored.glossaryLibrary, bindings: stored.glossaryBindings, url, ownEntries: own, hostname, book }).map(ownEntry);
     // "replace" entries correct the AI's output afterwards; they are not hints for the model.
     return own.concat(bound).filter((e) => (e.scope === "global" || e.hostname === hostname) && e.source !== "replace");
   }
@@ -79,7 +80,8 @@ var OriginalTranslate = (function () {
   // job: { url (the chapter's page), text (its original text), novelName, pageTitle, next, force (replace a chapter already translated: a re-fetch or a
   // re-translate), retranslate (send it to the translator even if it is English: only when asked for on purpose), notes (optional: 0 = no notes on terms
   // for this chapter, more = notes when they are switched on; not given: as the switch says), lang (optional: the language to translate it into, a code; not
-  // given: the one the library says), custom (optional, the reader's Custom prompt: { prompt, notes, glossary, replace }, see TermNotes.translate; replace: your English fixes are done on the answer) }
+  // given: the one the library says), custom (optional, the reader's Custom prompt: { prompt, notes, glossary, replace }, see TermNotes.translate; replace: your English fixes are done on the answer),
+  // watched (a chapter a watch fetched: translated with its novel's profile when it has one) }
   // The result is kept under the chapter's key for English and under "<chapter key>#lang=<code>" for another language: versions of the same chapter.
   async function run(job) {
     const lang = job.lang || (typeof GlossaryServer !== "undefined" && GlossaryServer.targetLanguage ? await GlossaryServer.targetLanguage().catch(() => "en") : "en");
@@ -98,15 +100,27 @@ var OriginalTranslate = (function () {
     }
     // Best effort, like the in-page translator: a library that is slow to answer just means the cached terms are used.
     await Promise.race([GlossaryServer.pull().catch(() => null), new Promise((r) => setTimeout(r, 2500))]);
-    const glossary = await termsFor(job.url);
+    const glossary = await termsFor(job.url, job.saveUrl ? WtrTerms.bookOf(job.saveUrl) : undefined);
+    // A chapter a watch fetched (job.watched), of a novel translated with a profile (profile-translate.js): its model and prompt, as the library's page would
+    // translate it; a profile paid by the extension is this Gemini with the profile's prompt (below, as a Custom prompt).
+    const profile = job.watched && typeof ProfileTranslate !== "undefined" ? await ProfileTranslate.forChapter(job.saveUrl || job.url) : null;
+    if (profile && profile.pay !== "extension") {
+      const r = await ProfileTranslate.translate(job, profile, lang === "en" ? glossary : await ProfileTranslate.languageGlossary(job.url, lang, job.saveUrl ? WtrTerms.bookOf(job.saveUrl) : undefined), lang);
+      if (r.error) return r;
+      await noteMentions(job, glossary, {}).catch(() => {});
+      await ext.storage.local.set({
+        [key]: { translated: r.text, suggestions: [], savedAt: Date.now(), model: profile.model + " (" + profile.name + ")", pageTitle: job.pageTitle || "", novelName: job.novelName || "", ...(job.next ? { next: job.next } : {}) }
+      });
+      return { ok: true, lang, profile: profile.name };
+    }
     const { selectedModel } = await ext.storage.local.get("selectedModel");
     // The reader's Custom prompt: the prompt chosen and what goes with it.
-    const custom = job.custom && job.custom.prompt ? { prompt: job.custom.prompt, notes: !!job.custom.notes, glossary: job.custom.glossary !== false } : null;
+    const custom = job.custom && job.custom.prompt ? { prompt: job.custom.prompt, notes: !!job.custom.notes, glossary: job.custom.glossary !== false } : profile ? ProfileTranslate.customOf(profile) : null;
     const response = await TermNotes.translate({ text: String(job.text).slice(0, MAX_CHARS), glossary, model: selectedModel, url: job.url, title: job.pageTitle, novelName: job.novelName, notes: job.notes, lang, english: !!job.english, ...(custom ? { custom } : {}) });
     if (!response || response.error) return { error: (response && response.error) || "no answer from Gemini" };
     await noteMentions(job, glossary, response).catch(() => {});
     // "English glossary" of the Custom prompt: your English fixes (your terms, "Xia Kingdom" -> "China") are done on the answer; none of them is sent to Gemini
-    if (custom && job.custom.replace && lang === "en") response.translated = WtrTerms.applyReplacements(response.translated, await replacementsFor(job.url));
+    if (custom && job.custom && job.custom.replace && lang === "en") response.translated = WtrTerms.applyReplacements(response.translated, await replacementsFor(job.url));
     await ext.storage.local.set({
       [key]: {
         translated: response.translated,

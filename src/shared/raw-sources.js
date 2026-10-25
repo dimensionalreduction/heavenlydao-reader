@@ -222,6 +222,7 @@
   // The chapter text on one page: one paragraph per line, "" when the page has no chapter text (a Cloudflare page, a changed layout).
   function textOf(doc, rule) {
     let box = null;
+    if (!rule.selector) return ""; // (a site with only its chapter list saved: no text selector yet)
     try {
       box = doc.querySelector(rule.selector);
     } catch (e) {

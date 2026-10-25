@@ -1,4 +1,4 @@
-importScripts("p2p-core.js", "term-match.js", "gemini.js", "site-matches.js", "site-access.js", "glossary-server.js", "wtr-terms.js", "base-glossary.js", "term-pool.js", "pool-hints.js", "pool-share.js", "raw-sources.js", "user-rules.js", "term-notes.js", "original-translate.js", "watcher.js", "book-visit.js", "notice-bg.js");
+importScripts("p2p-core.js", "term-match.js", "gemini.js", "site-matches.js", "site-access.js", "fish-speech.js", "glossary-server.js", "wtr-terms.js", "base-glossary.js", "term-pool.js", "pool-hints.js", "pool-share.js", "raw-sources.js", "user-rules.js", "term-notes.js", "profile-model.js", "profile-translate.js", "original-translate.js", "watcher.js", "book-visit.js", "notice-bg.js");
 UserRules.start(chrome); // the rules the person added: read from storage here, handed to the offscreen document below
 
 const RAW_TEXT_VAR_CANDIDATES = ["txt_content"];
@@ -76,6 +76,12 @@ function handleMessage(message, sender, sendResponse) {
   const access = SiteAccess.answerMessage(message);
   if (access) {
     access.then(sendResponse, () => sendResponse(null));
+    return true;
+  }
+  // the library site's Listen tab, with Fish Audio and the person's own key (fish-speech.js)
+  const fish = FishSpeech.answer(message, sender);
+  if (fish) {
+    fish.then(sendResponse);
     return true;
   }
   if (message.type === "bookcapture:run") {
@@ -299,6 +305,17 @@ function p2pStorageOp(op, args) {
     // the library (library-host.js, in the offscreen page): whether this extension is in it
     case "setLibraryOn":
       return chrome.storage.local.set({ libraryOn: args[0] || null });
+    // joining a library through its site's tab: its passphrase; leaving one: the chapters and the glossaries' copy go (library-host.js forgetStored)
+    case "setPassphrase":
+      return chrome.storage.local.set({ p2pPassphrase: String(args[0] || "").slice(0, 500), p2pEnabled: true });
+    case "forgetLibrary":
+      return chrome.storage.local.get(null).then((all) => chrome.storage.local.remove(Object.keys(all).filter((k) =>
+        k.startsWith(P2P_PREFIX) || k.startsWith(P2P_INDEX_KEY) || ["glossaryLibrary", "glossaryBindings", "glossaryRev", "myTerms"].includes(k))));
+    // what this extension does for your other devices (p2p-host.js helpDevices)
+    case "getHelp":
+      return chrome.storage.local.get("helpDevices").then((r) => r.helpDevices || null);
+    case "setHelp":
+      return chrome.storage.local.set({ helpDevices: args[0] || null });
     case "listTranslations":
       return chrome.storage.local.get(null).then((all) =>
         Object.keys(all)

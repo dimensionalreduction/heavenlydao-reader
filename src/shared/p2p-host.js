@@ -284,6 +284,14 @@
     }
   }
 
+  // The source site a site novel's "Raw" link leads to, as the library knows it (the novel's rawHost, kept when its details were read), or "".
+  async function rawHostOf(rawId, meta) {
+    if (meta && meta.source && meta.source !== WTR_OWN) return meta.source;
+    const id = "wtr-lab:" + rawId;
+    const novel = await Promise.resolve(direct ? GlossaryServer.getNovel(id) : ext.runtime.sendMessage({ type: "novel:get", id }).then((r) => (r && r.novel) || null)).catch(() => null);
+    return (novel && novel.rawHost) || "";
+  }
+
   async function saveWtrSource(key, meta) {
     const m = WTR_KEY.exec(key);
     if (!m || inflight.has(key)) return;
@@ -316,8 +324,12 @@
       if (!lookup.ok || !chapter || !Number.isInteger(chapter.id)) throw new Error("The site did not give this chapter's id");
       // follows the redirect; the browser refuses (a bare "Failed to fetch") when it leads to a site this extension has no permission for
       const rawLink = "https://wtr-lab.com/api/serie/go-to-raw?id=" + chapter.id;
-      let res = await fetchSite(rawLink, { credentials: "include" }).catch(() => {
-        throw new Error("could not follow the site's Raw link. The site it leads to may be showing a Cloudflare check, may not be supported, or did not answer. Open " + rawLink + " once in this browser (it passes the check), then try again");
+      let res = await fetchSite(rawLink, { credentials: "include" }).catch(async (e) => {
+        // (a bare "Failed to fetch" is usually the browser refusing the redirect to a site this extension may not read yet: when the novel's source site is known and not
+        // allowed, that is said, and noted for the popup's Allow, rather than a bot check that was never the trouble)
+        const host = await rawHostOf(rawId, meta);
+        if (host && typeof SiteAccess !== "undefined") await SiteAccess.guard("https://" + host + "/");
+        throw new Error("could not follow the site's Raw link" + (e && e.message ? " (" + e.message + ")" : "") + ". The site it leads to may be showing a Cloudflare check, may not be supported, or did not answer. Open " + rawLink + " once in this browser (it passes the check), then try again");
       });
       // a novel of a site that cannot be read but has a mirror (fanqienovel -> tomatomtl.com): the mirror's page for the same chapter
       const mirror = await RawSources.mirrorUrl(res);
@@ -382,7 +394,7 @@
     const tk = withLang(meta.saveUrl || url, meta.lang);
     if (translating.has(tk)) return;
     translating.add(tk);
-    const job = { url, text, pageTitle: meta.pageTitle, novelName: meta.novelName, next: meta.next, force: !!meta.force, retranslate: !!meta.retranslate, ...(meta.lang ? { lang: meta.lang } : {}), ...(meta.saveUrl ? { saveUrl: meta.saveUrl } : {}), ...(meta.english ? { english: true } : {}), ...(Number.isFinite(meta.notes) ? { notes: meta.notes } : {}), ...(meta.custom ? { custom: meta.custom } : {}) };
+    const job = { url, text, pageTitle: meta.pageTitle, novelName: meta.novelName, next: meta.next, force: !!meta.force, retranslate: !!meta.retranslate, ...(meta.lang ? { lang: meta.lang } : {}), ...(meta.saveUrl ? { saveUrl: meta.saveUrl } : {}), ...(meta.english ? { english: true } : {}), ...(Number.isFinite(meta.notes) ? { notes: meta.notes } : {}), ...(meta.custom ? { custom: meta.custom } : {}), ...(meta.watched ? { watched: true } : {}) };
     report(key, "translate-queued", meta);
     lastTranslation = lastTranslation
       .then(() => {
@@ -390,10 +402,10 @@
         return direct ? OriginalTranslate.run(job) : ext.runtime.sendMessage({ type: "original:translate", job });
       })
       .then((r) => {
-        if (r && r.error) { log("translation failed", url, r.error); report(key, "failed", meta, r.error); }
-        else report(key, "done", meta, undefined, meta.saveUrl ? undefined : url);
+        if (r && r.error) { log("translation failed", url, r.error); report(key, "failed", meta, r.error); if (meta.watched) untranslated.set(key, { error: String(r.error), stop: !!r.stop }); }
+        else { report(key, "done", meta, undefined, meta.saveUrl ? undefined : url); untranslated.delete(key); }
       })
-      .catch((e) => { log("translation failed", url, e && e.message); report(key, "failed", meta, e && e.message); })
+      .catch((e) => { log("translation failed", url, e && e.message); report(key, "failed", meta, e && e.message); if (meta.watched) untranslated.set(key, { error: String((e && e.message) || e) }); })
       .finally(() => translating.delete(tk));
   }
   // Gemini's notes on terms, alone, for a chapter that is already English ("<chapter key>#notes", from the library's reader): taken in the same line
@@ -595,7 +607,63 @@
     }
   }
 
-  async function saveOriginal(key, meta) {
+  // ---------- what this extension does for your other devices ----------
+  // Another device of your library may ask it for chapters (their original text and those ahead, a chapter list, a book's details: "fetch") and for
+  // translations with this extension's Gemini ("translate"). Each is done only once switched on in this browser (the site's Settings › Library:
+  // helpDevices, kept in this extension and not in the library, so another device cannot switch it on). The library's tab in this browser, and this
+  // extension's own work (its watches, its popup, the editions of your novels), are not held to them; neither is sync.
+  const HELP_KEY = "helpDevices";
+  const helpOf = (v) => ({ fetch: !!(v && v.fetch), translate: !!(v && v.translate) });
+  const getHelp = async () => helpOf(direct ? (await ext.storage.local.get(HELP_KEY))[HELP_KEY] : await call("getHelp"));
+  async function setHelp(v) {
+    const h = helpOf(v);
+    if (direct) await ext.storage.local.set({ [HELP_KEY]: h });
+    else await call("setHelp", h);
+    return h;
+  }
+  async function deviceName() {
+    try {
+      const lib = typeof LibraryHost !== "undefined" ? await LibraryHost.ready : null;
+      const me = lib && lib.status().device;
+      return (me && me.name) || "your computer";
+    } catch (e) {
+      return "your computer";
+    }
+  }
+  const declined = (why) => Object.assign(new Error(why), { declined: true });
+  const notFetching = (name) => "The extension on " + name + " doesn't fetch chapters for your other devices: switch it on in Settings › Library in that browser";
+  const notTranslating = (name) => "The extension on " + name + " doesn't translate for your other devices: switch it on in Settings › Library in that browser";
+  // A request from another device, as far as this extension does it for them: -> the request to do (with only translating off, a chapter's text is still
+  // fetched, and the asker told it is not translated: from.decline); throws a declined error when none of it is done.
+  async function forOtherDevice(key, meta, from) {
+    const h = await getHelp();
+    if (h.fetch && h.translate) return meta;
+    const name = await deviceName();
+    if (key.endsWith("#notes")) {
+      if (!h.translate) throw declined(notTranslating(name));
+      return meta;
+    }
+    if (key.endsWith("#details") || key.endsWith("#list") || meta.findNext) {
+      if (!h.fetch) throw declined(notFetching(name));
+      return meta;
+    }
+    if (WTR_KEY.test(key)) {
+      if (!h.fetch) throw declined(notFetching(name));
+      if (meta.source !== WTR_OWN && !h.translate) throw declined(notTranslating(name)); // (from the novel's source site it is translated as it comes)
+      return meta;
+    }
+    const store = direct ? directAdapter : proxyAdapter;
+    const here = !meta.force && !!((await store.getTranslation(key)) || {}).translated;
+    if (!here && !h.fetch) throw declined(notFetching(name));
+    if (!meta.translate || h.translate) return meta;
+    if (here) throw declined(notTranslating(name));
+    if (from && from.decline) from.decline(notTranslating(name));
+    return { ...meta, translate: false, retranslate: false };
+  }
+
+  // from: { decline } when another device asked (p2p-core.js), else nothing
+  async function saveOriginal(key, meta, from) {
+    if (meta.remote) meta = await forOtherDevice(key, meta, from); // (the chapters ahead keep `remote`, so they are held to the same)
     if (key.endsWith("#notes")) return queueNotes(key, meta);
     if (key.endsWith("#details")) return refreshBookDetails(key, meta);
     if (key.endsWith("#list")) return refreshSourceList(key, meta);
@@ -866,6 +934,9 @@
   const EMPTY_RUN = 3;
   const fills = new Map(); // watch id -> { at, asked, got, empty, pause, pausedUntil, reason }: how its fetching goes (library-host.js "schedule")
   const lastError = new Map(); // "<chapter key>#original" -> why it did not come, until its batch is looked at
+  // "<chapter key>#original" -> { error, stop } of a watch's chapter that came but was not translated (stop: its novel's profile cannot be used here until something is
+  // changed: a key, the sign-in, tickets), until its batch is looked at
+  const untranslated = new Map();
   const EXT_BUILD = 2; // said to the other devices (p2p-core.js "hi"): 2, the watches fetch what they find (then: "fetch", "all")
   const held = new Set(); // chapters known to be here (their translation), so the list is not read through again
   const fetchFailed = new Map(); // "<chapter key>#original" -> when it was asked for and did not come
@@ -890,7 +961,7 @@
     const wtrSource = w.source === WTR_OWN;
     let batch = Math.max(0, Math.min(50, Math.floor(Number(opts.batch) || 0)));
     if (batch && wtrSource && opts.paced) batch = Math.max(1, Math.min(50, Math.floor(60 * 1000 / Math.max(gapMs, 1000)))); // (watcher.js: as many as the pace fits in a pass)
-    const f = batch ? fills.get(w.id) || fills.set(w.id, { at: 0, asked: 0, got: 0, empty: 0, pause: 0, pausedUntil: 0, reason: "" }).get(w.id) : null;
+    const f = batch ? fills.get(w.id) || fills.set(w.id, { at: 0, asked: 0, got: 0, empty: 0, pause: 0, pausedUntil: 0, reason: "", translating: false }).get(w.id) : null;
     if (batch) {
       const before = batches.get(w.id);
       if (before && [...before].some(working)) return { asked: 0, busy: true };
@@ -898,23 +969,26 @@
         // how the batch before went: what did not come (fetching or translating it failed), and why
         const missed = [];
         for (const k of before) if (!(await isHere(k))) missed.push(k);
-        const whys = missed.map((k) => lastError.get(k) || "");
-        for (const k of before) lastError.delete(k);
+        const whys = missed.map((k) => lastError.get(k) || (untranslated.get(k) || {}).error || "");
+        // (its novel's profile cannot be used here: no use asking again before something is changed)
+        const stuck = missed.map((k) => untranslated.get(k)).find((x) => x && x.stop);
+        for (const k of before) { lastError.delete(k); untranslated.delete(k); }
         batches.delete(w.id);
         f.got += before.size - missed.length;
         f.empty = missed.length === before.size ? f.empty + 1 : 0;
         const refused = whys.find((m) => REFUSED.test(m)) || "";
-        if (refused || f.empty >= EMPTY_RUN) {
+        if (refused || stuck || f.empty >= EMPTY_RUN) {
           f.pause = Math.min(f.pause ? f.pause * 2 : PAUSE_MS, PAUSE_MAX_MS);
           f.pausedUntil = Date.now() + f.pause;
-          f.reason = (refused || whys.find(Boolean) || "nothing of the last " + EMPTY_RUN + " batches came").slice(0, 300);
+          f.reason = (refused || (stuck && stuck.error) || whys.find(Boolean) || "nothing of the last " + EMPTY_RUN + " batches came").slice(0, 300);
+          f.translating = !refused && !!stuck; // (the site's Triggers tab says it so: it is not the source that refused)
           f.empty = 0;
-          // (refused, not missing: the same chapters are asked for after the pause)
-          for (const k of missed) if (refused) fetchFailed.delete(k); else fetchFailed.set(k, Date.now());
+          // (refused, not missing: the same chapters are asked for after the pause; their text already here, only translated then)
+          for (const k of missed) if (refused || stuck) fetchFailed.delete(k); else fetchFailed.set(k, Date.now());
           log("fetching paused for", w.id, "until", new Date(f.pausedUntil).toISOString(), f.reason);
         } else {
           for (const k of missed) fetchFailed.set(k, Date.now());
-          if (missed.length < before.size) { f.pause = 0; f.reason = ""; } // (it works again: the next refusal waits the shortest time)
+          if (missed.length < before.size) { f.pause = 0; f.reason = ""; f.translating = false; } // (it works again: the next refusal waits the shortest time)
         }
       }
       if (f.pausedUntil > Date.now()) return { asked: 0, paused: f.pausedUntil, reason: f.reason };
@@ -935,7 +1009,7 @@
     }
     const gap = (batch ? Math.max(gapMs, 1000) : gapMs) * bulkScale;
     picked.forEach(({ key, m, pageTitle }, i) => {
-      const meta = wtr ? { novelName, pageTitle, source: WTR_OWN, wtrRawId: m[2] } : { novelName, pageTitle, translate: true };
+      const meta = wtr ? { novelName, pageTitle, source: WTR_OWN, wtrRawId: m[2] } : { novelName, pageTitle, translate: true, watched: true }; // (watched: with its novel's profile, OriginalTranslate.run)
       const ask = () => {
         pending.delete(key);
         saveOriginal(key, meta).catch((e) => {
@@ -955,7 +1029,7 @@
   function resumeFill(id) {
     const x = fills.get(id);
     if (!x) return false;
-    Object.assign(x, { pausedUntil: 0, pause: 0, empty: 0, reason: "" });
+    Object.assign(x, { pausedUntil: 0, pause: 0, empty: 0, reason: "", translating: false });
     return true;
   }
   // Firefox: the background page is this page, so the scheduler calls these directly; in Chrome it asks over a message (below).
@@ -977,9 +1051,10 @@
     library: typeof LibraryHost !== "undefined" ? LibraryHost.roomLink : undefined, // your library's records, and devices asking to join it
     onRawRequest: saveOriginal,
     onRawStop: (key) => { if (inflight.has(key) && key.endsWith("#list")) stopped.add(key); },
-    // a device that knows the passphrase but is not in the library (a phone) reads what its pages show from this one's library
-    answerApi: async (p) => {
-      if (typeof LibraryHost === "undefined") return null;
+    // a read of the library (what a page shows): not for another device (each device of the library keeps its own copy, and a device not in it is
+    // answered nothing by p2p-core.js), only for this browser's tab
+    answerApi: async (p, from) => {
+      if (typeof LibraryHost === "undefined" || (from && from.remote)) return null;
       const lib = await LibraryHost.ready;
       if (!lib || lib.status().state !== "member") return null;
       return LibraryHost.call("api", ["GET", p]);
@@ -992,6 +1067,7 @@
     LibraryHost.fills = fillsNow;
     LibraryHost.resumeFill = resumeFill;
     LibraryHost.readList = readSourceList;
+    LibraryHost.helpDevices = (v) => (v && typeof v === "object" ? setHelp(v) : getHelp()); // (the site's Settings › Library: what this extension does for your other devices)
     // your library, published for readers once it is shared, from the chapters this device holds
     const chapters = direct ? directAdapter : proxyAdapter;
     chapters.getConfig().then((c) => LibraryHost.startPublishing(chapters, c && c.trackers)).catch((e) => log("publishing not started", e));
@@ -1039,7 +1115,7 @@
       fetchFound(msg.items, msg.watch || {}, msg.opts || {}).then((r) => sendResponse(r), (e) => sendResponse({ error: String((e && e.message) || e) }));
       return true; // answered later
     }
-    // The popup's Read tab: fetch this chapter's text (and the next ones), or Gemini's notes on it, as the library site asks a device to. Only
+    // The popup's Refresh details (and the same request the library site makes of a device): fetch a chapter's text, its notes or a novel's details. Only
     // once this extension is in a library (it does nothing before).
     if (msg.target === "p2p-host" && msg.type === "work") {
       const key = String(msg.key || "");

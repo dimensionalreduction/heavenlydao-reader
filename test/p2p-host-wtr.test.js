@@ -41,6 +41,7 @@ const ctx = {
     if (/api\/reader\/get/.test(url) && ctx.wtrLocked) return { ok: true, status: 200, json: async () => ({ success: false, code: "CHAPTER_LOCKED" }) };
     if (/api\/reader\/get/.test(url)) return { ok: true, json: async () => ({ success: true, chapter: { id: 8885200 }, content_url: "/api/v2/reader/content/x" }) };
     if (/api\/v2\/reader\/content\/x/.test(url)) return { ok: true, json: async () => ({ success: true, data: { data: { title: ctx.wtrTitle || "Chapter 9: Nine", model: "gem", body: ctx.wtrBody || ["Chapter 9: Nine", "※0⛬ met ※1⛬ and the 龙.", "[image]", "Second line"], glossary_data: { terms: [["Lei Wujie", "雷无桀"], ["Xiao Se", "萧瑟"]] }, patch: [{ zh: "龙", en: "dragon" }] } } }) };
+    if (/go-to-raw/.test(url) && ctx.rawThrows) throw new TypeError("Failed to fetch"); // (the browser refuses the redirect to a site the extension may not read)
     if (/go-to-raw/.test(url)) return { ok: true, url: finalUrl, text: async () => ctx.rawBody || "", arrayBuffer: async () => gb(html).buffer, body: { cancel: async () => { ctx.cancelled = true; } } };
     if (/69shuba\.com\/txt\/77582\/3880461[2345]/.test(url)) return { ok: true, url: String(url), arrayBuffer: async () => gb(ctx.noNext ? html.replace(/<a [^>]*>[^<]*<\/a>/, "") : html).buffer };
     // fanqienovel's mirror: a chapter page with its text encrypted, and the book's list as JSON
@@ -98,11 +99,16 @@ ctx.chrome = {
         sent.push(m);
         // (the site's tab answers with the page: its status, its address, its bytes as base64)
         // (the browser's pass for the site's check, brought to where the extension's requests see it: ctx.passCopied says how many cookies came over)
+        if (m.type === "novel:get") return Promise.resolve(ctx.novelReply || { ok: true });
         if (m.type === "target:language") return Promise.resolve({ lang: ctx.targetLang || "en" });
+        if (m.type === "original:translate" && ctx.translateReply) return Promise.resolve(ctx.translateReply); // (the background's answer: profile-translate.js)
         if (m.type === "site:pass") { if (ctx.passCopied) ctx.unblocked = true; return Promise.resolve({ ok: true, copied: ctx.passCopied || 0 }); }
         if (m.type === "site:fetch") return Promise.resolve(ctx.tabReply || { ok: true, status: 200, url: m.url, type: "text/html; charset=utf-8", body: Buffer.from(CHECK_LIST, "utf8").toString("base64") });
         return Promise.resolve(m.type === "book:visit" && ctx.visitReply ? ctx.visitReply : { ok: true });
       }
+      // (what this extension does for your other devices: ctx.help, as the service worker keeps it)
+      if (m.op === "getHelp") return Promise.resolve({ result: ctx.help || null });
+      if (m.op === "setHelp") { ctx.help = m.args[0]; return Promise.resolve({ result: null }); }
       return Promise.resolve({ result: m.op === "getConfig" ? { enabled: false } : m.op === "getTranslation" ? store.get(m.args[0]) : m.op === "setTranslation" ? void store.set(m.args[0], m.args[1]) : null });
     },
     onMessage: { addListener: () => {} },
@@ -118,11 +124,13 @@ for (const f of ["p2p-core.js"]) vm.runInContext(fs.readFileSync(path.join(share
 // the host hands the core a function to call when another device asks for a chapter: keep hold of it
 let onRawRequest = null;
 let onRawStop = null; // and one for when that device says to stop
+let answerApi = null; // and one for a read of the library
 const realCreate = ctx.P2PCore.createP2P;
 const announced = []; // what the host tells the devices that asked: [key, state, info]
 ctx.P2PCore.createP2P = (opts) => {
   onRawRequest = opts.onRawRequest;
   onRawStop = opts.onRawStop;
+  answerApi = opts.answerApi;
   const core = realCreate(opts);
   const realAnnounce = core.announceRaw;
   core.announceRaw = (key, state, info) => { announced.push([key, state, info]); return realAnnounce(key, state, info); };
@@ -665,6 +673,30 @@ const SOURCE = "https://www.69shuba.com/txt/77582/38804612";
   assert.strictEqual(JSON.parse(JSON.stringify(ctx.__fills()))[we.id].asked, 6, "after three batches, no fourth");
   ctx.wtrDown = false;
 
+  // a source site's chapters are translated with their novel's profile (watched: profile-translate.js, in the background); one that cannot be used here (no key in
+  // this browser, no sign-in, no tickets) pauses the watch at once, saying why (the site's Triggers tab: it is not the source that refused); after the pause the
+  // same chapters are translated, their text already here
+  const sw = { id: "profile|69shuba.com", novel: "name:Martial Universe", source: "69shuba.com", name: "Martial Universe" };
+  const sl = [14, 15].map((n) => ({ num: n, title: "Chapter " + n, url: "https://www.69shuba.com/txt/77582/388046" + n }));
+  for (const c of sl) { store.delete("translation:" + c.url); store.delete("translation:" + c.url + "#original"); }
+  sent.length = 0;
+  ctx.translateReply = { error: "No key for Own mini in this browser: add it in the library's Settings › Translation", stop: true };
+  assert.strictEqual((await ff(sl, sw, { missing: true, batch: 2 })).asked, 2, "a batch of the source's chapters");
+  const sp = await notBusy(sl, sw);
+  assert.ok(sp && sp.paused > Date.now() + 9 * 60 * 1000 && /No key for Own mini/.test(sp.reason), "paused at once, with why: " + JSON.stringify(sp));
+  const jobs2 = sent.filter((m) => m.type === "original:translate").map((m) => m.job);
+  assert.ok(jobs2.length === 2 && jobs2.every((j) => j.watched === true), "each handed to the translator as a watch's chapter: " + JSON.stringify(jobs2.map((j) => j.watched)));
+  assert.strictEqual(JSON.parse(JSON.stringify(ctx.__fills()))[sw.id].translating, true, "said as translating's");
+  ctx.translateReply = null;
+  ctx.__resumeFill(sw.id);
+  calls = [];
+  sent.length = 0;
+  assert.deepStrictEqual(await ff(sl, sw, { missing: true, batch: 2 }), { asked: 2, complete: false }, "Try again now: the same chapters");
+  for (let i = 0; i < 50 && sent.filter((m) => m.type === "original:translate").length < 2; i++) await sleep(100);
+  assert.strictEqual(sent.filter((m) => m.type === "original:translate").length, 2, "translated");
+  assert.ok(!calls.some((u) => /69shuba/.test(u)), "from the text kept, not downloaded again: " + JSON.stringify(calls));
+  assert.strictEqual(JSON.parse(JSON.stringify(ctx.__fills()))[sw.id].translating, false, "no longer paused");
+
   // ---- links from the library site's own tab (through site-bridge.js): only a "p2p-local" port from a tab of the site is taken ----
   // (which addresses are the site is LibraryHost.fromSite's to say: library-host.test.js)
   assert.strictEqual(typeof onConnect, "function", "the host listens for local links");
@@ -716,6 +748,83 @@ const SOURCE = "https://www.69shuba.com/txt/77582/38804612";
   assert.ok(viaEnglish, "the source could not be read: still translated");
   assert.deepStrictEqual([viaEnglish.job.url, viaEnglish.job.saveUrl, viaEnglish.job.lang, viaEnglish.job.text], [OWN_URL, OWN_URL, "si", "wtr-lab's English text of the chapter, long enough."], "from wtr-lab's English, kept under the chapter's own address");
   store.delete("translation:" + OWN_URL);
+
+  // ---- the Raw link cannot be followed: a source site the extension may not read yet is named (and noted for the popup's Allow), not blamed on a bot check ----
+  const noRaw = "translation:https://wtr-lab.com/en/novel/8053/synthesis-wizard/chapter-77#original";
+  const noRawMeta = { novelName: "Synthesis Wizard", pageTitle: "Chapter 77", translate: true };
+  const failureOf = () => announced.filter(([k, st]) => k === noRaw && st === "failed").map(([, , i]) => i.error).pop();
+  const guarded = [];
+  ctx.rawThrows = true;
+  ctx.novelReply = { novel: { rawHost: "69shuba.com" } };
+  await onRawRequest(noRaw, noRawMeta).catch(() => {});
+  assert.ok(/could not follow the site's Raw link \(Failed to fetch\)/.test(failureOf()), "with no way to ask about access, the failure is as it was, with the browser's own words");
+  ctx.SiteAccess = { fetch: (u, o) => ctx.fetch(u, o), guard: async (u) => { guarded.push(u); if (ctx.denied) throw new Error("not allowed to read 69shuba.com yet: open the extension's popup and press Allow"); } };
+  ctx.denied = true;
+  await onRawRequest(noRaw, noRawMeta).catch(() => {});
+  assert.deepStrictEqual(guarded, ["https://69shuba.com/"], "the novel's source site (the library's rawHost) is the one asked about");
+  assert.ok(/not allowed to read 69shuba\.com yet.*press Allow/.test(failureOf()), "and the failure says to allow it, not to pass a bot check");
+  ctx.denied = false;
+  await onRawRequest(noRaw, noRawMeta).catch(() => {});
+  assert.ok(/Cloudflare check/.test(failureOf()), "a site that is allowed keeps the bot-check advice");
+  ctx.novelReply = null;
+  guarded.length = 0;
+  await onRawRequest(noRaw, noRawMeta).catch(() => {});
+  assert.strictEqual(guarded.length, 0, "a novel whose source site is not known is not guessed at");
+  ctx.rawThrows = false;
+  delete ctx.SiteAccess;
+
+  // ---- another device of the library asks (remote): nothing is fetched or translated for it unless switched on in this browser (helpDevices) ----
+  await sleep(3000); // (what the steps before queued is done)
+  const OTHER = (n) => "translation:https://www.69shuba.com/txt/77582/388046" + n + "#original";
+  for (const n of [14, 15]) { store.delete(OTHER(n)); store.delete(OTHER(n).replace(/#original$/, "")); }
+  const told = [];
+  const from = { decline: (why) => told.push(why) };
+  const remoteMeta = { remote: true, novelName: "Martial Universe", pageTitle: "Chapter 14", translate: true, ahead: 0 };
+  const ask = (key, m) => onRawRequest(key, m, from).then(() => "done", (e) => (e && e.declined ? "declined: " + e.message : "failed: " + (e && e.message)));
+  ctx.help = null;
+  calls = [];
+  sent.length = 0;
+  announced.length = 0;
+  let got = await ask(OTHER(14), remoteMeta);
+  assert.ok(/^declined: The extension on your computer doesn't fetch chapters for your other devices/.test(got), "off by default: declined, saying why: " + got);
+  assert.ok(!calls.some((u) => /69shuba/.test(u)) && !store.has(OTHER(14)), "nothing fetched");
+  assert.ok(!announced.some(([k]) => k === OTHER(14)), "and nothing told to the other devices (another extension may be doing it)");
+  for (const k of ["translation:https://www.69shuba.com/txt/77582/38804614#list", "translation:https://www.69shuba.com/txt/77582/38804614#details"]) {
+    assert.ok(/^declined: .*doesn't fetch/.test(await ask(k, { remote: true })), "nor a chapter list or a book's details: " + k);
+  }
+  assert.ok(/^declined: .*doesn't fetch/.test(await ask(wtrKey, { ...meta, remote: true })), "nor a site chapter from its source");
+  assert.ok(/^declined: .*doesn't fetch/.test(await ask(OTHER(14), { ...remoteMeta, findNext: true })), "nor the next chapter's link");
+  // fetching on, translating off: the text is fetched, the asker is told it is not translated
+  ctx.help = { fetch: true, translate: false };
+  got = await ask(OTHER(14), remoteMeta);
+  assert.strictEqual(got, "done");
+  assert.ok(store.get(OTHER(14)) && store.get(OTHER(14)).translated, "the chapter's text is fetched");
+  assert.ok(told.length === 1 && /doesn't translate for your other devices/.test(told[0]), "the asker is told it is not translated: " + JSON.stringify(told));
+  await sleep(200);
+  assert.ok(!sent.some((m) => m.type === "original:translate"), "and it is not");
+  assert.ok(/^declined: .*doesn't translate/.test(await ask(OTHER(14), { ...remoteMeta, retranslate: true })), "a re-translate of a chapter whose text is here: declined");
+  assert.ok(/^declined: .*doesn't translate/.test(await ask(wtrKey, { ...meta, remote: true })), "a site chapter from its source (translated as it comes): declined");
+  assert.ok(/^declined: .*doesn't translate/.test(await ask("translation:https://www.69shuba.com/txt/77582/38804614#notes", { remote: true })), "Gemini's notes: declined");
+  assert.strictEqual(await ask(OTHER(14), { ...remoteMeta, translate: false }), "done", "only its text (a device that translates itself, with a profile): done");
+  // both on: as before
+  ctx.help = { fetch: true, translate: true };
+  told.length = 0;
+  sent.length = 0;
+  got = await ask(OTHER(15), { ...remoteMeta, pageTitle: "Chapter 15" });
+  assert.strictEqual(got, "done");
+  await sleep(200);
+  assert.ok(sent.some((m) => m.type === "original:translate" && m.job.url === OTHER(15).replace(/^translation:|#original$/g, "")) && !told.length, "fetched and translated, nothing declined");
+  // this browser's own tab (a local link) and this extension's own work are never held to it
+  ctx.help = null;
+  sent.length = 0;
+  store.delete(OTHER(15).replace(/#original$/, ""));
+  assert.strictEqual(await ask(OTHER(15), { ...remoteMeta, remote: false, retranslate: true }), "done", "the tab in this browser asks for anything");
+  await sleep(200);
+  assert.ok(sent.some((m) => m.type === "original:translate"), "and it is translated");
+  // a read of the library: never for another device, as before for this browser's tab
+  assert.strictEqual(await answerApi("/api/novels", { remote: true }), null, "another device's read of the library is not answered");
+  // the switches are kept in this extension (the service worker's storage, in Chrome)
+  ctx.help = null;
 
   console.log("OK — chapter fetching checks passed");
   process.exit(0);

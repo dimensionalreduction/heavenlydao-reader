@@ -48,6 +48,9 @@ browser.runtime.onMessage.addListener((message, sender) => {
 
 function handleMessage(message, sender) {
   if (!message) return;
+  // the library site's Listen tab, with Fish Audio and the person's own key (fish-speech.js)
+  const fish = FishSpeech.answer(message, sender);
+  if (fish) return fish;
   if (message.type === "bookcapture:run") {
     // after the person picked a part of a book's page: the script that records the book runs once more in that tab (it is already there from the page load)
     if (!sender || !sender.tab) return;

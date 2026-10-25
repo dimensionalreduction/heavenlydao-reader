@@ -97,6 +97,12 @@ assert.deepStrictEqual(UR.bookTable({ "example.com": { spec: { ...good, book: { 
   const base = RS.rawRule("69shuba.tw");
   assert.ok(base && base.selector === "#nr1" && base.book.cover === ".bookinfo", "(a built-in rule to sit on)");
   assert.deepStrictEqual(UR.validate({ host: "69shuba.tw", book: { cover: "td > img" } }).errors.map((e) => e.field), ["selector"], "without a built-in rule the chapter selector is needed");
+  // a chapter list saved before any chapter's page was looked at (Detect with AI on a book's page): a rule that lists chapters, with no text selector yet
+  const listOnly = { host: "asurascans.com", toc: { list: "a.chapter", reverse: true }, book: { title: "h1" } };
+  assert.ok(UR.validate(listOnly).ok, "a chapter list alone is a rule");
+  const listRule = UR.toRule(UR.validate(listOnly).spec);
+  assert.ok(listRule.toc && !listRule.selector, "it has the list and no text selector");
+  assert.strictEqual(RS.textOf({ querySelector: () => { throw new Error("must not be asked"); } }, listRule), "", "and reads no text rather than failing");
   const v2 = UR.validate({ host: "69shuba.tw", book: { cover: "td > img" } }, base);
   assert.ok(v2.ok, JSON.stringify(v2.errors));
   const rule2 = UR.toRule(v2.spec, base);
@@ -139,6 +145,22 @@ assert.deepStrictEqual(UR.bookTable({ "example.com": { spec: { ...good, book: { 
   // settings without a list of their own change just those
   const pause = UR.toRule(UR.validate({ host: "empirenovel.com", toc: { gap: 3000 } }, base).spec, base);
   assert.deepStrictEqual([pause.toc.gap, pause.toc.reverse, pause.toc.list === base.toc.list], [3000, base.toc.reverse, true], "a pause alone leaves the built-in links and order");
+  UR.apply({});
+})();
+
+// ---- a list address of the person's own that covers only chapters: the built-in one still finds the list from the book's page ----
+(() => {
+  const base = RS.rawRule("69shuba.com");
+  // what Detect with AI saved on 69shuba's list page: the links, and the list's address from a chapter's
+  const saved = { host: "69shuba.com", toc: { list: "#catalog > ul a", listUrl: { match: "^https://(?:www\\.)?69shuba\\.com/txt/([^/?#]+)(?:[/?#]|$)", to: "https://www.69shuba.com/book/$1/" } } };
+  const spec = UR.validate(saved, base);
+  assert.ok(spec.ok, JSON.stringify(spec.errors));
+  const rule = UR.toRule(spec.spec, base);
+  assert.strictEqual(rule.toc.url("https://www.69shuba.com/txt/3903/2344025"), "https://www.69shuba.com/book/3903/", "from a chapter: theirs");
+  assert.strictEqual(rule.toc.url("https://www.69shuba.com/book/3903.htm"), "https://www.69shuba.com/book/3903/", "from the book's page, which theirs does not cover: the built-in one (else 'the chapter has no link to the chapter list')");
+  assert.strictEqual(rule.toc.list, "#catalog > ul a", "with their links");
+  UR.apply({ "69shuba.com": { spec: spec.spec, enabled: true } });
+  assert.strictEqual(RS.tocFor("https://www.69shuba.com/book/3903.htm").url, "https://www.69shuba.com/book/3903/", "through the engine too");
   UR.apply({});
 })();
 

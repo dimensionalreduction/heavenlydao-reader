@@ -84,6 +84,13 @@ const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 
   await A.api("PUT", "/api/novels/" + enc, { title: "Synthesis Wizard", author: "Someone", tags: ["magic"] });
   await A.api("PUT", "/api/covers/" + enc, { type: "image/png", bytes: PNG });
   await A.api("PUT", "/api/chapter-index", { key: "69shuba.com/txt/1", source: "69shuba", chapters: [[1, "One", "https://69shuba.com/txt/1/1"], [2, "Two", "https://69shuba.com/txt/1/2"]] });
+  // a list is found by the address it was read from, and by the book's info page (a book recorded from /book/3903.htm, its list read from /book/3903/)
+  await A.api("PUT", "/api/chapter-index", { key: "69shuba.com/txt/3903", source: "69shuba.com", url: "https://www.69shuba.com/book/3903/", chapters: [[1, "One", "https://www.69shuba.com/txt/3903/2344025"]] });
+  const byUrl = async (u) => (await A.api("GET", "/api/chapter-index?url=" + encodeURIComponent(u))).indexes.map((i) => i.key);
+  assert.deepStrictEqual(await byUrl("https://www.69shuba.com/book/3903/"), ["69shuba.com/txt/3903"], "the list page's own address");
+  assert.deepStrictEqual(await byUrl("https://www.69shuba.com/book/3903.htm"), ["69shuba.com/txt/3903"], "the book's info page");
+  assert.deepStrictEqual(await byUrl("https://www.69shuba.com/book/39031.htm"), [], "not another book");
+  assert.deepStrictEqual(await byUrl("https://69shuba.tw/book/3903/"), [], "nor the same number on another site");
   await A.api("PUT", "/api/my-terms/abcd1", { from: ["Corey"], to: "Kory", keys: [G], novel: "Synthesis Wizard" });
   await A.api("PUT", "/api/term-notes", { source: "科雷", keys: [G], text: "the hero" });
   await A.api("PUT", "/api/settings", { termNotesAi: true });
@@ -99,6 +106,28 @@ const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 
   assert.deepStrictEqual(Object.keys(saved.promptSets).sort(), ["notes", "translate"], "a kind left out is as it was");
   saved = await A.api("PUT", "/api/settings", { promptSets: { translate: null, notes: null } });
   assert.strictEqual(saved.promptSets, undefined, "none left: none kept");
+  // translation profiles: a bad one (short id, no model, an unknown way to pay, a key with no address, the same id twice) is dropped, a key is never kept;
+  // the library's default and a novel's choice must be one of them (or "gemini" for a novel), and go when their profile does
+  saved = await A.api("PUT", "/api/settings", { translateProfiles: [
+    { id: "pro1", name: " Haiku plain ", model: "anthropic/claude-haiku-5.5", prompt: "Translate to {language}.", pay: "tickets", key: "sk-secret" },
+    { id: "pro2", name: "Mine", model: "gpt-5-mini", prompt: "", pay: "key", base: "https://api.example.com/v1/", key: "sk-secret" },
+    { id: "p3", model: "x", pay: "tickets" }, { id: "pro4", model: "", pay: "tickets" }, { id: "pro5", model: "m", pay: "card" }, { id: "pro6", model: "m", pay: "key" }, { id: "pro1", model: "again", pay: "tickets" },
+    { id: "pro7", name: "By the extension", model: "gemini-3.5-flash", prompt: "Translate.", pay: "extension", base: "https://x.example/v1" }
+  ], translateProfile: "pro2", novelProfiles: { "wtr-lab:1": "pro1", "record:up-x": "gemini", "wtr-lab:2": "nope" } });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(saved.translateProfiles)), [
+    { id: "pro1", name: "Haiku plain", model: "anthropic/claude-haiku-5.5", prompt: "Translate to {language}.", pay: "tickets", base: "" },
+    { id: "pro2", name: "Mine", model: "gpt-5-mini", prompt: "", pay: "key", base: "https://api.example.com/v1" },
+    { id: "pro7", name: "By the extension", model: "gemini-3.5-flash", prompt: "Translate.", pay: "extension", base: "" }
+  ]);
+  assert.strictEqual(saved.translateProfile, "pro2");
+  assert.deepStrictEqual(saved.novelProfiles, { "wtr-lab:1": "pro1", "record:up-x": "gemini" });
+  saved = await A.api("PUT", "/api/settings", { novelProfiles: { "wtr-lab:1": null } });
+  assert.deepStrictEqual(saved.novelProfiles, { "record:up-x": "gemini" }, "null: the library's default again");
+  saved = await A.api("PUT", "/api/settings", { translateProfiles: [saved.translateProfiles[0]], novelProfiles: { "wtr-lab:3": "pro2" } });
+  assert.strictEqual(saved.translateProfile, undefined, "its profile deleted: Gemini again");
+  assert.deepStrictEqual(saved.novelProfiles, { "record:up-x": "gemini" }, "a novel's choice of a deleted profile goes");
+  saved = await A.api("PUT", "/api/settings", { translateProfiles: [], novelProfiles: { "record:up-x": null } });
+  assert.ok(saved.translateProfiles === undefined && saved.novelProfiles === undefined, "none left: none kept");
   // a person's own terms from the site (origin "yours"): kept when an import could not read them (keepYours), gone when the site no longer has them,
   // and the readers' most used rendering never replaces them
   const Y = encodeURIComponent("wtr-lab:777");

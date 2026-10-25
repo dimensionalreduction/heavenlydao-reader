@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "heavenlydao.com Reader",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Fetch web-novel chapters, translate them with Gemini, and keep them in your heavenlydao.com library on all your devices.",
   "icons": {
     "16": "icon-16.png",

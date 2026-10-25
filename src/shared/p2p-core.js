@@ -28,10 +28,12 @@
 // The library (docs/SHARED-LIBRARIES.md): when opts.library is given, the devices of one library also swap its records here: each says which
 // records it has ("lv", with their versions), asks for the newer ones ("lq"), sends them in pieces ("lr") and tells the others when it has new
 // ones ("lh"). A device asking to join sends "jn" now and then; the main device's "Allow" comes back as "jk" (the owner key, sealed for that
-// device), passed on by the others. Every record is checked by the library itself; this only carries them.
+// device), passed on by the others. A device leaving says so ("lx", signed by it), passed on to the main device, which takes it off the list.
+// Every record is checked by the library itself; this only carries them.
 //   opts.library = {
 //     lib(): libId | "",  versions(): [[key, ver]],  wants(key, ver): bool,  wantsMany?(rows): the rows of [[key, ver]] wanted,  get(key): record | null,
-//     receive(record): { stored, why?, out?: [records written again] },  joinAsked(msg),  receiveKeys(msg): bool,  joinRequest(): msg | null
+//     receive(record): { stored, why?, out?: [records written again] },  joinAsked(msg),  receiveKeys(msg): bool,  joinRequest(): msg | null,
+//     leaving?(msg): bool (taken off the list here)
 //   }   (each may answer with a promise)
 //   A local link whose other end keeps this very library (addLocalPeer's sameLibrary: the library site's tab answering for the extension's
 //   library in its own room) writes records this side's room does not hear of: what it tells of them ("lh") is passed on.
@@ -39,8 +41,8 @@
 // Reading the library from a device not in it yet: a device that knows the passphrase but has not joined asks the devices of the library for
 // what a page shows (askApi: a read-only /api/... call, "aq"), and one of them answers ("ar", in pieces): the novels, a cover, a chapter
 // list, a glossary... only what is asked for, when it is asked. Both are encrypted with a key made from the passphrase, so the room's id alone
-// (which the trackers see) opens nothing. A device answers with opts.answerApi(path) (null: it is in no library); only the reads in
-// ROOM_API are answered.
+// (which the trackers see) opens nothing. A device answers with opts.answerApi(path, { remote }) (null: it is in no library, or does not answer
+// that device); only the reads in ROOM_API are answered.
 //
 // Who may do what (protocol 10). The passphrase only finds the room: a device reads from another, and has it work, only once it has proved it
 // is a device of the same library. Each connection makes a fresh X25519 key at both ends ("ah"); a device of the library signs both with its
@@ -637,7 +639,7 @@
       if (!q || q.m !== "GET" || typeof q.p !== "string" || q.p.length > 2000 || !ROOM_API.test(q.p) || !opts.answerApi) return peer.send({ t: "ar", id: msg.id, no: 1 });
       let out;
       try {
-        out = await opts.answerApi(q.p);
+        out = await opts.answerApi(q.p, { remote: !peer.local });
       } catch (e) {
         const s = await sealApi({ error: String((e && e.message) || e).slice(0, 300), status: (e && e.status) || 500 });
         return peer.send({ t: "ar", id: msg.id, iv: s.iv, i: 0, n: 1, d: s.d });
@@ -794,6 +796,15 @@
       for (const p of usablePeers()) if (p.ready) p.send({ t: "lh", l, v });
     }
 
+    // This device leaves the library (msg: library.js leaveProof): every device here is told, and passes it on to the main device.
+    function sayLeaving(msg) {
+      if (!msg || msg.t !== "lx") return 0;
+      joinsSeen.add("lx:" + msg.id + "@" + msg.at);
+      let told = 0;
+      for (const p of usablePeers()) if (p.ready) { p.send(msg); told++; }
+      return told;
+    }
+
     // The main device let a device in: its key goes to every device here (only the one it is for can open it), and they pass it on.
     function sendKeys(msg) {
       keysSeen.add(msg.epk);
@@ -912,15 +923,18 @@
       } else if (msg.t === "raw" && validKey(msg.k) && opts.onRawRequest) {
         // A device that cannot reach the source site (the phone reader) asks one that can (the extension) to download a chapter's original text.
         // The answer is the chapter arriving like any other; a failure is reported back so the asker can show why nothing came.
+        // remote: asked by another device (not this browser's own tab, a local link). What is not done for another device is declined ("rs",
+        // "declined", to the asker alone: another device may be doing it); decline(why) says so for a part of it (its translation).
+        const decline = (why) => say(peer, { t: "rs", k: msg.k, s: "declined", e: String(why || "").slice(0, 300) });
         Promise.resolve()
-          .then(() => opts.onRawRequest(msg.k, { novelName: String(msg.n || "").slice(0, 300), pageTitle: String(msg.p || "").slice(0, 300), translate: !!msg.tr, source: String(msg.s || "").slice(0, 100), ahead: Math.max(0, Math.min(10, Number(msg.a) || 0)), findNext: !!msg.f, force: !!msg.x, retranslate: !!msg.rt, wtrRawId: /^\d{1,12}$/.test(String(msg.w || "")) ? String(msg.w) : "",
+          .then(() => opts.onRawRequest(msg.k, { remote: !peer.local, novelName: String(msg.n || "").slice(0, 300), pageTitle: String(msg.p || "").slice(0, 300), translate: !!msg.tr, source: String(msg.s || "").slice(0, 100), ahead: Math.max(0, Math.min(10, Number(msg.a) || 0)), findNext: !!msg.f, force: !!msg.x, retranslate: !!msg.rt, wtrRawId: /^\d{1,12}$/.test(String(msg.w || "")) ? String(msg.w) : "",
             // lang: the language to translate it into (a code), when it is not the one the library says
             lang: /^[a-z]{2,3}(-[A-Za-z]{2,4})?$/.test(String(msg.l || "")) ? String(msg.l) : "",
             // notes: how many chapters from this one (it, and the ones asked for ahead of it) get Gemini's notes on terms; none said: the library-wide switch decides
             ...(Number.isFinite(msg.nt) ? { notes: Math.max(0, Math.min(11, Math.floor(msg.nt))) } : {}),
             // custom: the reader's Custom prompt, for this one request: the prompt (instead of the one in use) and what is sent with it
-            ...(msg.cp && typeof msg.cp === "object" && typeof msg.cp.p === "string" && msg.cp.p.trim() ? { custom: { prompt: msg.cp.p.slice(0, 8000), notes: !!msg.cp.n, glossary: msg.cp.g !== false, replace: !!msg.cp.e } } : {}) }))
-          .catch((e) => say(peer, { t: "rawfail", k: msg.k, e: String((e && e.message) || e).slice(0, 300) }));
+            ...(msg.cp && typeof msg.cp === "object" && typeof msg.cp.p === "string" && msg.cp.p.trim() ? { custom: { prompt: msg.cp.p.slice(0, 8000), notes: !!msg.cp.n, glossary: msg.cp.g !== false, replace: !!msg.cp.e } } : {}) }, { decline }))
+          .catch((e) => (e && e.declined ? decline(e.message) : say(peer, { t: "rawfail", k: msg.k, e: String((e && e.message) || e).slice(0, 300) })));
       } else if (msg.t === "rs" && validKey(msg.k) && opts.onRawStatus) {
         // on demand: a chapter this device asked a device with the extension for (requestRaw) is wanted once that one has it, whichever address it is kept
         // under (the one asked, or the source site's own, said in "u"), though nothing opened it by its own key
@@ -977,6 +991,13 @@
         if (joinsSeen.has(seenKey)) return;
         joinsSeen.add(seenKey);
         if (joinsSeen.size > 200) joinsSeen.delete(joinsSeen.values().next().value);
+        for (const p of usablePeers()) if (p !== peer && p.ready) p.send(msg);
+      } else if (msg.t === "lx" && typeof msg.id === "string" && msg.id.length <= 40 && Number.isFinite(msg.at)) {
+        // A device leaving the library (signed by it): the main device takes it off the list; any other device passes it on, once.
+        if (lib.leaving && (await lib.leaving(msg))) return;
+        const seenKey = "lx:" + msg.id + "@" + msg.at;
+        if (joinsSeen.has(seenKey)) return;
+        joinsSeen.add(seenKey);
         for (const p of usablePeers()) if (p !== peer && p.ready) p.send(msg);
       } else if (msg.t === "jk" && typeof msg.epk === "string" && typeof msg.to === "string") {
         if (keysSeen.has(msg.epk)) return;
@@ -1328,6 +1349,7 @@
       // the library: records this device wrote, the main device's answer to a device asking to join, and asking everyone again
       announceRecords: (records) => announceRecords(records).catch((e) => log("announce failed", e)),
       sendKeys,
+      sayLeaving,
       syncLibrary,
       libraryChanged,
       askToJoin: () => askToJoin().catch(() => {}),

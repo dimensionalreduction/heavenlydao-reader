@@ -181,7 +181,9 @@
       return "";
     };
 
-    const selector = selectorField("selector", raw.selector, !base);
+    // (the chapter text selector is needed for a site with nothing built in, unless the spec is for the chapter list: "Detect with AI" on a book's page saves the
+    // list before any chapter's page has been looked at, and the list must work without waiting for the text selector)
+    const selector = selectorField("selector", raw.selector, !base && !(raw.toc && typeof raw.toc === "object"));
     if (selector) spec.selector = selector;
     const junk = selectorField("junk", raw.junk, false);
     if (junk) spec.junk = junk;
@@ -361,6 +363,13 @@
       const kept = { ...base.toc };
       if (own.toc.list || own.toc.boxes) for (const k of ["list", "boxes", "pick", "parse", "read", "reverse"]) delete kept[k];
       merged.toc = { ...kept, ...own.toc };
+      // a list address of their own is tried first, and the built-in one where theirs does not fit (Detect with AI makes one from a chapter's address,
+      // which says nothing of the book's own page: the address a recorded book asks for its list with)
+      if (own.toc.url && kept.url) {
+        const mine = own.toc.url;
+        const builtin = kept.url;
+        merged.toc.url = (address) => mine(address) || builtin(address);
+      }
     }
     if (base.book || own.book) merged.book = { ...(base.book || {}), ...(own.book || {}) };
     if (base.nav || own.nav) merged.nav = { ...(base.nav || {}), ...(own.nav || {}) };

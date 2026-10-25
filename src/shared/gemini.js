@@ -1,5 +1,5 @@
 const GEMINI_MODEL = "gemini-3.5-flash-lite";
-// Shown in the popup's model dropdown if the live models.list call fails.
+// The model list when the live models.list call fails.
 const GEMINI_MODELS_FALLBACK = ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.5-pro"];
 
 // The languages chapters, titles and details can be translated into (Settings › Translation › Translate into, the library's setting targetLanguage;
@@ -30,14 +30,18 @@ function geminiLanguageName(code) {
   return found ? found[1] : String(code || "English");
 }
 
-// The person's own Gemini API key (the popup's Gemini tab, kept in storage.local). None is built in: without one every Gemini request fails with
-// GEMINI_NO_KEY (translateByMode then gives titles and book details Google's translation in the "gemini-google" mode, or leaves them as they are).
-const GEMINI_NO_KEY = "No Gemini API key: add yours in the extension's popup, Gemini tab";
+// The person's own Gemini API key: the one typed in the library's Settings › Translation › Paid by, which the library's page in this browser hands over
+// (site-bridge.js "access", kept in storage.local.profileKeys by Google's address), else the one typed in the popup before it had no place for it
+// (storage.local.geminiApiKey). None is built in: without one every Gemini request fails with GEMINI_NO_KEY (translateByMode then gives titles and book
+// details Google's translation in the "gemini-google" mode, or leaves them as they are).
+const GEMINI_NO_KEY = "No Gemini API key: add yours in the library's Settings › Translation › Paid by, then open the library in this browser";
+const GEMINI_KEY_BASE = "https://generativelanguage.googleapis.com/v1beta/openai";
 async function getApiKey() {
   const ext = typeof browser !== "undefined" ? browser : chrome;
-  const { geminiApiKey } = await ext.storage.local.get("geminiApiKey");
-  if (!geminiApiKey) throw new Error(GEMINI_NO_KEY);
-  return geminiApiKey;
+  const { profileKeys, geminiApiKey } = await ext.storage.local.get(["profileKeys", "geminiApiKey"]);
+  const key = (profileKeys && profileKeys[GEMINI_KEY_BASE]) || geminiApiKey;
+  if (!key) throw new Error(GEMINI_NO_KEY);
+  return key;
 }
 
 // Gemini takes so many requests a minute for a key, whatever they are for: every request made here (a chapter of any novel, from any tab or device

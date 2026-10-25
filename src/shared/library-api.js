@@ -59,6 +59,51 @@
 
   const clean = (v, max = MAX_STR) => String(v == null ? "" : v).trim().slice(0, max);
 
+  // Is a list read from address `a` the one of the book at `b`? The same address, or (a book's info page and its list page differ: /book/3903.htm,
+  // /book/3903/) the same site and the same book number. (The site matches its cached lists the same way: ShareLists.sameBookUrl.)
+  function sameBookUrl(a, b) {
+    const bare = (u) => String(u || "").replace(/^https:\/\/www\./, "https://").replace(/\/+$/, "");
+    if (bare(a) === bare(b)) return true;
+    const part = (u) => { try { const x = new URL(u); return [x.hostname.replace(/^www\./, ""), (/\d{3,}/.exec(x.pathname) || [])[0]]; } catch (e) { return [null, null]; } };
+    const [ha, na] = part(a);
+    const [hb, nb] = part(b);
+    return !!ha && ha === hb && !!na && na === nb;
+  }
+
+  function putProfiles(next, body) {
+    // Translation profiles (docs/PROFILES.md), the settings' part of them: a model and a prompt saved in the playground, which the library's page translates chapters with.
+    // Changes `next` (the settings) by what `body` says; the site's waiting copy (site/profiles.js) is kept by the same rules.
+    // translateProfiles: the whole list ({ id, name, model, prompt, pay: "tickets" | "key" | "extension" (translated by the extension, with its own Gemini key), base: the provider's address, for a key; never the key });
+    // translateProfile: the library's default, one of their ids (blank or null: Gemini through the extension); novelProfiles: { <book>: <id> | "gemini" },
+    // a novel's own choice (null: the library's default again). A choice whose profile is gone goes with it.
+    if (Array.isArray(body.translateProfiles)) {
+      const seen = new Set();
+      const list = body.translateProfiles
+        .filter((p) => p && /^[A-Za-z0-9_-]{3,24}$/.test(String(p.id)) && typeof p.model === "string" && /^[A-Za-z0-9][\w.:/@+-]{0,119}$/.test(p.model.trim()) && (p.pay === "tickets" || p.pay === "key" || p.pay === "extension") && !seen.has(String(p.id)) && seen.add(String(p.id)))
+        .map((p) => ({ id: String(p.id), name: clean(p.name, 60) || "Profile", model: p.model.trim(), prompt: typeof p.prompt === "string" ? p.prompt.slice(0, 20000) : "", pay: p.pay, base: p.pay === "key" && typeof p.base === "string" && /^https?:\/\/[^\s"'<>]{3,200}$/.test(p.base.trim()) ? p.base.trim().replace(/\/+$/, "") : "" }))
+        .filter((p) => p.pay !== "key" || p.base)
+        .slice(0, 20);
+      if (list.length) next.translateProfiles = list;
+      else delete next.translateProfiles;
+    }
+    const profileIds = new Set((next.translateProfiles || []).map((p) => p.id));
+    if (body.translateProfile === null || body.translateProfile === "") delete next.translateProfile;
+    else if (typeof body.translateProfile === "string" && profileIds.has(body.translateProfile)) next.translateProfile = body.translateProfile;
+    if (next.translateProfile && !profileIds.has(next.translateProfile)) delete next.translateProfile;
+    if ((body.novelProfiles && typeof body.novelProfiles === "object") || next.novelProfiles) {
+      const all = Object.assign({}, next.novelProfiles);
+      for (const [book, v] of Object.entries((body.novelProfiles && typeof body.novelProfiles === "object" && body.novelProfiles) || {}).slice(0, 2000)) {
+        const k = clean(book, 300);
+        if (!k) continue;
+        if (v === null || v === "") delete all[k];
+        else if (v === "gemini" || profileIds.has(v)) all[k] = v;
+      }
+      for (const [k, v] of Object.entries(all)) if (v !== "gemini" && !profileIds.has(v)) delete all[k];
+      if (Object.keys(all).length) next.novelProfiles = all;
+      else delete next.novelProfiles;
+    }
+  }
+
   function httpError(status, message) {
     return Object.assign(new Error(message), { status });
   }
@@ -408,6 +453,7 @@
         if (Object.keys(all).length) next.promptSets = all;
         else delete next.promptSets;
       }
+      putProfiles(next, body);
       // which of your extensions does the triggers (looks for new chapters, fetches and translates on its own): one device of the library, by its
       // id (library.js status().device), else every one; null: every one again
       if (body.triggerDevice === null) delete next.triggerDevice;
@@ -809,8 +855,8 @@
         if (method === "GET") {
           const only = (q("key") || "").split(",").map((k) => k.trim()).filter(Boolean);
           const all = Object.values(S.chapterIndex);
-          const byUrl = q("url"); // ?url=<list page address>: the list that was read from that page
-          if (byUrl) return { indexes: all.filter((i) => i.url && i.url.replace(/\/+$/, "") === byUrl.replace(/\/+$/, "")) };
+          const byUrl = q("url"); // ?url=<list page address>: the list that was read from that page, or from another page of the same book
+          if (byUrl) return { indexes: all.filter((i) => i.url && sameBookUrl(i.url, byUrl)) };
           return { indexes: only.length ? all.filter((i) => only.includes(i.key)) : all };
         }
         if (method === "PUT") return saveChapterIndex(json());
@@ -883,7 +929,7 @@
     return { handle, state: S };
   }
 
-  const LibraryApi = { createLibraryApi, normalizeState, httpError, MAX_COVER, COVER_TYPES };
+  const LibraryApi = { createLibraryApi, normalizeState, httpError, putProfiles, MAX_COVER, COVER_TYPES };
   if (typeof module !== "undefined" && module.exports) module.exports = LibraryApi;
   else root.LibraryApi = LibraryApi;
 })(typeof self !== "undefined" ? self : this);

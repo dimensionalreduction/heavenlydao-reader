@@ -21,7 +21,10 @@ window.window = window;
 let ports = [];
 let connectThrows = false;
 const asked = []; // what the relay asked the extension with sendMessage
+const onMessage = []; // the relay's listeners for the extension's messages (the popup's "site:ask")
 const runtime = {
+  id: "the-extension",
+  onMessage: { addListener: (fn) => onMessage.push(fn) },
   sendMessage: async (m) => {
     asked.push(m);
     if (m.type === "lib:wake") return { ok: true };
@@ -45,7 +48,7 @@ const runtime = {
     return port;
   }
 };
-const ctx = { window, location: window.location, chrome: { runtime }, setImmediate, console };
+const ctx = { window, location: window.location, chrome: { runtime }, setImmediate, setTimeout, console };
 ctx.globalThis = ctx;
 vm.createContext(ctx);
 
@@ -63,12 +66,35 @@ const types = () => seenByPage.map((m) => m.type);
   await sleep(20);
   assert.deepStrictEqual(types(), ["hello"], "it announces itself so a page that started first knows it is there");
 
+  // ---- the popup asks the page (Detect library): asked before the page has said anything, the question waits for it ----
+  const replies = [];
+  const keepsOpen = onMessage[0]({ type: "site:ask", op: "library", args: [] }, { id: "the-extension" }, (r) => replies.push(r));
+  assert.strictEqual(keepsOpen, true, "answered later");
+  assert.strictEqual(onMessage[0]({ type: "site:ask", op: "library" }, { id: "another-extension" }, () => replies.push("no")), undefined, "another extension is not heard");
+  await sleep(20);
+  assert.deepStrictEqual(types(), ["hello"], "not asked before the page is there");
+
   // ---- connect, then messages both ways ----
   toRelay("connect");
   await sleep(20);
   assert.strictEqual(ports.length, 1);
   assert.strictEqual(ports[0].name, "p2p-local", "it opens the port the extension's sync page listens for");
-  assert.deepStrictEqual(types(), ["hello", "connected"]);
+  const ask = seenByPage.find((m) => m.type === "ask");
+  assert.strictEqual(JSON.stringify(ask && [ask.data.op, ask.data.args]), JSON.stringify(["library", []]), "asked once the page said something");
+  assert.deepStrictEqual(types(), ["hello", "ask", "connected"]);
+  toRelay("answer", { id: "nobody", result: 1 });
+  toRelay("answer", { id: ask.data.id, result: { state: "member", code: "ABCD-1234" } });
+  toRelay("answer", { id: ask.data.id, result: "again" });
+  await sleep(20);
+  assert.strictEqual(JSON.stringify(replies), JSON.stringify([{ result: { state: "member", code: "ABCD-1234" } }]), "the answer goes back to the popup, once");
+  onMessage[0]({ type: "site:ask", op: "letIn", args: [{ t: "jn" }] }, { id: "the-extension" }, (r) => replies.push(r));
+  await sleep(20);
+  const ask2 = seenByPage.filter((m) => m.type === "ask")[1];
+  toRelay("answer", { id: ask2.data.id, error: "not let in" });
+  await sleep(20);
+  assert.strictEqual(JSON.stringify(replies[1]), JSON.stringify({ error: "not let in" }), "an error too");
+  seenByPage.length = 0;
+  seenByPage.push({ type: "hello" }, { type: "connected" });
   toRelay("msg", { t: "get", k: "translation:https://x/1" });
   await sleep(20);
   assert.deepStrictEqual(ports[0].sent, [{ t: "get", k: "translation:https://x/1" }], "page -> extension");
@@ -90,6 +116,18 @@ const types = () => seenByPage.map((m) => m.type);
   window.postMessage("a plain string", ORIGIN);
   await sleep(30);
   assert.strictEqual(ports[0].sent.length, before, "messages from another frame or origin, or without our envelope, are ignored");
+
+  // ---- Listen with a Fish Audio key: the page's ask goes to the extension, the answer comes back with the same id ----
+  const before2 = asked.length;
+  runtime.sendMessage = ((was) => async (m) => (String(m.type).startsWith("fish:") && asked.push(m), m.type === "fish:speak" ? { audio: "SUQz", type: "audio/mpeg" } : m.type === "fish:credit" ? { error: "Allow api.fish.audio", needsAccess: true } : was(m)))(runtime.sendMessage);
+  seenByPage.length = 0;
+  toRelay("fish", { id: 7, op: "speak", text: "Hi.", voice: "v", model: "s2.1-pro-free", key: "k", extra: "dropped" });
+  toRelay("fish", { id: 8, op: "credit", key: "k" });
+  toRelay("fish", { id: 9, op: "something-else", key: "k" });
+  toRelay("fish", { op: "speak", text: "no id" });
+  await sleep(30);
+  assert.strictEqual(JSON.stringify(asked.slice(before2)), JSON.stringify([{ type: "fish:speak", text: "Hi.", voice: "v", model: "s2.1-pro-free", key: "k" }, { type: "fish:credit", key: "k" }]), "only the two asks go on, with only their own fields");
+  assert.strictEqual(JSON.stringify(seenByPage.filter((m) => m.type === "fish").map((m) => m.data)), JSON.stringify([{ id: 7, audio: "SUQz", type: "audio/mpeg" }, { id: 8, error: "Allow api.fish.audio", needsAccess: true }]), "and the answers come back by id");
 
   // ---- the page closes it ----
   toRelay("close");

@@ -39,6 +39,7 @@
   const MAX_RECORD = 2 * 1024 * 1024; // the body of one record, as sent (a chapter list of 6,700 chapters is 1.2 MB)
   const BUCKETS = 16; // a glossary's terms are kept in this many records, so changing one term rewrites a sixteenth of it
   const JOIN_TTL = 10 * 60 * 1000; // a request to join is shown this long
+  const LEAVE_TTL = 30 * 24 * 3600 * 1000; // a device that left is taken off the list when its proof comes this long after, at most
   const COVERS_KEPT = 30; // covers' pictures kept in memory (the others are read from their records when asked for)
 
   // ---------- encoding ----------
@@ -150,12 +151,10 @@
   // Step 3: your version of a novel someone shared (`layer:<book id>`: { lib, bookKey, title, chapters: { their chapter's address: your chapter's
   // key } }, made the first time you change it) and how you use another library's edition of a novel you own (`edition:<book id>`:
   // { modes: { <library id>: "off" | "notify" | "use" }, asked: { <chapter number>: when } }).
-  // Step 4: pull requests to you: each as it arrived (`prin:<id>`, the sealed envelope) and what you decided (`prdone:<id>`: { state, accepted,
-  // at, from, book }), on every device of yours.
   const OWNER_ONES = new Set(["share", "profile", "sharing"]);
-  const OWNER_MAPS = new Set(["sbook", "dh", "okey", "layer", "edition", "prin", "prdone"]);
+  const OWNER_MAPS = new Set(["sbook", "dh", "okey", "layer", "edition"]);
   const PLAIN = new Set(["devices", "dh", "okey"]);
-  const PRIVATE = new Set(["rating", "watch", "notice", "settings", "wtr-library", "comment-identity", "share", "sharing", "sbook", "dh", "okey", "layer", "edition", "prin", "prdone"]);
+  const PRIVATE = new Set(["rating", "watch", "notice", "settings", "wtr-library", "comment-identity", "share", "sharing", "sbook", "dh", "okey", "layer", "edition"]);
   const CHANGE_TO_PREFIX = { binding: "binding", novel: "novel", chapterIndex: "chapters", myTerm: "term", note: "note", commentLink: "comment-link", rating: "rating", watch: "watch" };
   const CHANGE_TO_ONE = { novelLinks: "novel-links", settings: "settings", wtrLibrary: "wtr-library", commentIdentity: "comment-identity" };
 
@@ -235,7 +234,7 @@
 
     const records = new Map(); // key -> the record as it travels
     let S = LibraryApi.normalizeState({});
-    const extra = { share: null, profile: null, sharing: null, sbook: {}, dh: {}, okey: {}, layer: {}, edition: {}, prin: {}, prdone: {} }; // the owner's records outside the API's state (OWNER_ONES, OWNER_MAPS)
+    const extra = { share: null, profile: null, sharing: null, sbook: {}, dh: {}, okey: {}, layer: {}, edition: {} }; // the owner's records outside the API's state (OWNER_ONES, OWNER_MAPS)
     if (meta.ownerKey && !meta.keys) { meta.keys = { 0: meta.ownerKey }; meta.gen = 0; } // (a library from before keys had generations)
     // Covers are not all held here: a cover record is kept by its head alone (`lazy`: the whole of it is in the adapter, read when it is sent),
     // and a cover's picture is read and opened when it is asked for (the last COVERS_KEPT of them are kept). pendingCovers: pictures being
@@ -494,6 +493,7 @@
         all.sort((a, b) => (a.key.startsWith("gterms:") ? 1 : 0) - (b.key.startsWith("gterms:") ? 1 : 0));
         for (const r of all) {
           if (r.key === "devices") continue;
+          if (!knownKey(r.key)) continue; // (pull requests, from before they were taken out: not kept)
           keep(r);
           try {
             applyBody(r.key, await bodyOfRecord(r));
@@ -562,6 +562,25 @@
     };
     rebuild();
 
+    // What this device holds of a library goes (abandon, leave): its keys stay, and `keep` is the rest of the new meta.
+    async function forget(keep) {
+      await adapter.clear();
+      meta = Object.assign({ device: me, hlc: meta.hlc }, keep);
+      await adapter.setMeta(meta);
+      records.clear();
+      devices = [];
+      ownerAes = null;
+      S = LibraryApi.normalizeState({});
+      for (const k of Object.keys(extra)) extra[k] = k === "share" || k === "profile" || k === "sharing" ? null : {};
+      coverCache.clear();
+      pendingCovers.clear();
+      joins.clear();
+      asking.clear();
+      pending = [];
+      rebuild();
+      emit("change", { status: true });
+    }
+
     const lib = {
       on(what, fn) { listeners[what].add(fn); return () => listeners[what].delete(fn); },
 
@@ -579,8 +598,7 @@
           refused: meta.root ? (meta.refused || []).map((id) => ({ id, name: (meta.refusedNames && meta.refusedNames[id]) || "Device" })) : [],
           joins: [...joins.values()].filter((j) => now - j.seenAt < JOIN_TTL).map((j) => ({ id: j.id, name: j.name, at: j.at })),
           asking: meta.root ? [] : [...asking.values()].filter((j) => now - j.seenAt < JOIN_TTL && !devices.some((d) => d.id === j.id)).map((j) => ({ id: j.id, name: j.name })),
-          name: (extra.profile && extra.profile.name) || "", sharing: !!extra.share, shared: Object.keys(extra.sbook).length,
-          prs: (extra.profile && extra.profile.prs) || "anyone", approved: (extra.profile && extra.profile.approved) || []
+          name: (extra.profile && extra.profile.name) || "", sharing: !!extra.share, shared: Object.keys(extra.sbook).length
         };
       },
 
@@ -610,22 +628,33 @@
       // taken off (its list no longer has it, so it can only ask again). What it holds goes, this device's own keys stay, and it asks to join.
       abandon: () => serial(async () => {
         if (listed() && devices.some((d) => d.id !== me.id)) throw new Error("other devices are in this library: remove them first");
-        await adapter.clear();
-        meta = { device: me, hlc: meta.hlc, joinAsked: Date.now() };
-        await adapter.setMeta(meta);
-        records.clear();
-        devices = [];
-        ownerAes = null;
-        S = LibraryApi.normalizeState({});
-        for (const k of Object.keys(extra)) extra[k] = k === "share" || k === "profile" || k === "sharing" ? null : {};
-        coverCache.clear();
-        pendingCovers.clear();
-        joins.clear();
-        asking.clear();
-        pending = [];
-        rebuild();
-        emit("change", { status: true });
+        await forget({ joinAsked: Date.now() });
       }),
+
+      // Leaves the library: what this device holds of it goes, and it is a new device from then on (new keys, so it can ask to join any library,
+      // this one again too; the list may still have the old one until the main device takes it off: leaveProof). Not the main device while
+      // others are in it: none would be left to let devices in.
+      leave: () => serial(async () => {
+        if (meta.root && devices.some((d) => d.id !== me.id)) throw new Error("this is your library's main device: it can't leave while your other devices are in it");
+        const sig = await edPair();
+        const dh = await xPair();
+        Object.assign(me, { id: hex(webcrypto.getRandomValues(new Uint8Array(8))), pub: sig.pub, priv: sig.priv, dhPub: dh.pub, dhPriv: dh.priv });
+        await forget({});
+      }),
+      // What a device leaving signs, for the main device to take it off the list (removeLeaving): made before it leaves.
+      leaveProof: async () => {
+        if (!listed()) return null;
+        const at = Date.now();
+        return { t: "lx", lib: meta.libId, id: me.id, at, sig: await sign(me.priv, leaveText(meta.libId, me.id, at)) };
+      },
+      // On the main device: a device of the library that left (its leaveProof) is removed, as Remove does (a new owner key, the same link).
+      removeLeaving: async (p) => {
+        if (!meta.root || !p || p.lib !== meta.libId || typeof p.id !== "string" || p.id === me.id || !Number.isFinite(p.at) || typeof p.sig !== "string") return false;
+        if (Date.now() - p.at > LEAVE_TTL || !devices.some((d) => d.id === p.id)) return false;
+        if (!(await lib.peerCheck(p.id, leaveText(p.lib, p.id, p.at), p.sig))) return false;
+        await lib.removeDevice(p.id, {});
+        return true;
+      },
 
       // A connection's proof that this is a device of the library (p2p-core.js, "pf"): what it signs is made by the room, from both ends'
       // keys for that connection. null when this device is in no library (whether it is listed is for the other end to see: a device just let
@@ -640,8 +669,10 @@
       // What this device sends to ask to join the library of the devices it meets.
       joinRequest() {
         if (!meta.joinAsked) { meta.joinAsked = Date.now(); adapter.setMeta(meta).catch(() => {}); }
-        return { t: "jn", id: me.id, name: me.name, pub: me.pub, dh: me.dhPub, at: meta.joinAsked };
+        return lib.joinMessage();
       },
+      // The same, without asking the devices it meets (the library site's tab in the same browser lets it in at once: library-host.js).
+      joinMessage: () => ({ t: "jn", id: me.id, name: me.name, pub: me.pub, dh: me.dhPub, at: meta.joinAsked || Date.now() }),
       cancelJoin: () => serial(async () => { delete meta.joinAsked; await adapter.setMeta(meta); emit("change", { status: true }); }),
 
       // A request to join, arriving at a device of the library. Only the main device can answer it, so only it keeps it. Another device of the
@@ -789,7 +820,7 @@
       put: (key, body) => serial(async () => {
         if (!listed()) throw new Error("this device is not in a library yet");
         const [kind] = splitKey(key);
-        if (!["profile", "sharing", "sbook", "layer", "edition", "prin", "prdone"].includes(kind) || !knownKey(key)) throw new Error("not something to put: " + key);
+        if (!["profile", "sharing", "sbook", "layer", "edition"].includes(kind) || !knownKey(key)) throw new Error("not something to put: " + key);
         const cur = bodyOf(key);
         if (stable(cur === undefined ? null : cur) === stable(body)) return { changed: false };
         applyBody(key, body);
@@ -860,12 +891,9 @@
       // so the links given so far get nothing new.
       share: (newLink) => serial(async () => {
         if (!listed()) throw new Error("this device is not in a library yet");
-        // with the read key, the seal key pull requests are sealed with (made once, kept across new links; a library from before it has one
-        // added now)
-        if (!extra.share || newLink || !extra.share.sealPub) {
-          const seal = extra.share && extra.share.sealPub ? { sealPub: extra.share.sealPub, sealPriv: extra.share.sealPriv } : await xPair().then((x) => ({ sealPub: x.pub, sealPriv: x.priv }));
-          const readKey = !extra.share || newLink ? b64u(webcrypto.getRandomValues(new Uint8Array(32))) : extra.share.readKey;
-          applyBody("share", Object.assign({ readKey, at: Date.now() }, seal));
+        if (!extra.share || newLink) {
+          const readKey = b64u(webcrypto.getRandomValues(new Uint8Array(32)));
+          applyBody("share", { readKey, at: Date.now() });
           await publish(["share"]);
           emit("change", { key: "share" });
         }
@@ -892,36 +920,6 @@
         return Object.assign(s, { devices: records.get("devices"), sig });
       },
 
-      // ----- pull requests -----
-      // A pull request from this library to another's (its changes to one novel), sealed with that library's seal key: only its owner opens it.
-      makePr: async ({ to, book, sealKey, body }) => {
-        if (!listed()) throw new Error("this device is not in a library yet");
-        const eph = await xPair();
-        const sealed = await seal(await sharedKey(eph.priv, sealKey, "p2p-read pr " + to), JSON.stringify(body));
-        const at = Date.now();
-        const e = { v: V, t: "pr", id: hex(webcrypto.getRandomValues(new Uint8Array(12))), to, from: meta.libId, by: me.id, book: String(book), at, expires: at + PR_TTL,
-          epk: eph.pub, iv: sealed.iv, ct: sealed.body, devices: records.get("devices") };
-        e.sig = await sign(me.priv, prSigned(e));
-        return e;
-      },
-      // What a pull request to this library says (owner devices only: the seal key is theirs).
-      openPr: async (e) => {
-        if (!extra.share || !extra.share.sealPriv) throw new Error("this library has no seal key");
-        return JSON.parse(await unseal(await sharedKey(extra.share.sealPriv, e.epk, "p2p-read pr " + meta.libId), e.iv, e.ct));
-      },
-      // The pull requests that came, opened: [{ id, from, book, at, body, done }] (done: what you decided, or null), newest first.
-      inbox: async () => {
-        const out = [];
-        for (const [id, e] of Object.entries(extra.prin)) {
-          let body = null;
-          try { body = await lib.openPr(e); } catch (err) { body = { error: "cannot be opened (sealed with an older key)" }; }
-          out.push({ id, from: e.from, book: e.book, at: e.at, expires: e.expires, body, done: extra.prdone[id] || null });
-        }
-        return out.sort((a, b) => b.at - a.at);
-      },
-      prDone: (id) => extra.prdone[id] || null,
-      prsDone: () => JSON.parse(JSON.stringify(extra.prdone)),
-      hasPr: (id) => !!(extra.prin[id] || extra.prdone[id]),
       shareVer: () => (records.has("share") ? records.get("share").ver : [0, 0, ""]),
 
       // ----- removing a device (main device only) -----
@@ -955,9 +953,8 @@
         delete extra.okey[id];
         delete extra.dh[id];
         if (extra.share) {
-          // a new seal key (the removed device could open pull requests sealed with the old one), and a new read key when asked
-          const x = await xPair();
-          applyBody("share", Object.assign({}, extra.share, { sealPub: x.pub, sealPriv: x.priv, at: Date.now() }, opts.newLink ? { readKey: b64u(webcrypto.getRandomValues(new Uint8Array(32))) } : {}));
+          // a new read key when asked
+          applyBody("share", Object.assign({}, extra.share, { at: Date.now() }, opts.newLink ? { readKey: b64u(webcrypto.getRandomValues(new Uint8Array(32))) } : {}));
         }
         // everything again: the owner keys first, so a device can read what follows
         const keys = [...records.keys()].filter((k) => k !== "devices");
@@ -1052,7 +1049,7 @@
   // What readers get. In the library room: devices, profile (both plain), head, entry:<book>, cover:<book> (the catalog key); in a book's room:
   // devices, profile, book:<book>, bhead:<book>, bcover:<book> (its cover, for a reader with only the book's link), terms:<book> (the owner's
   // terms for it, shown over its text), chapter:<source url> (that book's key).
-  const PUBLISHED = { devices: "plain", profile: "plain", head: "catalog", entry: "catalog", cover: "catalog", book: "book", bhead: "book", bcover: "book", terms: "book", pr: "book", chapter: "book" };
+  const PUBLISHED = { devices: "plain", profile: "plain", head: "catalog", entry: "catalog", cover: "catalog", book: "book", bhead: "book", bcover: "book", terms: "book", chapter: "book" };
   function publishedScope(key) {
     const [kind, id] = splitKey(key);
     const scope = PUBLISHED[kind];
@@ -1087,33 +1084,6 @@
     }
   }
 
-  // ---------- pull requests ----------
-  // A pull request as it travels (everything but what it says is readable, so every device passing it on can check it):
-  //   { v, t: "pr", id, to: <library id>, from: <the sender's library id>, by: <its device>, book, at, expires, epk, iv, ct (sealed: what it says),
-  //     devices: <the sender's list of devices, signed with its root key>, sig: <by that device> }
-  const PR_TTL = 30 * 24 * 3600 * 1000; // a pull request is passed on for at most 30 days
-  const MAX_PR = 1024 * 1024; // what one says, sealed: 1 MB at most
-  const prSigned = (e) => stable(Object.assign({}, e, { sig: undefined }));
-  // Is this a pull request the library it is for takes, by what its profile says? policy: { prs: "anyone" | "approved" | "off", approved: [library
-  // id], sealKey }. -> "" or why not.
-  async function checkPr(e, { to, policy, now }) {
-    if (!e || typeof e !== "object" || e.v !== V || e.t !== "pr" || typeof e.id !== "string" || !/^[0-9a-f]{16,32}$/.test(e.id)) return "malformed";
-    if (e.to !== to || typeof e.from !== "string" || e.from === to || typeof e.book !== "string" || !e.book || e.book.length > 300) return "malformed";
-    if (!Number.isFinite(e.at) || !Number.isFinite(e.expires) || e.expires > e.at + PR_TTL + 60000) return "malformed";
-    if ((now || Date.now()) > e.expires) return "expired";
-    if (typeof e.ct !== "string" || e.ct.length > MAX_PR * 1.4 || typeof e.iv !== "string" || typeof e.epk !== "string") return "too big";
-    const p = policy || {};
-    if (!p.sealKey || p.prs === "off") return "not taken";
-    if (p.prs === "approved" && !(p.approved || []).includes(e.from)) return "not approved";
-    const d = e.devices;
-    if (!d || d.key !== "devices" || d.lib !== e.from || d.by !== "root" || typeof d.body !== "string" || !(await verify(e.from, signedPart(d), d.sig))) return "bad sender";
-    let list = null;
-    try { list = JSON.parse(d.body); } catch (err) { return "bad sender"; }
-    const dev = Array.isArray(list) && list.find((x) => x && x.id === e.by);
-    if (!dev || !(await verify(dev.pub, prSigned(e), e.sig))) return "bad signature";
-    return "";
-  }
-
   // What the sync room needs of a library (p2p-core.js opts.library). A device asks to join only once its user has asked (lib.joinRequest()
   // from the page or the popup), never by itself.
   function roomLink(lib) {
@@ -1128,6 +1098,7 @@
       receiveKeys: (m) => lib.receiveKeys(m),
       peerProof: (data) => lib.peerProof(data),
       peerCheck: (id, data, sig) => lib.peerCheck(id, data, sig),
+      leaving: (m) => lib.removeLeaving(m),
       joinRequest: () => {
         const st = lib.status();
         return st.state === "joining" && !st.libId ? lib.joinRequest() : null;
@@ -1136,7 +1107,7 @@
   }
 
   // Its calls, and what each answers where there is no library to ask.
-  const ROOM_CALLS = Object.freeze({ lib: "", versions: Object.freeze([]), wants: false, wantsMany: Object.freeze([]), get: null, receive: Object.freeze({ stored: false, why: "not in a library" }), joinAsked: false, receiveKeys: false, joinRequest: null, peerProof: null, peerCheck: false });
+  const ROOM_CALLS = Object.freeze({ lib: "", versions: Object.freeze([]), wants: false, wantsMany: Object.freeze([]), get: null, receive: Object.freeze({ stored: false, why: "not in a library" }), joinAsked: false, receiveKeys: false, joinRequest: null, peerProof: null, peerCheck: false, leaving: false });
 
   // The same, for a library still being opened (a promise of it, or of null where the browser cannot make its keys): the room can be made at once.
   function lazyRoomLink(ready) {
@@ -1151,6 +1122,9 @@
     return out;
   }
 
+  // What a device leaving a library signs (lib.leaveProof, lib.removeLeaving).
+  const leaveText = (libId, id, at) => "p2p-read leave v1|" + libId + "|" + id + "|" + at;
+
   // A short code to tell libraries apart by eye ("4F2A-91C0"): the start of a hash of the library's id would do, but its own first letters are
   // as good and need no hashing.
   function codeOf(libId) {
@@ -1160,7 +1134,7 @@
 
   const Library = {
     open, supported, roomLink, lazyRoomLink, ROOM_CALLS, memoryAdapter, idbAdapter, isPrivate, bucketOf, codeOf, cmpVer, stable, BUCKETS,
-    shareKeys, bookKeyOf, bookRoomOf, libraryLink, bookLink, parseLink, readPublished, publishedScope, checkPr, PR_TTL, MAX_PR
+    shareKeys, bookKeyOf, bookRoomOf, libraryLink, bookLink, parseLink, readPublished, publishedScope
   };
   if (typeof module !== "undefined" && module.exports) module.exports = Library;
   else root.Library = Library;

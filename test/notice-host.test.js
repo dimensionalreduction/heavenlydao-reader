@@ -15,9 +15,8 @@ const NoticeHost = require(path.join(__dirname, "..", "src", "shared", "notice-h
 
   // the library: this extension is its main device
   const st = { state: "member", libId: "L1", main: true, sharing: true, joins: [], devices: [{ id: "d1", name: "Chrome (extension)" }] };
-  let inbox = [];
   let notices = [];
-  const lib = { status: () => st, inbox: async () => inbox, sharedBooks: async () => ({ b1: { title: "Shared Book" } }),
+  const lib = { status: () => st, sharedBooks: async () => ({ b1: { title: "Shared Book" } }),
     api: async (m, p) => (p === "/api/notices" ? { notices } : p === "/api/novels" ? { novels: [{ id: "wtr-lab:5", title: "Watched Novel" }] } : null) };
   // the libraries you follow
   let books = { x: { title: "Their Book", n: 3 } };
@@ -31,7 +30,6 @@ const NoticeHost = require(path.join(__dirname, "..", "src", "shared", "notice-h
   let h = make();
 
   // ---- the first look: nothing is news ----
-  inbox = [{ id: "p0", book: "b1", body: { name: "Old" } }];
   notices = [{ id: "n0", novel: "wtr-lab:5", source: "wtr-lab", count: 2, seen: false }];
   await h.look("all");
   assert.deepStrictEqual(shown, [], "what was there before is not told");
@@ -48,9 +46,8 @@ const NoticeHost = require(path.join(__dirname, "..", "src", "shared", "notice-h
   assert.strictEqual(h.list().find((x) => x.kind === "join").join.done, "answered");
   assert.strictEqual(shown[1].title, "“Phone” joined your library");
 
-  // ---- pull requests, the watch's finding, the library followed, your novels (a minute after the first look) ----
+  // ---- the watch's finding, the library followed, your novels (a minute after the first look) ----
   t += 2 * 60 * 1000;
-  inbox = [{ id: "p0", book: "b1", body: { name: "Old" } }, { id: "p1", book: "b1", body: { name: "Ben" } }, { id: "p2", book: "b1", body: { name: "Done" }, done: { at: 1 } }];
   notices = [{ id: "n0", novel: "wtr-lab:5", source: "wtr-lab", count: 2, seen: false }, { id: "n1", novel: "wtr-lab:5", source: "wtr-lab", count: 3, firstNum: 11, lastNum: 13, seen: false }];
   books = { x: { title: "Their Book", n: 5 }, y: { title: "New One", n: 1 } };
   mine = { "My Novel": 12, "Uploaded": 300 };
@@ -58,14 +55,13 @@ const NoticeHost = require(path.join(__dirname, "..", "src", "shared", "notice-h
   await h.look("all");
   assert.deepStrictEqual(shown.map((x) => x.title), [
     "My Novel: 2 new chapters",
-    "Pull request from Ben",
     "Watched Novel: 3 new chapters on wtr-lab",
     "Their Book: 2 new chapters",
     "New in Ana's: New One"
-  ], "each told once; a pull request answered, an old one and a new novel of yours are not");
+  ], "each told once; an old one and a new novel of yours are not");
   assert.strictEqual(shown[0].href, "#/n/My%20Novel", "the site's address of the novel");
-  assert.strictEqual(shown[3].href, "#/fb/F1/x", "the site's address of a followed novel");
-  assert.strictEqual(shown[2].text, "Chapters 11 to 13.");
+  assert.strictEqual(shown[2].href, "#/fb/F1/x", "the site's address of a followed novel");
+  assert.strictEqual(shown[1].text, "Chapters 11 to 13.");
 
   // ---- a page of the site open: nothing shown, nothing kept (the page told it); not told again later ----
   pageOpen = true;
@@ -99,7 +95,7 @@ const NoticeHost = require(path.join(__dirname, "..", "src", "shared", "notice-h
   h = make();
   await h.look("all");
   assert.deepStrictEqual(shown, [], "nothing told again after a restart");
-  assert.ok(h.list().length >= 7, "the list shown is kept (the site's bell takes it in)");
+  assert.ok(h.list().length >= 6, "the list shown is kept (the site's bell takes it in)");
 
   // ---- not the main device (the site's page is, in this browser): who asks is said, with where to allow it, and no buttons ----
   st.main = false;

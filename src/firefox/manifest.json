@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "heavenlydao.com Reader",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "browser_specific_settings": {
     "gecko": {
       "id": "reader@heavenlydao.com",
@@ -49,6 +49,7 @@
       "webtorrent.min.js",
       "site-matches.js",
       "site-access.js",
+      "fish-speech.js",
       "p2p-core.js",
       "glossary-server.js",
       "term-match.js",
@@ -61,6 +62,8 @@
       "pool-hints.js",
       "pool-share.js",
       "term-notes.js",
+      "profile-model.js",
+      "profile-translate.js",
       "original-translate.js",
       "watcher.js",
       "book-visit.js",

@@ -365,7 +365,10 @@
   if (isNode) module.exports = { collect, selectorFor, interpret, asRuleParts, orderOf, titleDropFor, stableClasses, KINDS, MAX_CANDIDATES };
   if (typeof document === "undefined" || typeof location === "undefined") return; // loaded by a test, not injected into a page
   if (!/^https?:$/.test(location.protocol)) return;
-  if (document.getElementById("gemini-detect-bar")) return; // already running
+  // A bar still on the page: a run in progress is left alone; one that has finished (its answer is only showing) is replaced by this run.
+  const old = document.getElementById("gemini-detect-bar");
+  if (old && old.dataset.running) return;
+  if (old) old.remove();
 
   const ext = typeof browser !== "undefined" ? browser : chrome;
   const host = location.hostname.replace(/^www\./, "");
@@ -385,10 +388,21 @@
   close.style.cssText = action.style.cssText;
   close.onclick = () => bar.remove();
   bar.append(note, action, close);
+  bar.dataset.running = "1"; // (until the run is over)
   document.body.appendChild(bar);
+  let fade = 0;
+  let good = false;
   const say = (text, color) => {
+    good = color === "#7ed17e";
     note.textContent = text;
     note.style.color = color || "#fff";
+  };
+  // The answer goes away by itself (a failure sooner; a success later, as it carries Undo); pointing at it keeps it.
+  const leaveSoon = (ms) => {
+    clearTimeout(fade);
+    fade = setTimeout(() => bar.remove(), ms);
+    bar.onmouseenter = () => clearTimeout(fade);
+    bar.onmouseleave = () => { fade = setTimeout(() => bar.remove(), ms); };
   };
 
   // Saving goes through user-rules.js (the page that injected this also injected it), then the book is recorded again from the page as it is.
@@ -544,5 +558,8 @@
       action.hidden = true;
       say("Undone: the rule is as it was.");
     };
-  })().catch((e) => say("Something went wrong: " + ((e && e.message) || e), "#ff9d8f"));
+  })().catch((e) => say("Something went wrong: " + ((e && e.message) || e), "#ff9d8f")).then(() => {
+    delete bar.dataset.running;
+    leaveSoon(good ? 60000 : 15000);
+  });
 })();

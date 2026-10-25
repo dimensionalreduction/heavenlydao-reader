@@ -12,7 +12,6 @@
   const KINDS = [
     ["join", "Requests to join your library", "A device asks to join: Allow or Refuse it from the notification"],
     ["devices", "Your devices", "A device joined your library, or was taken off it"],
-    ["pr", "Pull requests", "Readers' changes to the novels you share, in your Inbox"],
     ["chapters", "New chapters in your library", "Chapters past the last one a novel had (the extension fetched and translated them)"],
     ["follow", "Libraries you follow", "Their new novels, and new chapters of their novels"],
     ["editions", "Other editions", "Chapters other editions of your novels have past yours (for those set to “Tell me about new chapters”)"]

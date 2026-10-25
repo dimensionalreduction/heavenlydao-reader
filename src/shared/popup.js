@@ -1,17 +1,15 @@
 // The popup once this extension is a device of your library (popup-lock.js shows only the passphrase and Join before): a header with the
-// novel and chapter of the page in front of you (and "Library copy": whether the novels you open are recorded in your library), and five tabs:
-//   Read     what the chapter footer does on the library site: fetch the next chapters' text, translate the next ones, Gemini's notes
+// novel and chapter of the page in front of you (and "Library copy": whether the novels you open are recorded in your library), and two tabs:
 //   Novel    where this site keeps each part of a novel (title, chapter list, cover...), whether it is found on this page, the picker, AI detection
-//   Gemini   the API key, the model, the prompts
-//   Terms    the saved glossaries (one can be used for this novel) and the terms you made in the library's reader
 //   Library  your library (popup-library.js: its devices, letting one in), its numbers, the passphrase
+// Fetching, translating and the notes on terms are done on the library site (its reader and novel pages), and so are the Gemini key, model and prompts
+// (Settings › Translation): the key is handed to this extension by the library's page in this browser (site-bridge.js "access").
 (async function () {
   const ext = typeof browser !== "undefined" ? browser : chrome;
 
   const GENERIC_SELECTORS = ["article", "main", "#content", ".content", ".chapter-content", ".read-content", ".readcontent", "#chaptercontent"];
   const RAW_TEXT_VAR_CANDIDATES = ["txt_content"];
   const MIN_CONTENT_LENGTH = 200;
-  const FALLBACK_MODELS = ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.5-pro"];
   const $ = (id) => document.getElementById(id);
 
   // ---------- tabs (the one last open is opened again) ----------
@@ -22,13 +20,6 @@
     try { localStorage.setItem("popupPane", name); } catch (e) { /* (a private window) */ }
   }
   for (const b of tabButtons) b.onclick = () => showPane(b.dataset.pane);
-  for (const b of document.querySelectorAll("[data-goto]")) {
-    b.onclick = () => {
-      showPane(b.dataset.goto);
-      const d = b.dataset.prompt && $("prompt-" + b.dataset.prompt); // a ⚙ opens its own prompt
-      if (d) { d.open = true; d.scrollIntoView({ block: "nearest" }); }
-    };
-  }
   try { const last = localStorage.getItem("popupPane"); if (last && $("pane-" + last)) showPane(last); } catch (e) { /* (none kept) */ }
 
   // ---------- library copy ----------
@@ -124,7 +115,7 @@
     return r;
   }
 
-  // The rules (built-in, and the person's own on top) as the engine sees them, for the Novel tab and for what the Read tab can fetch.
+  // The rules (built-in, and the person's own on top) as the engine sees them, for the Novel tab.
   UserRules.apply((await ext.storage.local.get(UserRules.KEY))[UserRules.KEY] || {});
   const rule = onPage ? RawSources.ruleFor(tab.url) : null;
   const hostname = onPage ? new URL(tab.url).hostname.replace(/^www\./, "") : "";
@@ -133,13 +124,10 @@
   // No novel site is allowed at install: the browser's own question is asked here, by a click, the first time a site is needed (site-access.js). The bar lists the page's
   // site, when it is one the extension reads and is not allowed yet, and the sites something already asked for (a watch, the library site).
   const accessBar = $("accessBar");
-  let pageAllowed = true; // (whether the page's site is allowed or needs no permission: a click on Fetch asks first when not)
   async function renderAccess() {
     const wanted = new Map(); // permission pattern -> host
     for (const p of await SiteAccess.pending(ext)) wanted.set(p.pattern, p.host);
-    pageAllowed = true;
     if (onPage && (rule || hostname === "wtr-lab.com") && !(await SiteAccess.has(tab.url, ext))) {
-      pageAllowed = false;
       wanted.set(SiteAccess.patternOf(tab.url), hostname.toLowerCase());
     }
     accessBar.replaceChildren();
@@ -160,92 +148,6 @@
     }
   }
   await renderAccess();
-  const chapterKey = onPage ? "translation:" + new URL(tab.url).origin + new URL(tab.url).pathname : ""; // (content.js keeps a page's translation under this)
-
-  // ---------- Gemini: key, model, prompts (no page needed) ----------
-  const modelSelect = $("modelSelect");
-  (async () => {
-    let models = [];
-    try {
-      const res = await ext.runtime.sendMessage({ type: "listModels" });
-      models = (res && res.models) || [];
-    } catch (e) {
-      models = [];
-    }
-    if (!models.length) models = FALLBACK_MODELS;
-    const { selectedModel } = await ext.storage.local.get("selectedModel");
-    modelSelect.replaceChildren(...models.map((m) => Object.assign(document.createElement("option"), { value: m, textContent: m })));
-    // (none chosen: the extension's own default is what is used, so that is what is shown; nothing is saved until one is picked)
-    modelSelect.value = selectedModel && models.includes(selectedModel) ? selectedModel : models.includes(GEMINI_MODEL) ? GEMINI_MODEL : models[0];
-    modelSelect.onchange = () => { ext.storage.local.set({ selectedModel: modelSelect.value }); Promise.resolve(ext.runtime.sendMessage({ type: "model:set", model: modelSelect.value })).catch(() => {}); }; // (also the library's setting: every device and the site use it)
-  })();
-
-  const apiKeyBtn = $("apiKeyBtn");
-  async function refreshApiKeyBtn() {
-    const { geminiApiKey } = await ext.storage.local.get("geminiApiKey");
-    apiKeyBtn.textContent = geminiApiKey ? "🔑 API key ✓" : "🔑 Add API key";
-    apiKeyBtn.title = geminiApiKey ? "Change or clear your Gemini API key" : "Add your Gemini API key";
-  }
-  await refreshApiKeyBtn();
-  apiKeyBtn.onclick = () => {
-    const input = Object.assign(document.createElement("input"), { type: "password", className: "edit-input", placeholder: "Gemini API key" });
-    apiKeyBtn.replaceWith(input);
-    ext.storage.local.get("geminiApiKey").then(({ geminiApiKey }) => { input.value = geminiApiKey || ""; });
-    input.focus();
-    let done = false;
-    const finish = async (commit) => {
-      if (done) return;
-      done = true;
-      if (commit) {
-        const value = input.value.trim();
-        if (value) await ext.storage.local.set({ geminiApiKey: value });
-        else await ext.storage.local.remove("geminiApiKey");
-        await refreshApiKeyBtn();
-      }
-      input.replaceWith(apiKeyBtn);
-    };
-    input.addEventListener("keydown", (e) => { if (e.key === "Enter") finish(true); if (e.key === "Escape") finish(false); });
-    input.addEventListener("blur", () => finish(true));
-  };
-
-  // The prompts (gemini.js GEMINI_PROMPT_PRESETS and the ones saved in the library's Settings › Translation › Gemini prompts; the extension keeps a copy of what the
-  // library has in "geminiPromptSets", and "geminiPrompts" from before there were sets): listed here, the one in use marked, each shown as it is when its name is clicked.
-  // They are changed and picked in the library's settings, not here.
-  {
-    const LABELS = { translate: "Translation", notes: "Gemini notes", detect: "Detect with AI" };
-    const box = $("prompts");
-    const open = new Set(); // (kept open when the list is drawn again)
-    const drawPrompts = async () => {
-      const kept = await ext.storage.local.get(["geminiPromptSets", "geminiPrompts"]);
-      const sets = kept.geminiPromptSets || {};
-      const legacy = kept.geminiPrompts || {};
-      box.replaceChildren(...Object.entries(LABELS).map(([name, label]) => {
-        const entry = sets[name];
-        const all = GEMINI_PROMPT_PRESETS[name].concat((entry && Array.isArray(entry.mine) ? entry.mine : []).map((p) => ({ id: p.id, name: p.name, text: p.text, mine: true })));
-        const active = entry && all.find((p) => p.id === entry.active);
-        const inUse = active || (typeof legacy[name] === "string" && legacy[name].trim() ? { id: "", name: "Yours", text: legacy[name], mine: true } : all[0]);
-        const state = Object.assign(document.createElement("span"), { className: "subtitle", textContent: inUse.name });
-        const summary = document.createElement("summary");
-        summary.append(Object.assign(document.createElement("span"), { textContent: label }), state);
-        const area = Object.assign(document.createElement("textarea"), { className: "edit-input", readOnly: true, spellcheck: false, value: inUse.text });
-        const list = document.createElement("div");
-        list.className = "prompt-list";
-        const rows = inUse.id || all.includes(inUse) ? all : all.concat([inUse]); // (one from before there were sets has no id: listed as "Yours")
-        list.append(...rows.map((p) => {
-          const row = Object.assign(document.createElement("button"), { type: "button", className: "icon-btn", textContent: p.name + (p === inUse ? " ✓" : ""), title: p.about || "" });
-          row.onclick = () => { area.value = p.text; };
-          return row;
-        }));
-        const d = Object.assign(document.createElement("details"), { className: "prompt", id: "prompt-" + name });
-        d.open = open.has(name);
-        d.ontoggle = () => { if (d.open) open.add(name); else open.delete(name); };
-        d.append(summary, list, area);
-        return d;
-      }));
-    };
-    drawPrompts();
-    ext.storage.onChanged.addListener((changes, area) => { if (area === "local" && (changes.geminiPromptSets || changes.geminiPrompts)) drawPrompts(); });
-  }
 
   ext.runtime.sendMessage({ type: "glossary:pull" }).catch(() => {}); // (brought up to date whenever the popup opens)
 
@@ -305,77 +207,12 @@
     }
   }
 
-  // ---------- Terms: glossaries (one can be used for this novel), and the terms you made ----------
-  {
-    const bindKey = onPage ? WtrTerms.bindingKey(tab.url) : "";
-    const searchEl = $("libSearch");
-    const resultsEl = $("libResults");
-    const appliesEl = $("libApplies");
-    appliesEl.textContent = bindKey ? "“Use here” applies to: " + bindKey : "Open a novel's page to use a glossary for it.";
-    async function renderLibrary() {
-      const { glossaryLibrary = {}, glossaryBindings = {} } = await ext.storage.local.get(["glossaryLibrary", "glossaryBindings"]);
-      const bound = new Set(bindKey ? WtrTerms.bindingIds(glossaryBindings[bindKey]) : []);
-      const query = searchEl.value.trim();
-      const hits = WtrTerms.search(glossaryLibrary, query).slice(0, 8);
-      resultsEl.textContent = "";
-      if (!Object.keys(glossaryLibrary).length) return (resultsEl.textContent = "Nothing saved yet. Open a novel on the site and its glossary is saved automatically.");
-      if (!hits.length) return (resultsEl.textContent = 'No saved glossary matches "' + query + '".');
-      for (const g of hits) {
-        const r = document.createElement("div");
-        r.className = "row";
-        const left = Object.assign(document.createElement("div"), { textContent: g.name + " (" + g.terms.length + ")", title: g.name + ": " + g.terms.length + " terms, saved " + new Date(g.updatedAt).toLocaleString() });
-        left.style.cssText = "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:230px;";
-        const isBound = bound.has(g.id);
-        const btn = Object.assign(document.createElement("button"), { className: "icon-btn", textContent: isBound ? "✓ Using · Remove" : "Use here", disabled: !bindKey,
-          title: isBound ? "Stop using this glossary for this novel" : "Use this glossary when translating this novel" });
-        btn.onclick = async () => {
-          const { glossaryBindings: current = {} } = await ext.storage.local.get("glossaryBindings");
-          const ids = new Set(WtrTerms.bindingIds(current[bindKey]));
-          if (isBound) ids.delete(g.id);
-          else ids.add(g.id);
-          btn.disabled = true;
-          const reply = await ext.runtime.sendMessage({ type: "glossary:bind", key: bindKey, ids: [...ids] });
-          if (!reply || !reply.ok) appliesEl.textContent = "Couldn't save: " + ((reply && reply.error) || "no answer from the extension");
-          renderLibrary();
-        };
-        r.append(left, btn);
-        resultsEl.appendChild(r);
-      }
-    }
-    searchEl.oninput = renderLibrary;
-    renderLibrary();
-
-    const termsEl = $("myTermsList");
-    async function renderMyTerms() {
-      const { myTerms = [], glossaryBindings = {} } = await ext.storage.local.get(["myTerms", "glossaryBindings"]);
-      const here = onPage ? WtrTerms.myTermEntries(myTerms, tab.url, glossaryBindings) : [];
-      const all = Array.isArray(myTerms) ? myTerms.length : 0;
-      termsEl.replaceChildren();
-      if (!all) return (termsEl.textContent = "None yet. In the library's reader, select text and press “+ Add Term”.");
-      for (const t of here.slice(0, 30)) {
-        const r = document.createElement("div");
-        r.className = "term";
-        r.append(Object.assign(document.createElement("span"), { textContent: t.terms.join(" / ") }), Object.assign(document.createElement("span"), { className: "to", textContent: t.translation }));
-        termsEl.appendChild(r);
-      }
-      termsEl.appendChild(Object.assign(document.createElement("div"), { className: "subtitle",
-        textContent: (onPage ? here.length + " for this novel (and every novel's) · " : "") + all + " in all. Add or change them in the library's reader." }));
-    }
-    renderMyTerms();
-    ext.storage.onChanged.addListener((changes, area) => {
-      if (area !== "local") return;
-      if (changes.glossaryLibrary || changes.glossaryBindings) renderLibrary();
-      if (changes.myTerms || changes.glossaryBindings) renderMyTerms();
-    });
-  }
-
   // ---------- the page: nothing more without one ----------
   const novelNameEl = $("novelName");
   const pageTitleEl = $("pageTitle");
-  const readNote = $("readNote");
   if (!onPage) {
     pageTitleEl.textContent = "Not a page of a site";
-    for (const id of ["novelPickBtn", "novelEditBtn", "novelDefaultBtn", "pickTitleBtn", "titleEditBtn", "titleDefaultBtn", "showOriginalBtn", "fetchBtn", "translateBtn", "notesBtn", "detectBtn", "siteRuleBtn"]) $(id).disabled = true;
+    for (const id of ["novelPickBtn", "novelEditBtn", "novelDefaultBtn", "pickTitleBtn", "titleEditBtn", "titleDefaultBtn", "detectBtn", "siteRuleBtn", "detailsBtn"]) $(id).disabled = true;
     $("detList").textContent = "Open a novel's page or one of its chapters.";
     return;
   }
@@ -385,7 +222,16 @@
     ext.tabs.create({ url: ext.runtime.getURL("rules.html") + "?url=" + encodeURIComponent(tab.url) });
     window.close();
   };
+  // Detect with AI asks Gemini with the key the library's page handed over (profileKeys, by Google's address), or one typed here before the popup had no place for it
+  const hasGeminiKey = async () => {
+    const { profileKeys, geminiApiKey } = await ext.storage.local.get(["profileKeys", "geminiApiKey"]);
+    return !!((profileKeys && profileKeys[GEMINI_KEY_BASE]) || geminiApiKey);
+  };
+  const showKeyNote = async () => { $("geminiNote").hidden = await hasGeminiKey(); };
+  showKeyNote();
+  ext.storage.onChanged.addListener((changes, area) => { if (area === "local" && (changes.profileKeys || changes.geminiApiKey)) showKeyNote(); });
   $("detectBtn").onclick = async () => {
+    if (!(await hasGeminiKey())) { $("geminiNote").hidden = false; return; }
     // what is found is saved as this site's rule, and a rule does nothing until the browser lets the extension read the site (asked first: it needs this click)
     const granted = await ext.permissions.request({ origins: ["https://*." + hostname + "/*"] }).catch(() => false);
     if (!granted) {
@@ -395,12 +241,6 @@
     await ext.runtime.sendMessage({ type: "startDetect", tabId: tab.id });
     window.close();
   };
-  // A plain reload is simpler and more reliable than messaging content.js to undo its in-place edit: it always gives the true original page.
-  $("showOriginalBtn").onclick = async () => {
-    await ext.tabs.reload(tab.id);
-    window.close();
-  };
-
   // ---------- header: the novel's name ----------
   // Mirrors content.js's resolveNovelName() fallback chain (an element picked for the site first).
   function novelNameProber(selector) {
@@ -464,66 +304,6 @@
     await setInBucket("titleSelectors", hostname, null);
     location.reload();
   };
-
-  // ---------- Read: fetch, translate, notes (how many after this chapter: remembered) ----------
-  {
-    const saved = await ext.storage.local.get(["fetchAhead", "prefetchAhead", "notesAhead"]);
-    const nums = { fetchN: ["fetchAhead", 5, 50], translateN: ["prefetchAhead", 0, 20], notesN: ["notesAhead", 0, 10] };
-    for (const [id, [key, dflt, max]] of Object.entries(nums)) {
-      const input = $(id);
-      input.value = Number.isFinite(saved[key]) ? saved[key] : dflt;
-      input.onchange = () => {
-        const n = Math.max(0, Math.min(max, parseInt(input.value, 10) || 0));
-        input.value = n;
-        ext.storage.local.set({ [key]: n });
-      };
-    }
-    const count = (id) => Math.max(0, parseInt($(id).value, 10) || 0);
-    const meta = () => ({ novelName: novelNameEl.textContent || novelNameRaw || "", pageTitle: pageTitleEl.textContent || pageTitleRaw || "" });
-    const fetchBtn = $("fetchBtn");
-    if (!rule) {
-      fetchBtn.disabled = true;
-      fetchBtn.title = "This site has no rule, so the extension cannot read its chapters by itself: add one on the Novel tab";
-    }
-    fetchBtn.onclick = async () => {
-      const n = count("fetchN");
-      fetchBtn.disabled = true;
-      if (!pageAllowed && !(await SiteAccess.request([SiteAccess.patternOf(tab.url)], ext))) { // (the browser asks: this click is what it needs)
-        readNote.textContent = "Not fetched: " + hostname + " is not allowed";
-        fetchBtn.disabled = false;
-        return;
-      }
-      pageAllowed = true;
-      renderAccess();
-      readNote.textContent = "Fetching this chapter…";
-      try {
-        await host("work", { key: chapterKey + "#original", meta: { ...meta(), ahead: n } });
-        readNote.textContent = "This chapter's text is in your library" + (n ? "; the next " + n + " are being fetched (the site's Activity page shows them)." : ".");
-      } catch (e) {
-        readNote.textContent = "Not fetched: " + e.message;
-      }
-      fetchBtn.disabled = false;
-    };
-    $("translateBtn").onclick = async () => {
-      await ext.storage.local.set({ prefetchAhead: count("translateN") }); // (content.js translates that many after this one)
-      $("translateBtn").disabled = true;
-      $("translateBtn").textContent = "Translating…";
-      await ext.runtime.sendMessage({ type: "translateTab", tabId: tab.id });
-      window.close();
-    };
-    const notesBtn = $("notesBtn");
-    notesBtn.onclick = async () => {
-      notesBtn.disabled = true;
-      readNote.textContent = "Asking Gemini for this chapter's notes…";
-      try {
-        await host("work", { key: chapterKey + "#notes", meta: { ...meta(), notes: 1, force: true, ahead: count("notesN") } });
-        readNote.textContent = "Gemini's notes are being written" + (count("notesN") ? ", for this chapter and the next " + count("notesN") + " translated ones" : "") + ". They show on the library site.";
-      } catch (e) {
-        readNote.textContent = "No notes: " + e.message + (/English text/.test(e.message) ? ". Translate it first." : "");
-      }
-      notesBtn.disabled = false;
-    };
-  }
 
   // ---------- Novel: where each part is, and whether it is on this page ----------
   {
@@ -621,6 +401,28 @@
           info.append(a, " to record them.");
         } else info.append("Open it to record them.");
       } else if (bookParts >= 2) info.append("This is the novel's page" + (found.list.found ? "" : ": pick its chapter list if it is here") + ". Pick any part that is missing or wrong: it is saved for this site and the novel is recorded again.");
+
+      // "Refresh details": the novel's page is read again and the result kept in the library (what the library site's button of the same name asks this
+      // extension to do). The page is: a site novel's own page, this page when it is the novel's, else the link to it from a chapter's page.
+      const wtrNovel = /^https:\/\/wtr-lab\.com\/[a-z-]+\/novel\/\d+\/[^/?#]+/.exec(tab.url);
+      const bookUrl = wtrNovel ? wtrNovel[0] : isChapter ? where || "" : bookParts >= 2 ? tab.url.split("#")[0] : "";
+      const detailsBtn = $("detailsBtn");
+      const detailsNote = $("detailsNote");
+      detailsBtn.disabled = !bookUrl || (!rule && !partsRule && !wtrNovel);
+      if (!bookUrl) detailsNote.textContent = "Open the novel's page (not a chapter's) to read its details again.";
+      detailsBtn.onclick = async () => {
+        detailsBtn.disabled = true;
+        detailsNote.textContent = "Asking for access to " + new URL(bookUrl).hostname + "…";
+        try {
+          if (!(await SiteAccess.has(bookUrl, ext)) && !(await SiteAccess.request([SiteAccess.patternOf(bookUrl)], ext))) throw new Error(new URL(bookUrl).hostname + " is not allowed");
+          detailsNote.textContent = "Reading the novel's page…";
+          await host("work", { key: "translation:" + bookUrl + "#details", meta: { novelName: novelNameEl.textContent || novelNameRaw || "" } });
+          detailsNote.textContent = "Details refreshed. They are in your library.";
+        } catch (e) {
+          detailsNote.textContent = "Could not refresh: " + e.message;
+        }
+        detailsBtn.disabled = false;
+      };
     }
   }
 })();

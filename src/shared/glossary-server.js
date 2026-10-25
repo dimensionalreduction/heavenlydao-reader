@@ -255,6 +255,12 @@ var GlossaryServer = (function () {
     const s = await settings();
     return (s && typeof s.targetLanguage === "string" && s.targetLanguage) || "en";
   }
+  // The translation profiles (docs/PROFILES.md, profile-translate.js): { translateProfiles, translateProfile, novelProfiles } as the library has them; none when it
+  // cannot be reached
+  async function profileSettings() {
+    const s = await settings();
+    return { translateProfiles: (s && s.translateProfiles) || [], translateProfile: (s && s.translateProfile) || "", novelProfiles: (s && s.novelProfiles) || {} };
+  }
   // The prompts the person set: { sets, legacy }, the library's promptSets (for each of translate, notes and detect, the prompt in use and the ones saved) and
   // its older geminiPrompts ({ translate?, notes?, detect? }: text); the last ones known when the library cannot be reached (gemini.js geminiPromptFrom picks)
   async function promptSettings() {
@@ -338,6 +344,6 @@ var GlossaryServer = (function () {
 
   // `api`: any other call of the library's (throws on failure), for what has no function of its own here
   // `wake` (Chrome): set by the service worker, to bring back the offscreen page that keeps the library
-  const api = { api: request, pull, importSnapshot, sendVotes, saveNovel, getNovel, copyCover, copyCoversOn, syncPersonalReplacements, geminiRate, titleMode, targetLanguage, setGeminiModel, promptSettings, saveChapterIndex, setBinding, listWatches, saveWatch, addNotice, putChapterIndex };
+  const api = { api: request, pull, importSnapshot, sendVotes, saveNovel, getNovel, copyCover, copyCoversOn, syncPersonalReplacements, geminiRate, titleMode, targetLanguage, setGeminiModel, promptSettings, profileSettings, saveChapterIndex, setBinding, listWatches, saveWatch, addNotice, putChapterIndex };
   return api;
 })();

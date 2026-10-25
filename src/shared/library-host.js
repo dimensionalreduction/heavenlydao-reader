@@ -3,7 +3,9 @@
 //
 // Who asks it what, all with { target: "lib", op, args } (Firefox's background page calls LibraryHost.call directly):
 //   the library calls (glossary-server.js): "api" — every /api/... call, answered from the library once this device is in it; the popup and
-//   the library site's tab (through site-bridge.js): "status", "create" (an empty library), "join", "cancelJoin", "allow", "refuse", "unrefuse"; sharing: "share" (args: [true] for a new link), "put"
+//   the library site's tab (through site-bridge.js): "status", "create" (an empty library), "join" ([passphrase?]), "cancelJoin", "allow", "refuse", "unrefuse";
+//   joining the library of the site's tab in this browser at once (the popup's Detect, the site's Settings › Library): "joinRequest", then
+//   "receiveKeys" ([keys, passphrase]); the popup only: "leave"; sharing: "share" (args: [true] for a new link), "put"
 //   (the library's name, a novel shared: [key, body]), "sharedBooks", "removeDevice" ([id, { newLink }]), "publishing" (the rooms it is in),
 //   "seeded" (how much this device sent your library's readers: { total, books: { <book id>: bytes } }); the notifications (notice-host.js):
 //   "noticeSettings" ([settings] from the site's Settings › Notifications), "notices" (those shown while no page of the site was open);
@@ -128,6 +130,15 @@
 
   // What Chrome's service worker keeps for itself (it has the storage): whether this extension is in the library.
   const bg = (op, ...args) => (direct ? null : ext.runtime.sendMessage({ target: "p2p-bg", op, args }).then((r) => { if (r && r.error) throw new Error(r.error); return r && r.result; }));
+  // The library's passphrase, for this extension's room (joining a library through its site's tab: the passphrase comes with it).
+  const setPassphrase = (p) => (direct ? ext.storage.local.set({ p2pPassphrase: p, p2pEnabled: true }) : bg("setPassphrase", p));
+  // What this extension keeps of a library besides the library itself, gone as it leaves: the chapters (and their index), the glossaries' copy.
+  const LIBRARY_COPIES = ["glossaryLibrary", "glossaryBindings", "glossaryRev", "myTerms"];
+  async function forgetStored() {
+    if (!direct) return bg("forgetLibrary");
+    const all = await ext.storage.local.get(null);
+    await ext.storage.local.remove(Object.keys(all).filter((k) => k.startsWith("translation:") || k.startsWith("p2pIndex") || LIBRARY_COPIES.includes(k)));
+  }
   async function setFlag(lib) {
     const st = lib.status();
     const on = st.state === "member" ? { libId: st.libId, code: st.code } : null;
@@ -165,7 +176,8 @@
     return out;
   }
 
-  const BEFORE_JOINING = new Set(["status", "join", "cancelJoin", "create"]);
+  const BEFORE_JOINING = new Set(["status", "join", "cancelJoin", "create", "joinRequest", "receiveKeys", "leave"]);
+  const OWN_PAGES_ONLY = new Set(["leave"]); // (not the site's tab)
   async function call(op, args = []) {
     const lib = await ready;
     if (!lib) {
@@ -184,9 +196,38 @@
         return lib.status();
       case "join":
         if (lib.status().state === "removed") await lib.abandon(); // (taken off the list: the old library goes, and it asks as a new device)
+        if (typeof args[0] === "string" && args[0].trim()) await setPassphrase(args[0].trim().slice(0, 500)); // (its room is where its main device is)
         lib.joinRequest();
         if (host.room) host.room.askToJoin();
         return lib.status();
+      // Joining the library of the site's tab in this browser: what this extension would send to ask, which that tab, as the main device,
+      // answers at once with the keys (else "join" asks in the room). Nothing is asked yet.
+      case "joinRequest": {
+        const st = lib.status();
+        if (st.state === "member") throw new Error("this extension is in a library already: leave it first");
+        if (st.state !== "none") await lib.leave(); // (asking another, or one it was taken off: a new device then)
+        return lib.joinMessage();
+      }
+      case "receiveKeys": {
+        if (!(await lib.receiveKeys(args[0]))) throw new Error("those keys are not for this extension");
+        if (typeof args[1] === "string" && args[1].trim()) await setPassphrase(args[1].trim().slice(0, 500));
+        await setFlag(lib);
+        if (host.room) host.room.libraryChanged();
+        return lib.status();
+      }
+      // Leaving the library: the main device is told (the devices in the room pass it on; the popup gives the proof answered to the site's
+      // tabs in this browser), then what this extension holds of it goes. The extension's own settings stay (its Gemini key, prompts, rules).
+      case "leave": {
+        const was = lib.status();
+        const proof = was.state === "member" && was.devices.some((d) => !d.me) ? await lib.leaveProof() : null;
+        await lib.leave();
+        const told = proof && host.room ? host.room.sayLeaving(proof) : 0;
+        if (host.room) host.room.forget(Object.keys(host.room.getIndex()));
+        if (typeof FollowHost !== "undefined") await FollowHost.set([]).catch(() => {});
+        await forgetStored();
+        await setFlag(lib);
+        return Object.assign(lib.status(), { proof, told });
+      }
       case "cancelJoin":
         await lib.cancelJoin();
         return lib.status();
@@ -211,10 +252,6 @@
         return lib.sharing();
       case "layers":
         return lib.layers();
-      case "makePr":
-        return lib.makePr(args[0] || {});
-      case "inbox":
-        return lib.inbox();
       case "signComment":
         return lib.signComment(args[0] || {});
       case "editions":
@@ -245,6 +282,10 @@
       // "Try again now": a watch's fetching paused by the site's refusal (its bot check) goes on at the next pass
       case "fillResume":
         return host.resumeFill ? host.resumeFill(String(args[0] || "")) : false;
+      // what this extension does when your other devices ask (p2p-host.js: fetching chapters, translating), from the site's Settings › Library in this
+      // browser: { fetch, translate }; args[0] given, set to it
+      case "helpDevices":
+        return host.helpDevices ? host.helpDevices(args[0]) : null;
       case "seeded":
         return seeded ? seeded.get(lib.status().libId) : { total: 0, books: {} };
       // the notifications (notice-host.js): what to tell, from the site's Settings › Notifications; those shown, for the site's bell
@@ -298,6 +339,7 @@
   ext.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (!msg || msg.target !== "lib") return;
     if (sender && !ownPage(sender) && !host.fromSite(sender)) return void sendResponse({ error: "not the library's site" });
+    if (sender && !ownPage(sender) && OWN_PAGES_ONLY.has(msg.op)) return void sendResponse({ error: "only the extension's popup does that" });
     call(msg.op, msg.args || []).then((result) => sendResponse({ result }), (e) => sendResponse({ error: String((e && e.message) || e), status: e && e.status }));
     return true; // answered later
   });

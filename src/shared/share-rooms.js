@@ -5,8 +5,6 @@
 // "p2plib" (BEP-10) and send records straight over that connection, in pieces, with no torrent per record:
 //   vs  the versions of the records this device holds (every one but chapters) · rq  the keys it wants · rc  a record, in pieces
 //   bf  which of the novel's chapters this device holds, as bits over the novel's chapter list (its bhead) · hv  "I have this chapter now"
-//   pv / pg / pc  pull requests held / wanted / sent (in pieces), pvq "say again which you hold": each device holds the ones to the room's library and passes them on (within
-//   limits), until one of the owner's devices has taken it (its answer, pr:<id>, is published in the novel's room)
 // A reader asks for the catalog when it follows a library, for a novel's list when it opens the novel, and for a chapter when it reads it (and
 // the few after it): never the whole library. It asks a device that said it has the record, and passes on what it holds to whoever asks.
 //
@@ -30,10 +28,6 @@
   const PULL_AT_ONCE = 30; // pull-throughs a room runs for others at once
   const PLAN_MS = 3000; // an owner's device makes its room's records (not chapters) again at most this often
   const LIMITED_MS = 10 * 60 * 1000; // a device that said it sends nothing more today ("lim") is not asked again for this long
-  const NOVELS_PR = "~novels"; // the "book" of a pull request of whole novels (site/sharing.js has the same)
-  const PR_PER_SENDER = 3; // open pull requests held per sender
-  const PR_PER_LIBRARY = 200; // and per library
-  const PR_BYTES = 5 * 1024 * 1024;
   const enc = new TextEncoder();
   const dec = new TextDecoder();
   const { cmpVer, stable } = Library;
@@ -71,6 +65,7 @@
       async getRecord(id) { return records.get(id) || null; },
       async putRecord(id, row) { records.set(id, row); },
       async deleteRecord(id) { records.delete(id); },
+      async deletePrefix(prefix) { for (const k of [...records.keys()]) if (k.startsWith(prefix)) records.delete(k); },
       async listRecords(prefix) { return [...records.entries()].filter(([k]) => k.startsWith(prefix)).map(([, v]) => v); },
       async getFollows() { return [...follows.values()]; },
       async putFollow(f) { follows.set(f.libId, f); },
@@ -98,6 +93,7 @@
       getRecord: (id) => tx("records", "readonly", (st) => st.get(id)).then((x) => x || null),
       putRecord: (id, row) => tx("records", "readwrite", (st) => st.put(row, id)),
       deleteRecord: (id) => tx("records", "readwrite", (st) => st.delete(id)),
+      deletePrefix: (prefix) => tx("records", "readwrite", (st) => st.delete(IDBKeyRange.bound(prefix, prefix + "￿"))),
       listRecords: (prefix) => tx("records", "readonly", (st) => st.getAll(IDBKeyRange.bound(prefix, prefix + "￿"))),
       getFollows: () => tx("follows", "readonly", (st) => st.getAll()),
       putFollow: (f) => tx("follows", "readwrite", (st) => st.put(f, f.libId)),
@@ -109,6 +105,7 @@
   // "<library id>|<key>"), with the keys each reader has: the catalog key from the read key, a book's key from the read key or its link.
   function followStore(adapter) {
     const keys = new Map(); // libId -> { catalogKey, books: Map(bookId -> key) }
+    const cleaned = new Set(); // libraries whose old pull requests were removed this session
     // what each record held takes (only those with a body: what was fetched), by library: built from the records the first time it is asked
     // for (sizesOf), then kept up to date as records are put and deleted here
     const sizes = new Map(); // libId -> Map(key -> bytes)
@@ -194,6 +191,15 @@
       // what a library's records take on this device, in all (for its limit)
       async heldBytes(libId) { await store.sizesOf(libId); return totals.get(libId) || 0; },
       list: (libId, prefix) => adapter.listRecords(libId + "|" + (prefix || "")),
+      // Pull requests held or answered here, from before they were taken out: removed, once a session for each library (nothing reads them)
+      async dropPullRequests(libId) {
+        if (cleaned.has(libId) || !adapter.deletePrefix) return;
+        cleaned.add(libId);
+        await adapter.deletePrefix(libId + "|prenv:");
+        await adapter.deletePrefix(libId + "|pr:");
+        sizes.delete(libId); // (the pr: answers had bodies: sizes are counted again)
+        totals.delete(libId);
+      },
       body: async (libId, key) => { const row = await adapter.getRecord(libId + "|" + key); return row ? row.body : null; },
       // A novel removed from this device: its details and the chapters of its list (the library's list of novels stays). -> chapters removed
       async removeBook(libId, bookId) {
@@ -211,8 +217,7 @@
 
   // ---------- holders ----------
   // A reader's: checks and keeps. scope "lib": the library's room, which carries all of it: the catalog (devices, profile, head, entry:*,
-  // cover:*), fetched when the library is followed, and every novel's own records (book:, bhead:, terms:, chapter:*, and pr:* for the pull
-  // requests this device holds), a novel's when it is opened (open(bookId)) and its chapters when asked for. scope "book": one novel's room
+  // cover:*), fetched when the library is followed, and every novel's own records (book:, bhead:, terms:, chapter:*), a novel's when it is opened (open(bookId)) and its chapters when asked for. scope "book": one novel's room
   // (devices, profile, book:<id>, bhead:<id>, bcover:<id>, terms:<id>, chapter:* of its list), for a reader with only that novel's link.
   // Covers and chapters are fetched only when asked for; a record once held is kept up to date.
   const BOOK_KINDS = new Set(["book", "bhead", "bcover", "terms"]);
@@ -220,12 +225,12 @@
   // devices, new or a newer version of one held: the page says when (chapters and covers at its limit; its lists and details a little past it)
   function follower({ store, libId, scope, bookId, full }) {
     const all = scope === "lib";
+    if (store.dropPullRequests) store.dropPullRequests(libId).catch(() => {});
     const opened = new Set(); // (a library room) the novels opened here: their details are fetched as soon as a device says it has them
     const inScope = (key) => {
       const kind = kindOf(key);
       if (kind === "devices" || kind === "profile") return true;
-      if (all) return kind === "head" || kind === "entry" || kind === "cover" || BOOK_KINDS.has(kind) || kind === "chapter" || kind === "pr";
-      if (kind === "pr") return true; // (what became of a pull request on this novel)
+      if (all) return kind === "head" || kind === "entry" || kind === "cover" || BOOK_KINDS.has(kind) || kind === "chapter";
       return BOOK_KINDS.has(kind) ? idOf(key) === bookId : kind === "chapter";
     };
     // the chapter lists held (from the novels' bheads): book id -> { list: [[num, title, url, savedAt], ...], ver }; chapter key -> book id
@@ -246,8 +251,7 @@
       lists = next;
       bookOfChapter = of;
     }
-    // the key a record is encrypted with: the catalog's, or its novel's (a chapter's novel is the one whose list has it; a pull request's
-    // answer, the novel of the pull request held here)
+    // the key a record is encrypted with: the catalog's, or its novel's (a chapter's novel is the one whose list has it)
     async function keyFor(key) {
       const kind = kindOf(key);
       if (kind === "head" || kind === "entry" || kind === "cover") return store.catalogKey(libId);
@@ -255,12 +259,6 @@
         if (lists === null) await loadLists();
         const b = bookOfChapter.get(key);
         return b ? store.bookKey(libId, b) : null;
-      }
-      if (kind === "pr") {
-        if (!all) return store.bookKey(libId, bookId);
-        const held = await store.get(libId, "prenv:" + idOf(key));
-        if (held && held.env && held.env.book === NOVELS_PR) return store.catalogKey(libId); // (a pull request of whole novels: of no novel of theirs)
-        return held && held.env && held.env.book ? store.bookKey(libId, held.env.book) : null;
       }
       return store.bookKey(libId, idOf(key));
     }
@@ -285,7 +283,7 @@
       },
       async versions() {
         const rows = await store.list(libId);
-        return rows.filter((x) => x.r && inScope(x.r.key) && kindOf(x.r.key) !== "chapter").map((x) => [x.r.key, x.r.ver]); // (records only: not the pull requests held)
+        return rows.filter((x) => x.r && inScope(x.r.key) && kindOf(x.r.key) !== "chapter").map((x) => [x.r.key, x.r.ver]);
       },
       async wants(key, ver, lazy) {
         if (!inScope(key)) return false;
@@ -297,7 +295,6 @@
         // what is fetched only when asked: a cover, a chapter; in a library room also a novel's details, unless the novel was opened here
         if (kind === "cover" || kind === "bcover" || kind === "chapter") return !!lazy;
         if (all && BOOK_KINDS.has(kind)) return !!lazy || opened.has(idOf(key));
-        if (all && kind === "pr") return !!(await store.get(libId, "prenv:" + idOf(key))); // (what became of a pull request held here)
         return true;
       },
       get: async (key) => { const row = await store.get(libId, key); return row ? row.r : null; },
@@ -320,43 +317,6 @@
         if (kind === "bhead") await loadLists();
         return { stored: true };
       },
-      // ----- pull requests to this library, held and passed on -----
-      // [[id, at]] of the ones held (not expired, not answered yet)
-      async prs() {
-        const out = [];
-        for (const row of await store.list(libId, "prenv:")) {
-          const e = row.env;
-          if (!e || Date.now() > e.expires || (scope === "book" && e.book !== bookId)) continue;
-          if (await store.get(libId, "pr:" + e.id)) continue; // answered
-          out.push([e.id, e.at]);
-        }
-        return out;
-      },
-      hasPr: async (id) => !!(await store.get(libId, "prenv:" + id)) || !!(await store.get(libId, "pr:" + id)),
-      getPr: async (id) => { const row = await store.get(libId, "prenv:" + id); return row ? row.env : null; },
-      async receivePr(e) {
-        if (!e || e.to !== libId || (scope === "book" && e.book !== bookId)) return { why: "not of this room" };
-        if (await h.hasPr(e.id)) return { why: "held already" };
-        const prof = await store.body(libId, "profile");
-        const why = await Library.checkPr(e, { to: libId, policy: prof || {} });
-        if (why) return { why };
-        // limits: 3 open per sender, 200 and 5 MB per library (the oldest go first)
-        const held = (await store.list(libId, "prenv:")).filter((x) => x.env && Date.now() <= x.env.expires);
-        if (held.filter((x) => x.env.from === e.from).length >= PR_PER_SENDER) return { why: "too many from this sender" };
-        const size = (x) => JSON.stringify(x).length;
-        let total = held.reduce((n, x) => n + size(x.env), 0) + size(e);
-        held.sort((a, b) => a.env.at - b.env.at);
-        while (held.length && (held.length >= PR_PER_LIBRARY || total > PR_BYTES)) {
-          const old = held.shift();
-          total -= size(old.env);
-          await store.put(libId, "prenv:" + old.env.id, { env: null, dropped: Date.now() });
-        }
-        await store.put(libId, "prenv:" + e.id, { env: e });
-        return { stored: true };
-      },
-      // A pull request this device sent: held like the others, so it travels from here too.
-      async keepMine(e) { await store.put(libId, "prenv:" + e.id, { env: e, mine: true }); },
-
       // The novels' chapter lists held here, and which of their chapters this device holds: [{ bookId, ver, keys, bits }].
       async chapterLists() {
         if (lists === null) await loadLists();
@@ -434,11 +394,10 @@
       const k = await keys();
       if (!k) return new Map();
       const out = new Map();
-      // the library's name, and whom it takes pull requests from, and the key to seal them with (made with the share key)
+      // the library's name
       const prof = lib.profile();
-      const sealKey = (lib.shareNow() || {}).sealPub || "";
       const pv = madeVer([[Math.max(1, prof.ver[0]), prof.ver[1], ""], lib.shareVer ? lib.shareVer() : [1, 0, ""]]);
-      out.set("profile", [pv, () => ({ name: prof.name || "", prs: prof.prs || "anyone", approved: prof.approved || [], sealKey }), null]);
+      out.set("profile", [pv, () => ({ name: prof.name || "" }), null]);
       if (scope === "lib") {
         const head = {};
         const vers = [];
@@ -455,12 +414,6 @@
         }
         out.set("head", [madeVer(vers.length ? vers : [[1, 0, ""]]), () => ({ books: head }), k.catalogKey]);
       }
-      const done = lib.prsDone ? Object.entries(lib.prsDone()) : [];
-      // what became of the pull requests of whole novels (they are of no novel of this library's): in the library room, with the catalog's key
-      if (scope === "lib") for (const [prId, d] of done) {
-        if (d.book !== NOVELS_PR) continue;
-        out.set("pr:" + prId, [[Number(d.at) || 1, 0, ""], () => ({ state: d.state, accepted: d.accepted || [], at: d.at, from: d.from, note: d.note || "" }), k.catalogKey]);
-      }
       for (const id of bookIds()) {
         const sb = lib.sharedBook(id);
         const bk = await k.bookKey(id);
@@ -471,11 +424,6 @@
         if (scope === "book" && sb.coverId && getCover) {
           const c = await getCover(sb.coverId);
           if (c && c.bytes) out.set("bcover:" + id, [[Number(c.at) || 1, 0, ""], () => ({ type: c.type, data: b64(c.bytes) }), bk]);
-        }
-        // what became of the pull requests on this novel
-        for (const [prId, d] of done) {
-          if (d.book !== id) continue;
-          out.set("pr:" + prId, [[Number(d.at) || 1, 0, ""], () => ({ state: d.state, accepted: d.accepted || [], at: d.at, from: d.from, note: d.note || "" }), bk]);
         }
         // the owner's terms for it (what its text is shown with): those kept for this novel, and those for every novel
         // and the glossary of the novel (its terms, source -> rendering, in each language it has one), so a reader who copies the novel gets them too
@@ -534,20 +482,6 @@
         return it ? make(key, it[0], it[1](), it[2]) : null;
       },
       receive: async () => ({ why: "the owner's devices take nothing from readers" }),
-      // pull requests to this library: taken into the inbox (every device of the owner's has it); none held to pass on
-      prs: async () => [],
-      hasPr: async (id) => !!(lib.hasPr && lib.hasPr(id)),
-      getPr: async () => null,
-      async receivePr(e) {
-        if (!lib.hasPr || lib.hasPr(e && e.id)) return { why: "held already" };
-        const prof = lib.profile();
-        const share = lib.shareNow() || {};
-        const why = await Library.checkPr(e, { to: share.libId, policy: { prs: prof.prs || "anyone", approved: prof.approved || [], sealKey: share.sealPub } });
-        if (why) return { why };
-        if (scope === "book" && e.book !== bookId) return { why: "not of this room" };
-        await lib.put("prin:" + e.id, e);
-        return { stored: true };
-      },
       // The shared novels' chapter lists, and which of their chapters this device holds: [{ bookId, ver, keys, bits }].
       async chapterLists() {
         const out = [];
@@ -596,8 +530,6 @@
     let running = Promise.resolve();
     async function update() {
       const st = lib.status();
-      // (a library shared before pull requests existed gets its seal key now: its profile says it, so they can be sent)
-      if (st.state === "member" && lib.shareNow() && !lib.shareNow().sealPub && lib.share) await lib.share();
       const share = lib.shareNow();
       const want = new Map();
       if (st.state === "member" && share) {
@@ -625,7 +557,7 @@
     // what in the library changes what readers get
     const off = lib.on("change", (c) => {
       const k = (c && c.key) || "";
-      if (c && c.status || k === "share" || k === "profile" || k === "devices" || k.startsWith("sbook:") || k.startsWith("cover:") || k.startsWith("term:") || k.startsWith("prdone:")) again();
+      if (c && c.status || k === "share" || k === "profile" || k === "devices" || k.startsWith("sbook:") || k.startsWith("cover:") || k.startsWith("term:")) again();
     });
     timer = setInterval(() => { if (Object.keys(lib.sharedBooks()).length > maxBookRooms) { turn++; again(); } }, rotateMs);
     again();
@@ -670,8 +602,6 @@
       // nothing will come of it: every device asked said it cannot ("nf", or "lim": its limit for the day), so it ends now, not at its timeout
       const settle = (key) => { const a = asked.get(key); if (!a) return; asked.delete(key); for (const r of a.resolve) r(null); };
       const isBulk = (key) => /^(chapter|cover|bcover):/.test(key);
-      const prAsked = new Map(); // pull request id -> when it was asked for
-      const prAssemblies = new Map();
       const relaying = new Map(); // key -> { at, to: Set(peer) }: records being fetched here for neighbours that asked (pull-through)
       let receiving = Promise.resolve();
       let torrent = null;
@@ -728,15 +658,9 @@
         return places.of.get(key) || null;
       }
       const peerHas = (p, at) => { const b = p.bits.get(at.bookId); return !!b && b.ver === at.ver && bitGet(b.bits, at.i); };
-      async function sendPrs(peer) {
-        if (!holder.prs) return;
-        const held = await holder.prs();
-        if (held.length) peer.send({ t: "pv", v: held.slice(0, 300) });
-      }
       async function greet(peer) {
         await sendVersions(peer);
         await sendBits(peer);
-        await sendPrs(peer);
       }
 
       // asks a device that has it (or every device, when none said so) for these keys
@@ -791,28 +715,6 @@
         } else if (msg.t === "lim") {
           peer.limitedAt = Date.now(); // (it sends nothing more today: not asked for LIMITED_MS)
           for (const [k, a] of [...asked]) if (isBulk(k) && a.waitOn && a.waitOn.delete(peer) && !a.waitOn.size) settle(k);
-        } else if (msg.t === "pv" && Array.isArray(msg.v) && holder.receivePr) {
-          const want = [];
-          for (const row of msg.v.slice(0, 300)) {
-            const id = Array.isArray(row) ? row[0] : null;
-            if (typeof id !== "string" || !/^[0-9a-f]{16,32}$/.test(id) || prAsked.has(id) || (await holder.hasPr(id))) continue;
-            prAsked.set(id, Date.now());
-            want.push(id);
-          }
-          if (want.length) peer.send({ t: "pg", ids: want });
-        } else if (msg.t === "pvq") {
-          await sendPrs(peer);
-        } else if (msg.t === "pg" && Array.isArray(msg.ids) && holder.getPr) {
-          for (const id of msg.ids.slice(0, 300)) {
-            const e = typeof id === "string" ? await holder.getPr(id) : null;
-            if (!e) continue;
-            const bytes = enc.encode(JSON.stringify(e));
-            if (bytes.length > MAX_RECORD_BYTES) continue;
-            const n = Math.ceil(bytes.length / CHUNK);
-            for (let i = 0; i < n; i++) peer.send({ t: "pc", id, i, n, d: b64(bytes.subarray(i * CHUNK, (i + 1) * CHUNK)) });
-          }
-        } else if (msg.t === "pc" && typeof msg.id === "string" && holder.receivePr) {
-          await receivePrPiece(peer, msg);
         }
       }
 
@@ -903,8 +805,6 @@
             } else p.send({ t: "vs", v: [[key, r.ver]] });
           }
           if (kindOf(key) === "bhead") for (const p of peers) sendBits(p).catch(() => {});
-          // the library's profile came (whom it takes pull requests from): the ones refused for want of it are asked for again
-          if (key === "profile") for (const p of peers) p.send({ t: "pvq" });
           // the list of devices came: what was refused because its device was not known yet is asked for again
           if (key === "devices") {
             for (const p of peers) {
@@ -916,30 +816,6 @@
           onChange({ room: roomId, key });
         }
         if (waiting) for (const fn of waiting.resolve) fn(res.stored ? r : null);
-      }
-
-      async function receivePrPiece(peer, msg) {
-        if (!prAsked.has(msg.id)) return;
-        const max = Math.ceil(MAX_RECORD_BYTES / CHUNK);
-        if (!Number.isInteger(msg.i) || !Number.isInteger(msg.n) || msg.n < 1 || msg.n > max || msg.i < 0 || msg.i >= msg.n || typeof msg.d !== "string") return;
-        let a = prAssemblies.get(msg.id);
-        if (!a || a.n !== msg.n) { a = { n: msg.n, parts: new Array(msg.n), got: 0 }; prAssemblies.set(msg.id, a); }
-        if (a.parts[msg.i]) return;
-        try { a.parts[msg.i] = unb64(msg.d); } catch (e) { return; }
-        if (++a.got < a.n) return;
-        prAssemblies.delete(msg.id);
-        prAsked.delete(msg.id);
-        const bytes = new Uint8Array(a.parts.reduce((s, x) => s + x.length, 0));
-        let at = 0;
-        for (const x of a.parts) { bytes.set(x, at); at += x.length; }
-        let e;
-        try { e = JSON.parse(dec.decode(bytes)); } catch (err) { return; }
-        if (!e || e.id !== msg.id) return;
-        const res = await holder.receivePr(e);
-        if (res.stored) {
-          for (const p of peers) if (p !== peer) p.send({ t: "pv", v: [[e.id, e.at]] }); // passed on
-          onChange({ room: roomId, pr: e.id });
-        }
       }
 
       const room = {
@@ -1027,7 +903,7 @@
         },
         // The holder changed (a novel shared, a chapter kept): the devices here are told.
         async refresh() {
-          for (const p of peers) { await sendVersions(p); await sendBits(p); await sendPrs(p); }
+          for (const p of peers) { await sendVersions(p); await sendBits(p); }
         },
         status: () => ({ id: roomId, peers: peers.size, scope: holder.scope }),
         _setHolder(h) { holder = h; room.holder = h; },

@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const { bundleText, loadRegistry, loadMirrorHosts } = require("./tools/sources");
+const { profileModelText } = require("./tools/profile-model");
 
 const root = __dirname;
 const targets = ["chrome", "firefox"];
@@ -104,6 +105,8 @@ for (const target of targets) {
   }
   // how chapters are put together into novels: the library site's own code (the shared lists are made from it: share-lists.js, library-host.js)
   copyFile(path.join(root, "vendor", "chapters.js"), distDir);
+  // how a translation profile translates (the playground's own code: profile-translate.js uses it for the chapters a watch fetches)
+  fs.writeFileSync(path.join(distDir, "profile-model.js"), profileModelText());
   // the engine and every site's rules, as the one file the extension loads
   fs.writeFileSync(path.join(distDir, "raw-sources.js"), bundleText());
   fs.writeFileSync(path.join(distDir, "book-rules.js"), bookRulesText());
@@ -124,4 +127,10 @@ for (const target of targets) {
   copyFile(path.join(root, "node_modules", "webtorrent", "webtorrent.min.js"), distDir);
 
   console.log(`Built dist/${target} (${hosts.length} source sites)` + (DEV ? " with the site on localhost:3000" : ""));
+}
+
+// --reload: the dev browser (Chrome with --remote-debugging-port=9222) reloads the extension from dist/chrome, so it runs this build at once
+// (the VS Code tasks Build extension and Build extension (dev))
+if (process.argv.includes("--reload") && !process.env.BUILD_OUT) {
+  require("./tools/reload-dev").reloadDev().catch((e) => console.error("Not reloaded: " + e.message));
 }

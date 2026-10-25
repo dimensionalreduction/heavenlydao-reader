@@ -4,20 +4,20 @@ const path = require("path");
 const N = require(path.join(__dirname, "..", "src", "shared", "notify.js"));
 
 // ---- what is told ----
-assert.strictEqual(N.allowed(undefined, "pr", "own"), true, "everything is on until switched off");
-assert.strictEqual(N.allowed({ on: false }, "pr", "own"), false, "notifications off: nothing");
-assert.strictEqual(N.allowed({ kinds: { pr: false } }, "pr", "own"), false, "its kind off");
-assert.strictEqual(N.allowed({ kinds: { pr: false } }, "join", "own"), true, "another kind still on");
+assert.strictEqual(N.allowed(undefined, "chapters", "own"), true, "everything is on until switched off");
+assert.strictEqual(N.allowed({ on: false }, "chapters", "own"), false, "notifications off: nothing");
+assert.strictEqual(N.allowed({ kinds: { chapters: false } }, "chapters", "own"), false, "its kind off");
+assert.strictEqual(N.allowed({ kinds: { chapters: false } }, "join", "own"), true, "another kind still on");
 assert.strictEqual(N.allowed({ libs: { lib1: false } }, "follow", "lib1"), false, "its library off");
 assert.strictEqual(N.allowed({ libs: { lib1: false } }, "follow", "lib2"), true, "another library still on");
 assert.strictEqual(N.allowed({ libs: { own: false } }, "chapters", N.OWN), false, "your own library off");
-assert.strictEqual(N.allowed({ until: 5000 }, "pr", "own", 4000), false, "turned off for a while: nothing");
-assert.strictEqual(N.allowed({ until: 5000 }, "pr", "own", 5000), true, "the time is up: told again");
-assert.strictEqual(N.allowed({ until: 0 }, "pr", "own"), true, "no time set");
+assert.strictEqual(N.allowed({ until: 5000 }, "chapters", "own", 4000), false, "turned off for a while: nothing");
+assert.strictEqual(N.allowed({ until: 5000 }, "chapters", "own", 5000), true, "the time is up: told again");
+assert.strictEqual(N.allowed({ until: 0 }, "chapters", "own"), true, "no time set");
 assert.strictEqual(N.snoozed({ until: Date.now() + 60000 }), true);
 assert.strictEqual(N.snoozed({ on: false }), false, "off until turned on is not a snooze");
 assert.deepStrictEqual(N.SNOOZES.map((x) => x[1] / 60000), [30, 60, 120]);
-assert.deepStrictEqual(N.KINDS.map((k) => k[0]), ["join", "devices", "pr", "chapters", "follow", "editions"]);
+assert.deepStrictEqual(N.KINDS.map((k) => k[0]), ["join", "devices", "chapters", "follow", "editions"]);
 
 // ---- the list ----
 let list = [];

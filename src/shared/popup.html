@@ -2,6 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>heavenlydao.com Reader</title>
 <style>
   /* The library site's look (site/style.css: the novel page, its About and Table of Contents): the same colours, cards, tabs and rows */
@@ -11,7 +12,7 @@
   }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
-  body { width: 380px; margin: 0; padding: 10px; background: var(--bg); color: var(--fg); font: 13.5px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { width: 380px; max-width: 100%; margin: 0; padding: 10px; background: var(--bg); color: var(--fg); font: 13.5px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
   a { color: var(--accent); }
   button, input, select, textarea { font: inherit; color: inherit; }
   button { cursor: pointer; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 7px 12px; }
@@ -44,7 +45,7 @@
   .switch input { width: auto; margin: 0; accent-color: var(--accent); }
 
   /* the tabs (.np-tabs) */
-  .tabs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 3px; padding: 4px; background: var(--bg); border-radius: 10px; margin-bottom: 4px; }
+  .tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px; padding: 4px; background: var(--bg); border-radius: 10px; margin-bottom: 4px; }
   .tabs button { padding: 7px 2px; background: transparent; border: 1px solid transparent; border-radius: 8px; color: var(--muted); font-size: 12.5px; }
   .tabs button[aria-selected="true"] { background: var(--card); border-color: var(--border); color: var(--fg); }
 
@@ -68,22 +69,30 @@
   .stat { display: grid; grid-template-columns: 116px minmax(0, 1fr); gap: 10px; align-items: center; }
   .stat span { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
   .stat b { font-weight: 500; overflow-wrap: anywhere; }
-  .term { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; }
-  .term .to { color: var(--muted); text-align: right; }
-  .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
   .box > .subtitle { margin: 0; }
-  details.prompt > summary { display: flex; justify-content: space-between; align-items: center; gap: 8px; cursor: pointer; list-style: none; font-weight: 600; }
-  details.prompt > summary::-webkit-details-marker { display: none; }
-  details.prompt > summary .subtitle { margin: 0; font-weight: 400; }
-  details.prompt[open] > summary { margin-bottom: 8px; }
-  details.prompt textarea { min-height: 170px; }
-  details.prompt .prompt-list { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 
   /* the lock screen */
   #lock .lock-input { margin: 8px 0; }
   #lock .lock-text { color: var(--muted); line-height: 1.5; margin: 0 0 6px; }
-  #lock button { flex: 1; }
-  #lockSite { display: block; margin: 0 0 6px; font-weight: 600; }
+  #lock .lock-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+  #lock .lock-row button { flex: 1; }
+  #lockPassRow .lock-row { margin-top: 0; }
+  #lockFound { margin-top: 8px; }
+  #lockFound .work button { flex: none; }
+  #lockSite { display: block; margin: 8px 0 0; font-weight: 600; }
+
+  /* a phone (Firefox for Android shows the popup full width): fill the screen, bigger things to tap, inputs at 16px so the browser does not zoom */
+  @media (hover: none) and (pointer: coarse) {
+    body { width: auto; padding: 12px; font-size: 15px; }
+    button { min-height: 40px; padding: 8px 14px; }
+    .icon-btn { min-width: 40px; padding: 8px 12px; font-size: 15px; }
+    input[type=text], input[type=password], input[type=number], select, .edit-input, textarea.edit-input { font-size: 16px; padding: 10px 12px; }
+    .tabs button { padding: 10px 2px; font-size: 13px; }
+    .work input[type=number] { width: 60px; padding: 8px 4px; }
+    .work button { padding: 8px 12px; }
+    .switch { font-size: 14px; }
+    .muted, .subtitle, .method { font-size: 13.5px; }
+  }
 </style>
 </head>
 <body>
@@ -91,12 +100,18 @@
   <div id="lock" hidden>
     <div class="label">JOIN YOUR LIBRARY</div>
     <p class="lock-text" id="lockText"></p>
-    <a id="lockSite" target="_blank" rel="noopener" hidden></a>
-    <input class="lock-input" id="lockPass" type="password" autocomplete="off" spellcheck="false" placeholder="Your library's passphrase">
-    <div style="display:flex;gap:8px;align-items:center;">
-      <button class="btn-primary" id="lockJoin">Join</button>
-      <button class="btn-secondary" id="lockStop" hidden>Stop asking</button>
+    <div id="lockDetectRow" class="lock-row">
+      <button class="btn-primary" id="lockDetect">Detect library</button>
     </div>
+    <div id="lockFound" class="box" hidden></div>
+    <a id="lockSite" target="_blank" rel="noopener" hidden></a>
+    <div id="lockPassRow">
+      <input class="lock-input" id="lockPass" type="password" autocomplete="off" spellcheck="false" placeholder="Your library's passphrase">
+      <div class="lock-row">
+        <button class="btn-secondary" id="lockJoin">Join</button>
+      </div>
+    </div>
+    <div class="lock-row"><button class="btn-secondary" id="lockStop" hidden>Stop asking</button></div>
     <p class="lock-text" id="lockNote" style="margin-top:8px;"></p>
   </div>
 
@@ -107,7 +122,6 @@
   <div class="section" id="header">
     <div class="label-row">
       <label class="switch" title="On: the novels you open are recorded in your library (their details, cover and chapter list). Off: this extension records nothing there."><input type="checkbox" id="libraryCopy"> Library copy</label>
-      <button class="icon-btn" id="showOriginalBtn" title="Reload the page without the translation">Show original</button>
     </div>
     <div class="label-row" style="margin:6px 0 0;">
       <span class="label" style="margin:0;">NOVEL</span>
@@ -131,72 +145,25 @@
 
   <div class="card">
   <div class="tabs" role="tablist">
-    <button role="tab" data-pane="read" aria-selected="true">Read</button>
-    <button role="tab" data-pane="novel" aria-selected="false">Novel</button>
-    <button role="tab" data-pane="gemini" aria-selected="false">Gemini</button>
-    <button role="tab" data-pane="terms" aria-selected="false">Terms</button>
+    <button role="tab" data-pane="novel" aria-selected="true">Novel</button>
     <button role="tab" data-pane="library" aria-selected="false">Library</button>
   </div>
 
-  <!-- 1: what the chapter footer does on the library site -->
-  <div class="pane section" id="pane-read">
-    <div class="box">
-    <div class="work">
-      <div class="what"><b>Fetch the next</b><span>chapters' text into your library</span></div>
-      <input type="number" id="fetchN" min="0" max="50" value="5">
-      <button class="btn-secondary" id="fetchBtn">Fetch</button>
-    </div>
-    <div class="work">
-      <div class="what"><b>Translate the next</b><span>this one now, then that many</span></div>
-      <input type="number" id="translateN" min="0" max="20" value="0">
-      <button class="btn-primary" id="translateBtn">Translate</button>
-      <button class="gear" data-goto="gemini" data-prompt="translate" title="The translation prompt (Gemini tab)">⚙</button>
-    </div>
-    <div class="work">
-      <div class="what"><b>Gemini notes</b><span>on this one's terms, then that many</span></div>
-      <input type="number" id="notesN" min="0" max="10" value="0">
-      <button class="btn-secondary" id="notesBtn">Notes</button>
-      <button class="gear" data-goto="gemini" data-prompt="notes" title="The notes prompt (Gemini tab)">⚙</button>
-    </div>
-    </div>
-    <div class="subtitle" id="readNote"></div>
-  </div>
-
-  <!-- 2: where this site keeps each part of a novel, and whether it is found on this page -->
-  <div class="pane section" id="pane-novel" hidden>
+  <!-- where this site keeps each part of a novel, and whether it is found on this page -->
+  <div class="pane section" id="pane-novel">
     <div class="label">Detection</div>
     <div id="detList" class="box muted">Looking at the page…</div>
     <div class="method" id="detInfo"></div>
     <div class="btn-group" style="margin-top:8px;flex-wrap:wrap;">
       <button class="icon-btn" id="detectBtn" title="Ask Gemini which parts of this page are what: on a book's page its title, author, synopsis, cover, genres and chapter list; on a chapter's page the next and previous chapter links. They are saved as a rule for this site">✦ Detect with AI</button>
-      <button class="icon-btn" data-goto="gemini" data-prompt="detect" title="The prompt Detect with AI sends (Gemini tab)">⚙ Prompt</button>
       <button class="icon-btn" id="siteRuleBtn" title="Write or change this site's rule by hand">Site rule…</button>
+      <button class="icon-btn" id="detailsBtn" title="Read this novel's page again for its title, author, cover, synopsis and genres, and keep them in your library" disabled>↻ Refresh details</button>
     </div>
+    <div class="subtitle" id="detailsNote"></div>
+    <div class="subtitle" id="geminiNote" hidden>Detect with AI needs your Gemini key: add it in the library's Settings › Translation › Paid by, then open the library once in this browser.</div>
   </div>
 
-  <!-- 3: Gemini -->
-  <div class="pane section" id="pane-gemini" hidden>
-    <div class="label-row">
-      <span class="label" style="margin:0;">API key</span>
-      <button class="icon-btn" id="apiKeyBtn">🔑 Add API key</button>
-    </div>
-    <div class="label">Model</div>
-    <select id="modelSelect"><option>Loading…</option></select>
-    <div class="label">Prompts</div>
-    <div id="prompts" class="box"></div>
-  </div>
-
-  <!-- 4: glossaries, and the terms you made -->
-  <div class="pane section" id="pane-terms" hidden>
-    <div class="label">Glossaries</div>
-    <input type="text" class="edit-input" id="libSearch" placeholder='Search saved glossaries' autocomplete="off">
-    <div id="libResults" class="box muted" style="margin-top:6px;">Loading…</div>
-    <div class="subtitle" id="libApplies" style="margin-top:6px;"></div>
-    <div class="label">Your terms</div>
-    <div id="myTermsList" class="box muted">—</div>
-  </div>
-
-  <!-- 5: your library -->
+  <!-- your library -->
   <div class="pane section" id="pane-library" hidden>
     <div class="label-row">
       <span class="label" style="margin:0;">Your library</span>
@@ -209,13 +176,24 @@
     <input type="password" class="edit-input" id="p2pPassphrase" placeholder="Your library's passphrase" autocomplete="off">
     <div class="subtitle" id="p2pStatus" style="margin-top:6px;"></div>
     <div class="subtitle" id="p2pBackground" style="margin-top:4px;" hidden></div>
+    <div class="label">Leave</div>
+    <div id="leaveBox" class="box">
+      <div class="work">
+        <div class="what"><b>Leave this library</b><span>To join another</span></div>
+        <button class="btn-secondary" id="leaveBtn">Leave</button>
+      </div>
+      <div class="work" id="leaveAsk" hidden>
+        <div class="what"><span id="leaveAskText"></span></div>
+        <button class="btn-primary" id="leaveYes">Leave</button>
+        <button class="btn-secondary" id="leaveNo">Cancel</button>
+      </div>
+    </div>
   </div>
   </div>
   </div>
 
   <script src="popup-lock.js"></script>
   <script src="gemini.js"></script>
-  <script src="wtr-terms.js"></script>
   <script src="raw-sources.js"></script>
   <script src="site-access.js"></script>
   <script src="user-rules.js"></script>

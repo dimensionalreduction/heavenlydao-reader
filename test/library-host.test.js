@@ -26,7 +26,7 @@ const shared = path.join(__dirname, "..", "src", "shared");
         for (const [k, v] of Object.entries(obj)) { changes[k] = { oldValue: store[k], newValue: v }; store[k] = v; }
         changeFns.forEach((fn) => fn(changes, "local"));
       },
-      remove: async (k) => { delete store[k]; }
+      remove: async (k) => { for (const x of [].concat(k)) delete store[x]; }
     },
     onChanged: { addListener: (fn) => changeFns.push(fn) }
   };
@@ -151,6 +151,33 @@ const shared = path.join(__dirname, "..", "src", "shared");
   assert.strictEqual((await ask("room", "peerProof", "anything at all")).result, null, "nothing else is signed with this extension's key");
   assert.strictEqual((await ask("room", "peerProof", "p2p-read peer v1|another library|mine|theirs")).result, null, "nor a proof for another library");
   assert.match((await ask("room", "api", "GET", "/api/novels")).error, /not something the room asks/, "only the room's calls");
+
+  // ---- leaving (the popup only), and joining another library at once (the popup's Detect: the keys from the library's tab) ----
+  assert.strictEqual((await askFrom("https://heavenlydao.com/#/", "leave")).error, "only the extension's popup does that", "the site's tab can't make it leave");
+  Object.assign(store, { "translation:https://x.example/1": { text: "a chapter", savedAt: 1, translated: true }, "p2pIndex:3": { "translation:https://x.example/1": { savedAt: 1 } },
+    myTerms: [{ id: "t" }], geminiApiKey: "the key", p2pPassphrase: "library one" });
+  const left = await ask("leave");
+  assert.ok(!left.error, left.error);
+  assert.strictEqual(left.result.state, "none", "in no library");
+  assert.strictEqual(left.result.proof, null, "(its only device: nobody to tell)");
+  assert.notStrictEqual(left.result.device.id, made.result.device.id, "a new device from then on");
+  assert.strictEqual(JSON.stringify(Object.keys(store).filter((k) => /^translation:|^p2pIndex|^glossary|^myTerms$/.test(k))), "[]", "its chapters and the glossaries' copy are gone");
+  assert.strictEqual(store.geminiApiKey, "the key", "the extension's own settings stay");
+  assert.ok(!store.libraryOn, "the extension is told it is in no library");
+  await assert.rejects(GlossaryServer.api("GET", "/api/novels"), /not in a library yet/);
+  const other = await ctx.Library.open({ adapter: ctx.Library.memoryAdapter(), deviceName: "Library tab" });
+  await other.create();
+  const request = (await askFrom("moz-extension://test-uuid/popup.html", "joinRequest")).result;
+  assert.strictEqual((await ask("status")).result.state, "none", "making the request asks nobody");
+  assert.ok(other.joinAsked(request));
+  const { keys } = await other.allow(request.id);
+  const joined = await ask("receiveKeys", keys, "library two");
+  assert.ok(!joined.error, joined.error);
+  assert.strictEqual(joined.result.code, other.status().code, "in the other library");
+  assert.strictEqual(store.p2pPassphrase, "library two", "with its passphrase");
+  assert.ok(store.libraryOn && store.libraryOn.code === other.status().code);
+  assert.match((await ask("joinRequest")).error, /leave it first/, "not while it is in one");
+  assert.match((await ask("receiveKeys", keys, "x")).error, /not for this extension/);
 
 
   console.log("OK — library host checks passed");

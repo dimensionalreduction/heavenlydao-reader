@@ -255,28 +255,114 @@
     return scored.sort((a, b) => a[0] - b[0] || a[1].name.localeCompare(b[1].name)).map(([, g]) => g);
   }
 
-  // Library terms for the glossaries bound to this novel, as glossary entries. The user's own terms win over
-  // library terms for the same source term.
-  function boundEntries({ library, bindings, url, ownEntries, hostname }) {
-    const ids = bindingIds((bindings || {})[bindingKey(url)]);
+  // ---------- which of a novel's glossaries are sent (docs/GLOSSARY.md, "Choosing the glossaries sent") ----------
+  // A novel's glossaries are lists, each sent or not (its tick on the novel's Glossaries tab), in a fixed order: of two lists with a term, the first gives it.
+  //   A site novel's glossary ("wtr-lab:<id>") is several lists, by where each term came from: your own terms on the site, the novel's, the AI's and
+  //   its shared one (shared:<name>, Cultivation...). Any other glossary is one list: a file or pasted list ("file:<...>"), a copied novel's ("copy:<id>"),
+  //   a shared list ("shared:<name>"), the terms kept from translations ("adopted:<key>").
+  //   The order: your terms, the novel's lists, your files, the AI list, the terms kept, shared lists, Cultivation last.
+  // Which apply: the novel's own (a site novel's glossary, its implicit one), those bound to its keys (its source's site + folder, and its book), and
+  // those for every novel (the binding EVERY; when the library has none: Cultivation). The lists a novel does not send are the binding "off:<book>": list ids,
+  // a glossary's id or "<id>#<part>" for a part of a site novel's glossary. (Kept as bindings so that every device and extension has them as they are.)
+  const EVERY = "*";
+  const EVERY_DEFAULT = ["shared:Cultivation"];
+  const offKey = (book) => "off:" + book;
+  const isListKey = (key) => key === EVERY || String(key).startsWith("off:"); // (not a novel's key)
+  const RANK = { yours: 0, novel: 1, file: 2, ai: 3, kept: 4, shared: 5, cultivation: 6 };
+  const isSiteGlossary = (id) => /^wtr-lab:\d+$/.test(String(id));
+  const metaOf = (row) => row.slice(2).find((x) => x && typeof x === "object" && !Array.isArray(x));
+  // a site novel's glossary's part a term is in: yours, novel, ai or shared:<name>
+  const partOf = (o) => (o === "yours" || o === "ai" ? o : typeof o === "string" && o.startsWith("shared:") ? o : "novel");
+  function rankOf(gid, part) {
+    const p = part || (String(gid).startsWith("shared:") ? gid : "");
+    if (p === "shared:Cultivation") return RANK.cultivation;
+    if (p.startsWith("shared:")) return RANK.shared;
+    if (part) return RANK[part] !== undefined ? RANK[part] : RANK.novel;
+    if (gid.startsWith("file:")) return RANK.file;
+    if (gid.startsWith("adopted:")) return RANK.kept;
+    return RANK.novel;
+  }
+  // The book a chapter's novel is, as the library names novels: a site novel's chapter "wtr-lab:<id>", any other its site and folder.
+  function bookOf(url) {
+    const w = parseWtrUrl(String(url || ""));
+    if (w) return "wtr-lab:" + w.rawId;
+    try { return bindingKey(url); } catch (e) { return ""; }
+  }
+  // { ids, every }: the glossaries that apply to a novel, its own first (implicit), then those bound to its keys, then those for every novel.
+  // bindings: { key: ids | { ids } }
+  function glossaryIdsFor(bindings, keys, implicit) {
+    const b = bindings || {};
+    const ids = [];
+    const add = (id) => { if (id && !ids.includes(id)) ids.push(id); };
+    for (const id of implicit || []) add(id);
+    for (const k of keys || []) for (const id of bindingIds(b[k])) add(id);
+    const every = Object.prototype.hasOwnProperty.call(b, EVERY) ? bindingIds(b[EVERY]) : EVERY_DEFAULT;
+    for (const id of every) add(id);
+    return { ids, every: new Set(every) };
+  }
+  // The lists of a novel's glossaries, in the order they are sent: [{ id, gid, part, name, rank, on, every, hidden, rows }].
+  // glossaries: { id: { name, terms: [[source, english, ...]] } } (a row's object says where its term came from: { o }). A shared list that the novel's
+  // site glossary carries too is one list (the site's, shown; the other follows its tick: `hidden`).
+  function novelLists({ glossaries, bindings, keys, book, implicit }) {
+    const { ids, every } = glossaryIdsFor(bindings, keys, implicit);
+    const off = new Set(book ? bindingIds((bindings || {})[offKey(book)]) : []);
+    const lists = [];
+    ids.forEach((gid, at) => {
+      const g = (glossaries || {})[gid];
+      if (!g || !Array.isArray(g.terms)) return;
+      if (!isSiteGlossary(gid)) return void lists.push({ id: gid, gid, part: "", name: g.name || gid, rank: rankOf(gid, ""), at, rows: g.terms });
+      const parts = new Map();
+      for (const row of g.terms) {
+        const meta = metaOf(row);
+        const p = partOf(meta && meta.o);
+        (parts.get(p) || parts.set(p, []).get(p)).push(row);
+      }
+      for (const [part, rows] of parts) lists.push({ id: gid + "#" + part, gid, part, name: g.name || gid, rank: rankOf(gid, part), at, rows });
+    });
+    lists.sort((a, b) => a.rank - b.rank || a.at - b.at);
+    for (const l of lists) { l.on = !off.has(l.id); l.every = every.has(l.gid); }
+    for (const l of lists) {
+      const same = !l.part && l.gid.startsWith("shared:") && lists.find((x) => x.part === l.gid);
+      if (same) { l.hidden = true; l.on = l.on && same.on; }
+    }
+    return lists;
+  }
+  // The rows sent, of the lists that are on, in their order (a source the first time it comes): [{ row, list }]
+  function pickedRows(lists) {
+    const seen = new Set();
+    const out = [];
+    for (const l of lists) {
+      if (!l.on) continue;
+      for (const row of l.rows) {
+        if (!row || !row[0] || !row[1] || seen.has(row[0])) continue;
+        seen.add(row[0]);
+        out.push({ row, list: l });
+      }
+    }
+    return out;
+  }
+
+  // Library terms for the glossaries of the novel of this page, as glossary entries: the lists sent for it (novelLists), in their order. The user's own
+  // terms win over library terms for the same source term. book: the novel's (bookOf(url) when not said: a site chapter read from its source names it).
+  function boundEntries({ library, bindings, url, ownEntries, hostname, book }) {
     const taken = new Set();
     for (const e of ownEntries || []) {
       if (e.source === "replace" || e.source === "starter") continue; // not source-text terms / generic defaults
       for (const t of e.terms || []) taken.add(t);
     }
+    const novel = book || bookOf(url);
+    let key = "";
+    try { key = bindingKey(url); } catch (e) { /* not a page address */ }
+    const lists = novelLists({ glossaries: library, bindings, keys: [key, novel].filter(Boolean), book: novel, implicit: isSiteGlossary(novel) ? [novel] : [] });
     const out = [];
-    for (const id of ids) {
-      const g = (library || {})[id];
-      if (!g) continue;
-      for (const row of g.terms) {
-        const [term, translation] = row;
-        if (taken.has(term)) continue;
-        taken.add(term);
-        // where the term came from (the site's novel list, its AI list, a shared glossary: { o }) and its kind when the library has one ({ k }): TermMatch
-        // tells a name from a genre term with them
-        const meta = row.slice(2).find((x) => x && typeof x === "object" && !Array.isArray(x));
-        out.push({ terms: [term], translation, scope: "site", hostname, source: "wtr", lib: id, ...(meta && meta.o ? { origin: { o: meta.o } } : {}), ...(meta && meta.k ? { kind: meta.k } : {}) });
-      }
+    for (const { row, list } of pickedRows(lists)) {
+      const [term, translation] = row;
+      if (taken.has(term)) continue;
+      taken.add(term);
+      // where the term came from (the site's novel list, its AI list, a shared glossary: { o }) and its kind when the library has one ({ k }): TermMatch
+      // tells a name from a genre term with them
+      const meta = metaOf(row);
+      out.push({ terms: [term], translation, scope: "site", hostname, source: "wtr", lib: list.gid, ...(meta && meta.o ? { origin: { o: meta.o } } : {}), ...(meta && meta.k ? { kind: meta.k } : {}) });
     }
     return out;
   }
@@ -307,12 +393,15 @@
   }
 
   // One of your terms' texts as a regex, the way the library finds it: an edge of it that is a letter or digit of a script with spaces between
-  // words only at a word's edge ("bell" is not found in "bellow"); Chinese anywhere.
+  // words only at a word's edge ("bell" is not found in "bellow"); Chinese anywhere. A text that ends in a letter is also found with a plural ending
+  // ("ju jun" in "ju juns"; applyReplacements gives what it is shown as a plural too).
   function myTermRegex(text, ci) {
     const edge = (ch) => /[\p{L}\p{N}_]/u.test(ch) && !SOURCE_SCRIPT.test(ch);
     const esc = text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return new RegExp((edge(text[0]) ? "(?<![\\p{L}\\p{N}_])" : "") + esc + (edge(text[text.length - 1]) ? "(?![\\p{L}\\p{N}_])" : ""), ci ? "giu" : "gu");
+    const last = text[text.length - 1];
+    return new RegExp((edge(text[0]) ? "(?<![\\p{L}\\p{N}_])" : "") + esc + (edge(last) ? (/\p{L}/u.test(last) ? "(?<pl>es|s)?" : "") + "(?![\\p{L}\\p{N}_])" : ""), ci ? "giu" : "gu");
   }
+  const pluralOf = (w) => (/[^aeiou]y$/i.test(w) ? w.slice(0, -1) + "ies" : /(?:s|x|z|ch|sh)$/i.test(w) ? w + "es" : w + "s");
 
   // The English fixes ("replace" entries: your own, and your terms from the library's reader) applied to a translation: a literal find and replace on the
   // translator's output, the longest text first, so none of it is sent to the translator.
@@ -322,14 +411,15 @@
     for (const rule of rules) {
       for (const oldText of rule.terms) {
         if (!oldText) continue;
-        if (rule.mine) result = result.replace(myTermRegex(oldText, rule.ci), () => rule.translation);
+        if (rule.mine) result = result.replace(myTermRegex(oldText, rule.ci), (...m) => (typeof m[m.length - 1] === "object" && m[m.length - 1].pl ? pluralOf(rule.translation) : rule.translation));
         else result = result.split(oldText).join(rule.translation);
       }
     }
     return result;
   }
 
-  const api = { toLibraryEntry, personalPairs, personalReplacements, toNovelInfo, cleanDescription, parseVotes, bindingIds, parseWtrUrl, bindingKey, search, boundEntries, myTermEntries, myTermRegex, applyReplacements };
+  const api = { toLibraryEntry, personalPairs, personalReplacements, toNovelInfo, cleanDescription, parseVotes, bindingIds, parseWtrUrl, bindingKey, search, boundEntries, myTermEntries, myTermRegex, pluralOf, applyReplacements,
+    EVERY, EVERY_DEFAULT, offKey, isListKey, bookOf, glossaryIdsFor, novelLists, pickedRows };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.WtrTerms = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

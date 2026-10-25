@@ -1,6 +1,6 @@
 // Notifications from the extension, with no page of the library site open (the site has its own, bell.js, for a browser without the
 // extension: this does the same here). It runs where the library is kept (Chrome's offscreen page, Firefox's background page) and looks for:
-// a device asking to join your library (on the device that lets new ones in), a device joined or taken off, pull requests to your library,
+// a device asking to join your library (on the device that lets new ones in), a device joined or taken off,
 // your novels' chapters past the last one they had, the new novels and chapters of the libraries you follow, and new chapters a "New chapters"
 // watch found on a source site. Each is told once; what was there the first time a library is looked at is not news.
 // What is told goes to show(): notice-bg.js, which shows it as a system notification only while no page of the site is open in this browser
@@ -26,7 +26,7 @@
     const devicesKnown = load("noticeDevices", {}); // library id -> { device id: name }
     const headsKnown = load("noticeHeads", {}); // followed library id -> { book id: chapters in its list }
     const ownKnown = load("noticeOwn", {}); // library id -> { at, last: { novel: its last chapter's number } }
-    const based = new Set(load("noticeBased", [])); // what was looked at once: "pr:<lib>", "wn:<lib>"
+    const based = new Set(load("noticeBased", [])); // what was looked at once: "wn:<lib>"
 
     async function tell(n, quiet) {
       if (n.key && seen.has(n.key)) return null;
@@ -70,19 +70,6 @@
       }
       for (const [id, name] of Object.entries(was)) {
         if (!(id in cur)) await tell({ key: "dev-:" + st.libId + ":" + id, kind: "devices", lib: N().OWN, title: "“" + name + "” was taken off your library", text: "It reads nothing written after.", href: "#/settings/library" });
-      }
-    }
-
-    // ----- pull requests to your library -----
-    async function lookPrs(l, st) {
-      if (!st.sharing) return;
-      const all = (await l.inbox().catch(() => null)) || [];
-      const first = base("pr:" + st.libId);
-      const books = (await l.sharedBooks().catch(() => null)) || {};
-      for (const pr of all.filter((x) => !x.done)) {
-        const b = pr.body || {};
-        const book = books[pr.book] || {};
-        await tell({ key: "pr:" + pr.id, kind: "pr", lib: N().OWN, title: "Pull request from " + (b.name || "a reader"), text: (book.title ? book.title + ": " : "") + "their changes, for you to take or not.", href: "#/inbox" }, first);
       }
     }
 
@@ -167,7 +154,6 @@
         if (what === "devices" || what === "all") await lookDevices(l, st);
         if (what === "chapters" || what === "all") await lookChapters(st);
         if (what === "all") {
-          await lookPrs(l, st);
           await lookWatches(l, st);
           await lookFollowed();
         }

@@ -182,6 +182,21 @@ function link(a, b) {
   wOwner.stop();
   wReader.stop();
 
+  // pull requests held or answered before they were taken out are removed when a reader's follower starts, for that library only
+  {
+    const ad = Share.memoryAdapter();
+    const st = Share.followStore(ad);
+    await ad.putRecord("L1|prenv:abc", { env: { id: "abc" } });
+    await ad.putRecord("L1|prenv:old", { env: null, dropped: 1 });
+    await ad.putRecord("L1|pr:abc", { r: {}, body: { state: "accepted" } });
+    await ad.putRecord("L1|profile", { r: {}, body: { name: "x" } });
+    await ad.putRecord("L2|prenv:z", { env: { id: "z" } });
+    Share.follower({ store: st, libId: "L1", scope: "lib" });
+    await sleep(50);
+    assert.strictEqual((await ad.listRecords("L1|")).length, 1, "only the profile is left");
+    assert.strictEqual((await ad.listRecords("L2|")).length, 1, "another library's rows are left for when it is opened");
+  }
+
   console.log("OK — share rooms checks passed");
   process.exit(0);
 })().catch((e) => {

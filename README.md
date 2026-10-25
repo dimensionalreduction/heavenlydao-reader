@@ -47,17 +47,14 @@ The extension does nothing until it has joined your library.
 2. On the site, go to **Settings › Library › Passphrase** and press **Copy**.
 3. Click the extension's toolbar icon, paste the passphrase and press **Join**.
 4. The site shows "… asks to join". Press **Allow**.
-5. In the popup's **Gemini** tab, press **🔑 Add API key** and paste a key from [Google AI Studio](https://aistudio.google.com/apikey).
-   Without a key, everything except the Gemini features still works.
+5. For *Detect with AI*, add a key from [Google AI Studio](https://aistudio.google.com/apikey) on the site, in **Settings › Translation › Paid by › Gemini**. The site hands it to the extension in the same browser.
+   Without a key, everything except that still works.
 
 ## The popup
 
 | Tab | What it is for |
 |---|---|
-| **Read** | Fetch the next *N* chapters, translate the next *N*, or ask for Gemini's notes on the terms in them. |
 | **Novel** | What the extension found on this page (title, chapter list, cover, author, synopsis), with *Detect with AI*, the element picker and the site's rule. |
-| **Gemini** | Your API key, the model, and the prompts in use. You change the prompts in the library's Settings. |
-| **Terms** | The saved glossaries and the terms you made in the library's reader. |
 | **Library** | Your library's devices, letting a new one in, and how much it holds. |
 
 The extension's options page (**My site rules**) lists the rules you wrote for sites it does not know.
@@ -71,7 +68,7 @@ The extension's options page (**My site rules**) lists the rules you wrote for s
 | `cookies` | Sites behind a bot check (Cloudflare) refuse the extension until the browser's pass for that site is copied over. |
 | `offscreen` (Chrome) | WebRTC sync cannot run in a Manifest V3 service worker, so it runs in an offscreen page. |
 | `alarms` | A once-a-minute tick for scheduled checks of new chapters, and to keep the sync running. |
-| `notifications` | Join requests, new chapters and pull requests while no page of the site is open. |
+| `notifications` | Join requests and new chapters while no page of the site is open. |
 | `background` (Chrome) | Lets the browser keep the extension running with every window closed, if you turn that on in the browser. |
 | `generativelanguage.googleapis.com` | Gemini, with your key. |
 | `translate.googleapis.com` | Google Translate, for titles and book details. |
