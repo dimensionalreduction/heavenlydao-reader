@@ -1,4 +1,75 @@
-# heavenlydao.com Reader
+<a id="readme-top"></a>
+
+<div align="center">
+
+[![Contributors][contributors-shield]][contributors-url]
+[![Forks][forks-shield]][forks-url]
+[![Stargazers][stars-shield]][stars-url]
+[![Issues][issues-shield]][issues-url]
+[![GPLv3 License][license-shield]][license-url]
+
+</div>
+
+<br />
+<div align="center">
+  <a href="https://github.com/dimensionalreduction/heavenlydao-reader">
+    <img src="doc/logo.png" alt="Logo" width="80" height="80">
+  </a>
+
+  <h3 align="center">heavenlydao.com Reader</h3>
+
+  <p align="center">
+    Extension that fetches web novels from the sites that publish them, translates them with Gemini, and keeps them in your own library on all your devices.
+    <br />
+    <br />
+    <a href="https://addons.mozilla.org/en-US/firefox/addon/heavenlydao-com-reader/">Firefox Add-ons</a>
+    ·
+    <a href="https://chromewebstore.google.com/detail/eikfhkpfjchhcnfbjigjlefgnhfbmjba">Chrome Web Store</a>
+    ·
+    <a href="https://github.com/dimensionalreduction/heavenlydao-reader/releases/latest">Latest release</a>
+    ·
+    <a href="https://github.com/dimensionalreduction/heavenlydao-reader/issues/new">Report an issue</a>
+  </p>
+</div>
+
+<details>
+  <summary>Table of Contents</summary>
+  <ol>
+    <li><a href="#about-the-project">About The Project</a></li>
+    <li>
+      <a href="#installation">Installation</a>
+      <ul>
+        <li>
+          <a href="#firefox">Firefox</a>
+          <ul>
+            <li><a href="#from-firefox-add-ons">From Firefox Add-ons</a></li>
+            <li><a href="#from-source-firefox">From Source (Firefox)</a></li>
+          </ul>
+        </li>
+        <li>
+          <a href="#chrome">Chrome</a>
+          <ul>
+            <li><a href="#from-chrome-web-store">From Chrome Web Store</a></li>
+            <li><a href="#from-source-chrome">From Source (Chrome)</a></li>
+          </ul>
+        </li>
+        <li><a href="#from-source-developers">From Source (Developers)</a></li>
+      </ul>
+    </li>
+    <li><a href="#set-up">Set up</a></li>
+    <li><a href="#the-popup">The popup</a></li>
+    <li><a href="#permissions">Permissions</a></li>
+    <li><a href="#privacy">Privacy</a></li>
+    <li><a href="#development">Development</a></li>
+    <li><a href="#credits">Credits</a></li>
+    <li><a href="#license">License</a></li>
+    <li><a href="#support">Support</a></li>
+  </ol>
+</details>
+
+<!-- ABOUT THE PROJECT -->
+
+## About The Project
 
 A browser extension for Chrome and Firefox that works with your [heavenlydao.com](https://p2p-library.pages.dev/) library. It fetches
 web-novel chapters from the sites that publish them, translates them with Gemini, and keeps them in your library on all your devices.
@@ -6,7 +77,7 @@ web-novel chapters from the sites that publish them, translates them with Gemini
 The extension is one more device of your library. Your chapters, glossaries and settings live on your own devices and pass between them
 peer-to-peer. There is no account and no central server that holds them.
 
-## Features
+### Features
 
 - **Fetch chapters** from over 500 novel sites, either the next few from the chapter you are on or a novel's whole list.
 - **Translate with Gemini** using your own API key. Glossaries keep names and terms consistent from chapter to chapter, and chapters can be
@@ -17,27 +88,65 @@ peer-to-peer. There is no account and no central server that holds them.
 - **Watch for new chapters** on a schedule and fetch them as they come out. You get notifications even with the library site closed.
 - **Sync between your own devices** over WebRTC, and keep the libraries you follow available for other readers.
 
-## Install
+## Installation
 
-There is no store listing yet. Build it from source, then load it unpacked:
+### Firefox
 
-```sh
-npm ci
-npm run build        # creates dist/chrome and dist/firefox
-```
+#### From Firefox Add-ons
 
-- **Chrome, Edge, Brave:** open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and pick `dist/chrome`.
-- **Firefox:** open `about:debugging#/runtime/this-firefox`, click **Load Temporary Add-on…** and pick `dist/firefox/manifest.json`.
+Open Firefox and visit [heavenlydao.com Reader on Firefox Add-ons][firefox-add-ons], then press **Add to Firefox**.
+
+#### From Source (Firefox)
+
+1. Download `heavenlydao-reader-<version>-firefox.zip` from the [latest release](https://github.com/dimensionalreduction/heavenlydao-reader/releases/latest).
+2. Open Firefox and type `about:debugging#/runtime/this-firefox` into the URL bar.
+3. Click **Load Temporary Add-on…**.
+4. Pick the zip file you downloaded in step 1.
+
+A temporary add-on is removed when Firefox closes. A permanent install has to be signed through
+[addons.mozilla.org](https://addons.mozilla.org/developers/), so use the store version for everyday use.
+
+### Chrome
+
+#### From Chrome Web Store
+
+Open Chrome (or any Chromium-based browser like Edge, Brave, Opera, etc.) and go to [heavenlydao.com Reader on Chrome Web Store][chrome-web-store], then press **Add to Chrome**.
+
+#### From Source (Chrome)
+
+1. Download `heavenlydao-reader-<version>-chrome.zip` from the [latest release](https://github.com/dimensionalreduction/heavenlydao-reader/releases/latest).
+2. Unpack the zip file.
+3. Open Chrome and type `chrome://extensions` into the address bar.
+4. Make sure **Developer mode** at the top of the page is turned on.
+5. Press the **Load unpacked** button and browse to the unpacked directory from step 2.
+
+### From Source (Developers)
+
+1. Clone this repo.
+
+   ```sh
+   git clone https://github.com/dimensionalreduction/heavenlydao-reader.git
+   cd heavenlydao-reader
+   ```
+
+2. Build the extension.
+
+   ```sh
+   npm ci
+   npm run build        # creates dist/chrome and dist/firefox
+   ```
+
+3. Load `dist/chrome` (Chrome) or `dist/firefox/manifest.json` (Firefox) as described above.
 
 **To upload to addons.mozilla.org** (or the Chrome Web Store): `npm run package` builds and writes `dist/package/heavenlydao-reader-<version>-firefox.zip`
 (the add-on), `-source.zip` (the source the add-ons site asks for, with a BUILD.txt) and `-chrome.zip`, from the files on disk: nothing has to
 be committed first. The version is in `src/firefox/manifest.json`, `src/chrome/manifest.json` and `package.json` (change all three). The
 Extension workflow makes the same zips as the `heavenlydao-reader-zips` artifact.
-  A temporary add-on is removed when Firefox closes. A permanent install has to be signed through
-  [addons.mozilla.org](https://addons.mozilla.org/developers/).
 
 Every push also builds both extensions in GitHub Actions. Each run has them as the `heavenlydao-reader-chrome` and
 `heavenlydao-reader-firefox` artifacts.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Set up
 
@@ -132,3 +241,21 @@ as well; [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) lists what else is inc
 ## Support
 
 support@heavenlydao.com
+
+<!-- MARKDOWN LINKS & IMAGES -->
+
+[contributors-shield]: https://img.shields.io/github/contributors/dimensionalreduction/heavenlydao-reader.svg?style=for-the-badge
+[contributors-url]: https://github.com/dimensionalreduction/heavenlydao-reader/graphs/contributors
+[forks-shield]: https://img.shields.io/github/forks/dimensionalreduction/heavenlydao-reader.svg?style=for-the-badge
+[forks-url]: https://github.com/dimensionalreduction/heavenlydao-reader/network/members
+[stars-shield]: https://img.shields.io/github/stars/dimensionalreduction/heavenlydao-reader.svg?style=for-the-badge
+[stars-url]: https://github.com/dimensionalreduction/heavenlydao-reader/stargazers
+[issues-shield]: https://img.shields.io/github/issues/dimensionalreduction/heavenlydao-reader.svg?style=for-the-badge
+[issues-url]: https://github.com/dimensionalreduction/heavenlydao-reader/issues
+[license-shield]: https://img.shields.io/badge/LICENSE-GPLv3-%23555555?style=for-the-badge&label=LICENSE&color=285959
+[license-url]: LICENSE
+
+<!-- Store Links -->
+
+[firefox-add-ons]: https://addons.mozilla.org/en-US/firefox/addon/heavenlydao-com-reader/
+[chrome-web-store]: https://chromewebstore.google.com/detail/eikfhkpfjchhcnfbjigjlefgnhfbmjba
