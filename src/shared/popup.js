@@ -227,12 +227,14 @@
     const { profileKeys, geminiApiKey } = await ext.storage.local.get(["profileKeys", "geminiApiKey"]);
     return !!((profileKeys && profileKeys[GEMINI_KEY_BASE]) || geminiApiKey);
   };
-  const showKeyNote = async () => { $("geminiNote").hidden = await hasGeminiKey(); };
+  let keyHere = false; // (known before a click: the browser's question below has to come first in it)
+  const showKeyNote = async () => { keyHere = await hasGeminiKey(); $("geminiNote").hidden = keyHere; };
   showKeyNote();
   ext.storage.onChanged.addListener((changes, area) => { if (area === "local" && (changes.profileKeys || changes.geminiApiKey)) showKeyNote(); });
   $("detectBtn").onclick = async () => {
-    if (!(await hasGeminiKey())) { $("geminiNote").hidden = false; return; }
-    // what is found is saved as this site's rule, and a rule does nothing until the browser lets the extension read the site (asked first: it needs this click)
+    if (!keyHere) { $("geminiNote").hidden = false; return; }
+    // what is found is saved as this site's rule, and a rule does nothing until the browser lets the extension read the site. Asked first, before anything
+    // is waited for: Firefox asks only straight from the click (after an await it refuses, even a site already allowed).
     const granted = await ext.permissions.request({ origins: ["https://*." + hostname + "/*"] }).catch(() => false);
     if (!granted) {
       $("detInfo").textContent = "Not run: the browser did not give permission to read " + hostname + ", and what is found there would not be used.";
@@ -413,8 +415,9 @@
       detailsBtn.onclick = async () => {
         detailsBtn.disabled = true;
         detailsNote.textContent = "Asking for access to " + new URL(bookUrl).hostname + "…";
+        const asked = SiteAccess.request([SiteAccess.patternOf(bookUrl)], ext); // (straight from the click, before anything is waited for: Firefox asks only then)
         try {
-          if (!(await SiteAccess.has(bookUrl, ext)) && !(await SiteAccess.request([SiteAccess.patternOf(bookUrl)], ext))) throw new Error(new URL(bookUrl).hostname + " is not allowed");
+          if (!(await asked) && !(await SiteAccess.has(bookUrl, ext))) throw new Error(new URL(bookUrl).hostname + " is not allowed");
           detailsNote.textContent = "Reading the novel's page…";
           await host("work", { key: "translation:" + bookUrl + "#details", meta: { novelName: novelNameEl.textContent || novelNameRaw || "" } });
           detailsNote.textContent = "Details refreshed. They are in your library.";

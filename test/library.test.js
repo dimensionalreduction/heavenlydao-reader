@@ -128,6 +128,23 @@ const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 
   assert.deepStrictEqual(saved.novelProfiles, { "record:up-x": "gemini" }, "a novel's choice of a deleted profile goes");
   saved = await A.api("PUT", "/api/settings", { translateProfiles: [], novelProfiles: { "record:up-x": null } });
   assert.ok(saved.translateProfiles === undefined && saved.novelProfiles === undefined, "none left: none kept");
+  // expression profiles (Listen › Expression): the same fields, but never paid by the extension, and kept apart from the translation ones
+  saved = await A.api("PUT", "/api/settings", { translateProfiles: [{ id: "tr1", name: "Plain", model: "m1", pay: "tickets" }], expressionProfiles: [
+    { id: "ex1", name: " Cues ", model: "anthropic/claude-haiku-5.5", prompt: "Add cues.", pay: "tickets", key: "sk-secret" },
+    { id: "ex2", name: "Mine", model: "gpt-5-mini", pay: "key", base: "https://api.example.com/v1/" },
+    { id: "ex3", model: "m", pay: "extension" }, { id: "ex4", model: "m", pay: "key" }, { id: "ex1", model: "again", pay: "tickets" }, { id: "x", model: "m", pay: "tickets" }
+  ] });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(saved.expressionProfiles)), [
+    { id: "ex1", name: "Cues", model: "anthropic/claude-haiku-5.5", prompt: "Add cues.", pay: "tickets", base: "" },
+    { id: "ex2", name: "Mine", model: "gpt-5-mini", prompt: "", pay: "key", base: "https://api.example.com/v1" }
+  ]);
+  assert.deepStrictEqual(saved.translateProfiles.map((p) => p.id), ["tr1"], "the translation ones are not mixed with them");
+  saved = await A.api("PUT", "/api/settings", { novelProfiles: { "wtr-lab:9": "ex1" }, translateProfile: "ex1" });
+  assert.ok(saved.novelProfiles === undefined && saved.translateProfile === undefined, "and a translation choice cannot be an expression profile");
+  saved = await A.api("PUT", "/api/settings", { translateProfiles: [] });
+  assert.strictEqual(saved.expressionProfiles.length, 2, "a field left out is as it was");
+  saved = await A.api("PUT", "/api/settings", { expressionProfiles: [] });
+  assert.strictEqual(saved.expressionProfiles, undefined, "none left: none kept");
   // a person's own terms from the site (origin "yours"): kept when an import could not read them (keepYours), gone when the site no longer has them,
   // and the readers' most used rendering never replaces them
   const Y = encodeURIComponent("wtr-lab:777");

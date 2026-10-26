@@ -39,9 +39,9 @@ const other = "translation:https://wtr-lab.com/en/novel/1/slug/chapter-8";
   const extA = memAdapter("all");
   let ext;
   ext = createP2P({ ...common, adapter: extA, role: "extension",
-    onRawRequest: async (key) => { // (the extension: downloads it, keeps it, says so)
-      const k = key.replace(/#original$/, "");
-      const entry = { translated: "text", savedAt: Date.now(), model: "wtr-lab", pageTitle: "Chapter", novelName: "Novel" };
+    onRawRequest: async (key, meta) => { // (the extension: downloads it, keeps it, says so; translated when asked)
+      const k = meta.translate ? key.replace(/#original$/, "") : key;
+      const entry = { translated: "text", savedAt: Date.now(), model: meta.translate ? "wtr-lab" : "original", pageTitle: "Chapter", novelName: "Novel" };
       await extA.setTranslation(k, entry);
       await ext.onLocalSave(k, entry);
       ext.announceRaw(key, "done", {});
@@ -68,8 +68,14 @@ const other = "translation:https://wtr-lab.com/en/novel/1/slug/chapter-8";
   await sleep(600);
   assert.ok(!phoneA.store.has(other), "the other chapter stays unfetched");
 
+  // a novel this phone translates with a profile: only the original text is asked for, and that is what the phone fetches
+  const raw = "translation:https://www.69shuba.com/txt/51900/34090547#original";
+  assert.strictEqual(phone.requestRaw(raw, { novelName: "Novel", translate: false }), 1, "one device asked for the original text");
+  await waitFor(() => statuses.includes(raw + " done"), "the extension says the original text is saved");
+  await waitFor(() => phoneA.store.has(raw), "the phone has the original text it asked for");
+
   for (const c of [ext, phone]) c.stop();
-  console.log("OK — a chapter asked of the extension is fetched on demand");
+  console.log("OK — a chapter asked of the extension is fetched on demand, and so is an original text asked for alone");
 })().catch((e) => {
   console.error(e);
   process.exitCode = 1;

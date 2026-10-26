@@ -77,6 +77,40 @@ var OriginalTranslate = (function () {
     return words.filter((w) => COMMON.has(w)).length / words.length >= 0.22;
   }
 
+  // Is this text already in the language `lang` (a code)? English as above; a language in its own script (Russian, Thai, Chinese, Japanese, Korean, Arabic,
+  // Hebrew, Hindi) by the share of letters in that script; the Latin-script ones named below by the share of their commonest words. Any other language: false
+  // (the translator decides).
+  const SCRIPTS = {
+    ru: /\p{Script=Cyrillic}/gu, uk: /\p{Script=Cyrillic}/gu, th: /\p{Script=Thai}/gu, ko: /\p{Script=Hangul}/gu, ar: /\p{Script=Arabic}/gu,
+    he: /\p{Script=Hebrew}/gu, hi: /\p{Script=Devanagari}/gu, zh: /\p{Script=Han}/gu, ja: /[\p{Script=Hiragana}\p{Script=Katakana}]/gu
+  };
+  const COMMON_BY_LANG = {
+    es: "de la que el en y a los se del las un por con no una su para es al lo como más pero sus le ya o fue este ha sí porque esta son entre cuando muy sin sobre también me hasta hay donde quien desde todo nos durante".split(" "),
+    pt: "de a o que e do da em um para é com não uma os no se na por mais as dos como mas foi ao ele das tem à seu sua ou ser quando muito há nos já está eu também só pelo pela até isso ela entre era depois sem mesmo aos".split(" "),
+    fr: "de la le et les des en un du une que est pour qui dans a par plus pas au sur ne se ce il sont la avec son mais comme ou si leur y elle ont aux été cette nous vous je tout être fait ses deux".split(" "),
+    de: "der die und in den von zu das mit sich des auf für ist im dem nicht ein eine als auch es an werden aus er hat dass sie nach wird bei einer um am sind noch wie einem über einen so zum war haben nur oder aber vor zur bis mehr durch man sein wurde".split(" "),
+    id: "yang dan di dengan untuk dari dalam tidak ini itu akan pada juga saya ke karena ada mereka dia sudah bisa oleh atau tetapi seperti lebih kami kita telah apa hanya jika saat sebuah para harus banyak".split(" "),
+    tr: "ve bir bu da de için ile o çok daha ne gibi ama en kadar sonra var olarak her ben sen biz onu ki mi değil şey ya ise bu kendi çünkü sadece bütün olan".split(" "),
+    it: "di che e la il un a per in è non una con sono da i le si ma lo come più del dei al ha anche della gli nel suo questo era se ci mi tutto ho molto o lei lui sua".split(" ")
+  };
+  function isLanguage(text, lang) {
+    const code = String(lang || "en").split("-")[0].toLowerCase();
+    if (code === "en") return isEnglish(text);
+    const t = String(text || "");
+    const letters = (t.match(/\p{L}/gu) || []).length;
+    if (letters < 200) return false;
+    if (SCRIPTS[code]) return ((t.match(SCRIPTS[code]) || []).length) / letters >= (code === "zh" || code === "ja" ? 0.5 : 0.8) && (code !== "zh" || !/[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(t));
+    const common = COMMON_BY_LANG[code];
+    if (!common) return false;
+    if (((t.match(NON_LATIN) || []).length) / letters > 0.02) return false;
+    const words = t.toLowerCase().match(/[\p{L}']+/gu) || [];
+    if (words.length < 40) return false;
+    const set = new Set(common);
+    const share = words.filter((w) => set.has(w)).length / words.length;
+    // (it must also not be more English than the language)
+    return share >= 0.3 && words.filter((w) => COMMON.has(w)).length / words.length < share;
+  }
+
   // job: { url (the chapter's page), text (its original text), novelName, pageTitle, next, force (replace a chapter already translated: a re-fetch or a
   // re-translate), retranslate (send it to the translator even if it is English: only when asked for on purpose), notes (optional: 0 = no notes on terms
   // for this chapter, more = notes when they are switched on; not given: as the switch says), lang (optional: the language to translate it into, a code; not
@@ -91,10 +125,10 @@ var OriginalTranslate = (function () {
     if (have && have.translated && have.model !== "original" && !job.force) return { ok: true, skipped: true };
     // A chapter that is already English is not sent to the translator: its text is kept as it is, as the chapter's own copy, so it opens like any other.
     // (a re-fetch replaces it with the fresh text, still untranslated; only an asked-for re-translate goes to the translator)
-    // (only into English: into another language, English text is translated like any other)
-    if (lang === "en" && !job.retranslate && isEnglish(job.text)) {
+    // (the same for any language the text is already in, the library's Translate into: Spanish text on a Spanish site into Spanish; English text into another language is translated)
+    if (!job.retranslate && isLanguage(job.text, lang)) {
       await ext.storage.local.set({
-        [key]: { translated: String(job.text), suggestions: [], savedAt: Date.now(), model: "english source", pageTitle: job.pageTitle || "", novelName: job.novelName || "", ...(job.next ? { next: job.next } : {}) }
+        [key]: { translated: String(job.text), suggestions: [], savedAt: Date.now(), model: lang === "en" ? "english source" : "source in " + lang, pageTitle: job.pageTitle || "", novelName: job.novelName || "", ...(job.next ? { next: job.next } : {}) }
       });
       return { ok: true, english: true };
     }
@@ -186,5 +220,5 @@ var OriginalTranslate = (function () {
     await GlossaryServer.setBinding(key, [...have, id]);
   }
 
-  return { run, isEnglish, rawHostOf, rawSourceOf, bindSource };
+  return { run, isEnglish, isLanguage, rawHostOf, rawSourceOf, bindSource };
 })();

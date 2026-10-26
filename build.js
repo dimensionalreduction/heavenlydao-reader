@@ -59,6 +59,8 @@ function addDevSite(manifestFile) {
   const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
   const bridge = manifest.content_scripts.find((c) => c.js.includes("site-bridge.js"));
   bridge.matches = DEV_SITE.concat(bridge.matches.filter((m) => !DEV_SITE.includes(m)));
+  // (the Allow card, a page of the extension shown in the site's tab, is for the same addresses: Chrome keeps the list in the manifest)
+  for (const w of manifest.web_accessible_resources || []) if (w && w.matches) w.matches = bridge.matches.slice();
   fs.writeFileSync(manifestFile, JSON.stringify(manifest, null, 2) + "\n");
 }
 // The same addresses for the extension's pages that check who is asking (library-host.js, p2p-host.js, notice-bg.js): Chrome's offscreen page

@@ -41,6 +41,35 @@
     return true; // answered later
   });
 
+  // The Allow card: when the extension needs a site it has not been allowed to read, the background tells this tab ("site:allow": { hosts }) and the card (access.html, a
+  // page of the extension: the browser asks the person only on a click there) comes up over the bottom of the page. It goes when answered; "Not now" is told to the
+  // background, which does not offer those sites again for a while.
+  let card = null;
+  const closeCard = () => { if (card) { card.remove(); card = null; } };
+  window.addEventListener("message", (ev) => {
+    const d = ev.data;
+    if (!card || ev.source !== card.contentWindow || !d || d.p2pread !== "access") return;
+    if (d.done) {
+      if (Array.isArray(d.declined) && d.declined.length) Promise.resolve(ext.runtime.sendMessage({ type: "access:muted", hosts: d.declined })).catch(() => {});
+      closeCard();
+    }
+  });
+  ext.runtime.onMessage.addListener((msg, sender) => {
+    if (!msg || msg.type !== "site:allow" || !sender || sender.id !== ext.runtime.id || window.top !== window || !Array.isArray(msg.hosts)) return;
+    const hosts = msg.hosts.filter((h) => /^[a-z0-9.-]{3,100}$/i.test(h)).slice(0, 5);
+    if (!hosts.length) return;
+    closeCard();
+    const theme = document.documentElement.dataset.theme;
+    const dark = theme === "dark" || (theme !== "light" && theme !== "sepia" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    card = document.createElement("iframe");
+    card.src = ext.runtime.getURL("access.html") + "?" + hosts.map((h) => "h=" + encodeURIComponent(h)).join("&") + "&t=" + (dark ? "dark" : "light");
+    card.setAttribute("title", "Allow");
+    card.style.cssText = "position:fixed;left:50%;transform:translateX(-50%);bottom:max(12px,env(safe-area-inset-bottom));width:min(420px,calc(100vw - 16px));height:150px;border:0;border-radius:16px;box-shadow:0 10px 36px rgba(0,0,0,.4);z-index:2147483647;color-scheme:light dark;background:transparent;";
+    document.documentElement.append(card);
+  });
+  // the page is up: if something is waiting to be allowed, the card is offered here
+  Promise.resolve(ext.runtime.sendMessage({ type: "access:check" })).catch(() => {});
+
   function connect() {
     if (port) return post("connected"); // asked again (the page restarted its side): the link is already up
     try {

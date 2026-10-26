@@ -63,12 +63,13 @@
     return [...keys];
   }
 
-  // What readers of a novel get: its details, and the chapters held of its main list.
+  // What readers of a novel get: its details, and its whole list of chapters: those held as [number, title, key, when saved], the rest (known from
+  // the source's chapter list, nobody has translated them) with 0 for when saved, so a reader sees them and can translate them with its own extension.
   function manifest(novel, records, chapterIndex) {
     const info = infoFor(novel, records, chapterIndex) || {};
-    const chapters = novel.chapters.filter((r) => r.have).map((r) => {
+    const chapters = novel.chapters.map((r) => {
       const v = r.versions.find((x) => x.key === r.key && x.have) || r.versions.find((x) => x.have);
-      return [r.num, r.title, v.key, v.savedAt || 0];
+      return v ? [r.num, r.title, v.key, v.savedAt || 0] : [r.num, r.title, r.versions[0].key, 0];
     });
     return {
       title: info.title || novel.name, author: info.author || "", authorRaw: info.authorRaw || "", rawTitle: info.rawTitle || "", names: (info.names || []).slice(0, 10),

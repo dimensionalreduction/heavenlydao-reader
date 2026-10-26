@@ -36,7 +36,7 @@ async function translateTab(tabId) {
 // Until this extension is a device of a library it does nothing for anyone: its popup shows only the passphrase and Join, and every request
 // here is refused (the library's own calls, with a target, and the popup's status questions pass). libraryOn: set by library-host.js.
 const LOCKED = "this extension is not in a library yet: open its popup, enter your library's passphrase and press Join";
-const LOCK_EXEMPT = new Set(["p2p:status", "bookcapture:done"]);
+const LOCK_EXEMPT = new Set(["p2p:status", "bookcapture:done", "access:muted", "access:check"]);
 let unlocked = null;
 const lockRead = browser.storage.local.get("libraryOn").then((r) => { unlocked = !!r.libraryOn; }, () => { unlocked = false; });
 browser.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes.libraryOn) unlocked = !!changes.libraryOn.newValue; });
@@ -48,6 +48,9 @@ browser.runtime.onMessage.addListener((message, sender) => {
 
 function handleMessage(message, sender) {
   if (!message) return;
+  // the Allow card in the library site's tab (access-offer.js)
+  const offer = AccessOffer.answerMessage(message, sender);
+  if (offer) return offer;
   // the library site's Listen tab, with Fish Audio and the person's own key (fish-speech.js)
   const fish = FishSpeech.answer(message, sender);
   if (fish) return fish;
@@ -143,11 +146,12 @@ async function showAccessBadge() {
 }
 showAccessBadge();
 browser.permissions.onAdded.addListener(showAccessBadge);
+browser.tabs.onActivated.addListener(() => AccessOffer.offer()); // (a tab of the library site comes to the front while a site waits to be allowed)
 browser.permissions.onRemoved.addListener(showAccessBadge);
 browser.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
   if (changes.userRules) syncSiteScripts(changes.userRules.newValue || {});
-  if (changes[SiteAccess.KEY]) showAccessBadge();
+  if (changes[SiteAccess.KEY]) { showAccessBadge(); AccessOffer.offer(); }
 });
 
 // "New chapters" watches: nothing happens unless the person switched one on (it asks the library). The page that does the looking

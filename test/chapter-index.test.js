@@ -51,7 +51,7 @@ globalThis.fetch = async (url, opts) => {
   let out = lines.map((l) => DICT[l] || "T:" + l);
   if (behaviour === "merge" && lines.length > 1) out = [out.join(" ")]; // the translator joins everything onto one line
   if (behaviour === "down") throw new Error("network down");
-  return { json: async () => [out.map((t, i) => [t + (i < out.length - 1 ? "\n" : ""), lines[i]])] };
+  return { ok: true, json: async () => [out.map((t, i) => [t + (i < out.length - 1 ? "\n" : ""), lines[i]])] };
 };
 (async () => {
   let r = await googleTranslateMany(["合成魔方", "虚无缥缈的传说", "", "次级龙血药剂"]);
@@ -74,6 +74,11 @@ globalThis.fetch = async (url, opts) => {
   r = await googleTranslateMany(["合成魔方", "后记"]);
   assert.deepStrictEqual(r, ["合成魔方", "后记"], "when the network is down the originals are kept");
   behaviour = "good";
+  requests = [];
+  r = await googleTranslateMany(["合成魔方"]);
+  assert.deepStrictEqual([r, requests.length], [["合成魔方"], 0], "and nothing is asked again right after (a refusal is not kept going)");
+  googlePausedUntil = 0; // (the pause over)
+  assert.deepStrictEqual(await googleTranslateMany(["合成魔方"]), ["Synthetic Cube"], "after the pause it is asked again");
   globalThis.fetch = realFetch; // the stub was only for the translation tests
 
   // ================= the content script, end to end =================

@@ -22,6 +22,11 @@ const L = require(path.join(__dirname, "..", "src", "shared", "share-lists.js"))
   assert.deepStrictEqual([m.title, m.author, m.cover], ["Synthesis Wizard", "Someone", "c.jpg"]);
   assert.deepStrictEqual(m.chapters.map((c) => [c[0], c[2], c[3]]), [[1, W(1), 10], [2, W(2), 20]], "the chapters held: number, key, when saved");
 
+  // a chapter its source lists that nobody has translated is in the list too (saved at 0), for a reader to translate with its own extension
+  const listed = L.novelsOf({ index, have: new Set(Object.keys(index)), chapterIndex: { "wtr-lab:8053": { chapters: [[1, "Chapter 1: Cube", W(1).slice(12)], [2, "Chapter 2: Legend", W(2).slice(12)], [3, "Chapter 3: Elsewhere", W(3).slice(12)]] } } });
+  const full = L.manifest([...listed.values()].find((n) => n.wtrIds.size), records, {});
+  assert.deepStrictEqual(full.chapters.map((c) => [c[0], c[2], c[3]]), [[1, W(1), 10], [2, W(2), 20], [3, W(3), 0]], "the chapter nobody has translated: number, key, saved at 0");
+
   // written: a list the library has, together with it (what only it has stays); with every novel shared, a novel not shared yet is added
   const stored = { title: "Synthesis Wizard", author: "Someone", cover: "c.jpg", chapters: [[1, "Chapter 1: Cube", W(1), 10], [3, "Chapter 3: Elsewhere", W(3), 5]] };
   const puts = {};

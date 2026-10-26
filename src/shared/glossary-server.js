@@ -242,7 +242,7 @@ var GlossaryServer = (function () {
   // 15 when the library has none or cannot be reached
   async function geminiRate() {
     const s = await settings();
-    return s && Number.isFinite(s.geminiRate) ? s.geminiRate : 15;
+    return s && Number.isFinite(s.geminiRate) ? s.geminiRate : 12;
   }
   // Google Translate when the library has none or cannot be reached
   async function titleMode() {

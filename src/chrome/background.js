@@ -1,4 +1,4 @@
-importScripts("p2p-core.js", "term-match.js", "gemini.js", "site-matches.js", "site-access.js", "fish-speech.js", "glossary-server.js", "wtr-terms.js", "base-glossary.js", "term-pool.js", "pool-hints.js", "pool-share.js", "raw-sources.js", "user-rules.js", "term-notes.js", "profile-model.js", "profile-translate.js", "original-translate.js", "watcher.js", "book-visit.js", "notice-bg.js");
+importScripts("p2p-core.js", "term-match.js", "gemini.js", "site-matches.js", "site-access.js", "access-offer.js", "fish-speech.js", "glossary-server.js", "wtr-terms.js", "base-glossary.js", "term-pool.js", "pool-hints.js", "pool-share.js", "raw-sources.js", "user-rules.js", "term-notes.js", "profile-model.js", "profile-translate.js", "original-translate.js", "watcher.js", "book-visit.js", "notice-bg.js");
 UserRules.start(chrome); // the rules the person added: read from storage here, handed to the offscreen document below
 
 const RAW_TEXT_VAR_CANDIDATES = ["txt_content"];
@@ -57,7 +57,7 @@ async function translateTab(tabId) {
 // Until this extension is a device of a library it does nothing for anyone: its popup shows only the passphrase and Join, and every request
 // here is refused (the library's own calls, with a target, and the popup's status questions pass). libraryOn: set by library-host.js.
 const LOCKED = "this extension is not in a library yet: open its popup, enter your library's passphrase and press Join";
-const LOCK_EXEMPT = new Set(["p2p:status", "lib:wake", "bookcapture:done", "access:has", "access:note"]);
+const LOCK_EXEMPT = new Set(["p2p:status", "lib:wake", "bookcapture:done", "access:has", "access:note", "access:muted", "access:check"]);
 let unlocked = null;
 const lockRead = chrome.storage.local.get("libraryOn").then((r) => { unlocked = !!r.libraryOn; }, () => { unlocked = false; });
 chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes.libraryOn) unlocked = !!changes.libraryOn.newValue; });
@@ -76,6 +76,12 @@ function handleMessage(message, sender, sendResponse) {
   const access = SiteAccess.answerMessage(message);
   if (access) {
     access.then(sendResponse, () => sendResponse(null));
+    return true;
+  }
+  // the Allow card in the library site's tab (access-offer.js)
+  const offer = AccessOffer.answerMessage(message, sender);
+  if (offer) {
+    offer.then(sendResponse, () => sendResponse(null));
     return true;
   }
   // the library site's Listen tab, with Fish Audio and the person's own key (fish-speech.js)
@@ -262,6 +268,7 @@ async function showAccessBadge() {
 }
 showAccessBadge();
 chrome.permissions.onAdded.addListener(showAccessBadge);
+chrome.tabs.onActivated.addListener(() => AccessOffer.offer()); // (a tab of the library site comes to the front while a site waits to be allowed)
 chrome.permissions.onRemoved.addListener(showAccessBadge);
 
 // ---------- P2P sync (WebRTC lives in an offscreen document; see p2p-host.js) ----------
@@ -344,7 +351,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
     chrome.runtime.sendMessage({ target: "user-rules", stored: changes[UserRules.KEY].newValue || {} }).catch(() => {});
     syncSiteScripts(changes[UserRules.KEY].newValue || {});
   }
-  if (SiteAccess.KEY in changes) showAccessBadge();
+  if (SiteAccess.KEY in changes) { showAccessBadge(); AccessOffer.offer(); }
   if (P2P_CONFIG_KEYS.some((k) => k in changes)) {
     ensureOffscreen()
       .then(() => chrome.runtime.sendMessage({ target: "p2p-host", type: "reconfigure" }))

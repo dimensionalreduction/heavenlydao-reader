@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "heavenlydao.com Reader",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "browser_specific_settings": {
     "gecko": {
       "id": "reader@heavenlydao.com",
@@ -43,12 +43,14 @@
     "unlimitedStorage"
   ],
   "optional_permissions": ["https://*/*"],
+  "web_accessible_resources": ["access.html", "access.js", "site-access.js"],
   "options_ui": { "page": "rules.html", "open_in_tab": true },
   "background": {
     "scripts": [
       "webtorrent.min.js",
       "site-matches.js",
       "site-access.js",
+      "access-offer.js",
       "fish-speech.js",
       "p2p-core.js",
       "glossary-server.js",

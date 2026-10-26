@@ -74,17 +74,28 @@
     // Translation profiles (docs/PROFILES.md), the settings' part of them: a model and a prompt saved in the playground, which the library's page translates chapters with.
     // Changes `next` (the settings) by what `body` says; the site's waiting copy (site/profiles.js) is kept by the same rules.
     // translateProfiles: the whole list ({ id, name, model, prompt, pay: "tickets" | "key" | "extension" (translated by the extension, with its own Gemini key), base: the provider's address, for a key; never the key });
-    // translateProfile: the library's default, one of their ids (blank or null: Gemini through the extension); novelProfiles: { <book>: <id> | "gemini" },
+    // (expressionProfiles below.) translateProfile: the library's default, one of their ids (blank or null: Gemini through the extension); novelProfiles: { <book>: <id> | "gemini" },
     // a novel's own choice (null: the library's default again). A choice whose profile is gone goes with it.
-    if (Array.isArray(body.translateProfiles)) {
+    // A list of profiles as it is kept: a bad one (short id, no model, a way to pay not in `pays`, a key with no address, the same id twice) is dropped.
+    const cleanProfiles = (src, pays) => {
       const seen = new Set();
-      const list = body.translateProfiles
-        .filter((p) => p && /^[A-Za-z0-9_-]{3,24}$/.test(String(p.id)) && typeof p.model === "string" && /^[A-Za-z0-9][\w.:/@+-]{0,119}$/.test(p.model.trim()) && (p.pay === "tickets" || p.pay === "key" || p.pay === "extension") && !seen.has(String(p.id)) && seen.add(String(p.id)))
-        .map((p) => ({ id: String(p.id), name: clean(p.name, 60) || "Profile", model: p.model.trim(), prompt: typeof p.prompt === "string" ? p.prompt.slice(0, 20000) : "", pay: p.pay, base: p.pay === "key" && typeof p.base === "string" && /^https?:\/\/[^\s"'<>]{3,200}$/.test(p.base.trim()) ? p.base.trim().replace(/\/+$/, "") : "" }))
+      return src
+        .filter((p) => p && /^[A-Za-z0-9_-]{3,24}$/.test(String(p.id)) && typeof p.model === "string" && /^[A-Za-z0-9][\w.:/@+-]{0,119}$/.test(p.model.trim()) && pays.includes(p.pay) && !seen.has(String(p.id)) && seen.add(String(p.id)))
+        .map((p) => ({ id: String(p.id), name: clean(p.name, 60) || "Profile", model: p.model.trim(), prompt: typeof p.prompt === "string" ? p.prompt.slice(0, 20000) : "", pay: p.pay, base: p.pay === "key" && typeof p.base === "string" && /^https?:\/\/[^\s"'<>]{3,200}$/.test(p.base.trim()) ? p.base.trim().replace(/\/+$/, "") : "", ...(["fish", "gemini", "openai"].includes(p.voice) ? { voice: p.voice } : {}) }))
         .filter((p) => p.pay !== "key" || p.base)
         .slice(0, 20);
+    };
+    if (Array.isArray(body.translateProfiles)) {
+      const list = cleanProfiles(body.translateProfiles, ["tickets", "key", "extension"]);
       if (list.length) next.translateProfiles = list;
       else delete next.translateProfiles;
+    }
+    // expressionProfiles (Listen › Expression): the same fields, a model that writes the cues a voice acts out into the text before it is said (the prompt: blank is
+    // the built-in one); paid with tickets or a key, never by the extension. voice (optional): the kind of voice the cues are for ("fish", "gemini", "openai"; none: any). Each browser picks the one it uses; there is no library default.
+    if (Array.isArray(body.expressionProfiles)) {
+      const list = cleanProfiles(body.expressionProfiles, ["tickets", "key"]);
+      if (list.length) next.expressionProfiles = list;
+      else delete next.expressionProfiles;
     }
     const profileIds = new Set((next.translateProfiles || []).map((p) => p.id));
     if (body.translateProfile === null || body.translateProfile === "") delete next.translateProfile;
@@ -403,7 +414,7 @@
       if (typeof body.keepTerms === "boolean") next.keepTerms = body.keepTerms;
       // agreeing to add the terms one made to a public pool (CC0): off until the person says so; when they said it is kept (nothing is sent for what was made before it)
       if (typeof body.sharePool === "boolean" && body.sharePool !== next.sharePool) { next.sharePool = body.sharePool; if (body.sharePool) next.sharePoolAt = Date.now(); else delete next.sharePoolAt; }
-      // Gemini's requests a minute, for every device of the library together (each extension keeps to it: gemini.js); none kept: 15
+      // Gemini's requests a minute, for every device of the library together (each extension keeps to it: gemini.js); none kept: 12
       if (Number.isFinite(body.geminiRate)) next.geminiRate = Math.max(1, Math.min(120, Math.floor(body.geminiRate)));
       // how titles and details that are not in English are put into English (gemini.js translateByMode, and the site): Google Translate,
       // Gemini, Gemini with Google Translate when Gemini can't, or not at all

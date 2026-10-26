@@ -1,6 +1,6 @@
 {
   "name": "heavenlydao-reader",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Browser extension for heavenlydao.com: fetch web-novel chapters, translate them with Gemini, keep them in your library on all your devices.",
   "license": "GPL-3.0-only",
   "private": true,
@@ -8,7 +8,8 @@
     "build": "node build.js",
     "build:dev": "node build.js --dev",
     "test": "node tools/test.js",
-    "package": "node tools/package.js"
+    "package": "node tools/package.js",
+    "publish": "node tools/publish.js"
   },
   "devDependencies": {
     "webtorrent": "^1.9.7"

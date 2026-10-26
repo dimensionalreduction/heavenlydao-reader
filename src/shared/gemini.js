@@ -46,7 +46,7 @@ async function getApiKey() {
 
 // Gemini takes so many requests a minute for a key, whatever they are for: every request made here (a chapter of any novel, from any tab or device
 // that asked, a page being read, a book's details, notes on terms) waits for its turn in the same count. At most geminiRate() in any minute: the
-// library's setting (Settings, Translation, on the library page), 15 by default.
+// library's setting (Settings, Translation, on the library page), 12 by default.
 // The prompts sent to Gemini: their instructions, which the library's Settings › Translation can change (the library's setting promptSets: for each of
 // translate, notes and detect, the one in use, one of those that come with the extension (GEMINI_PROMPT_PRESETS) or one the person saved; GlossaryServer.promptSettings
 // reads it, geminiPromptFrom picks). What goes with them is added whatever they say: the glossary and the chapter (translate), the terms' notes so far (notes:
@@ -152,7 +152,7 @@ const geminiSent = []; // when the requests of the last minute were sent
 let geminiLine = Promise.resolve();
 async function geminiRateNow() {
   try {
-    return typeof GlossaryServer !== "undefined" && GlossaryServer.geminiRate ? await GlossaryServer.geminiRate() : 15;
+    return typeof GlossaryServer !== "undefined" && GlossaryServer.geminiRate ? await GlossaryServer.geminiRate() : 12;
   } catch (e) {
     return 15;
   }
@@ -193,11 +193,15 @@ async function googleTranslateShort(text, lang) {
 // characters (POST, since Chinese text makes a long URL). The translator keeps lines apart, but if a chunk comes back with a
 // different number of lines we never guess which is which: it is split in half and retried, down to single strings.
 // Always returns an array the same length as the input; anything that could not be translated stays as it was.
+// Google refusing (its "unusual traffic" page, a 429) or no network: nothing is asked for a few minutes (googlePausedUntil), so a refusal is not kept going.
+let googlePausedUntil = 0;
 async function googleTranslateMany(texts, lang) {
   const out = texts.slice();
   const CHUNK_CHARS = 900;
+  const pause = () => { googlePausedUntil = Date.now() + 5 * 60 * 1000; };
 
   async function translateChunk(idxs) {
+    if (Date.now() < googlePausedUntil) return;
     try {
       const body = "q=" + idxs.map((i) => encodeURIComponent(String(texts[i]).replace(/\s+/g, " ").trim())).join("%0A");
       const res = await fetch("https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=" + encodeURIComponent(lang || "en") + "&dt=t", {
@@ -205,6 +209,7 @@ async function googleTranslateMany(texts, lang) {
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body
       });
+      if (!res.ok) return pause();
       const data = await res.json();
       const joined = (data[0] || []).map((seg) => seg[0]).join("");
       const lines = joined.replace(/\n+$/, "").split("\n");
@@ -219,7 +224,7 @@ async function googleTranslateMany(texts, lang) {
         return;
       }
     } catch (e) {
-      return; // network trouble: leave this chunk untranslated
+      return pause(); // network trouble: leave this chunk untranslated
     }
     const mid = Math.ceil(idxs.length / 2);
     await translateChunk(idxs.slice(0, mid));
@@ -335,7 +340,7 @@ async function geminiTranslateTitles(texts, lang) {
 }
 
 // How titles and details that are not in English are put into English, as the library's setting says (Settings › Translation on the site, for
-// every device): "google" (Google Translate, the default), "gemini", "gemini-google" (Gemini, and Google Translate for what Gemini can't do:
+// every device): "google" (Google Translate, the default; Gemini, with a key, while Google refuses), "gemini", "gemini-google" (Gemini, and Google Translate for what Gemini can't do:
 // no key, no answer), "off" (left as they are). kind "book": a book's [title, author, genre, ...synopsis] (geminiTranslateBook); "titles": a
 // list of titles. Gemini's requests count toward the library's requests a minute. Always the same length as `texts`.
 async function titleModeNow() {
@@ -358,7 +363,15 @@ async function translateByMode(texts, kind) {
   const mode = await titleModeNow();
   if (mode === "off") return texts.slice();
   const lang = await targetLanguageNow();
-  if (mode !== "gemini" && mode !== "gemini-google") return googleTranslateMany(texts, lang);
+  if (mode !== "gemini" && mode !== "gemini-google") {
+    const out = await googleTranslateMany(texts, lang);
+    if (!(Date.now() < googlePausedUntil)) return out;
+    // Google refusing (its "unusual traffic" page, on some networks): Gemini with your key does it instead (nothing changes without a key)
+    if (kind === "book") return (await geminiTranslateBook(texts, lang)) || out;
+    const left = out.map((t, i) => (t === texts[i] && NON_LATIN_TEXT.test(String(t || "")) ? i : -1)).filter((i) => i >= 0);
+    if (left.length) { const g = (await geminiTranslateTitles(left.map((i) => texts[i]), lang)).out; left.forEach((i, k) => (out[i] = g[k])); }
+    return out;
+  }
   if (kind === "book") {
     const got = await geminiTranslateBook(texts, lang);
     if (got) return got;

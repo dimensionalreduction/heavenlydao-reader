@@ -321,7 +321,7 @@
     const apiAsks = new Map(); // id -> a read-only library call this device is waiting on (askApi)
     let onDemand = false; // cfg.fetch === "open": only what is asked for
     const wanted = new Set(); // (on demand) chapters asked for and not here yet
-    const rawAsks = new Set(); // chapters asked of the devices with the extension (requestRaw) and not said done yet
+    const rawAsks = new Map(); // chapters asked of the devices with the extension (requestRaw) and not said done yet -> whether the original text alone was asked for
     let retrySoon = null;
     let apiKey = null; // Promise<CryptoKey>: made from the passphrase
     const joinsSeen = new Set(); // requests to join already passed on (per device, per JOIN_EVERY_MS)
@@ -937,9 +937,12 @@
           .catch((e) => (e && e.declined ? decline(e.message) : say(peer, { t: "rawfail", k: msg.k, e: String((e && e.message) || e).slice(0, 300) })));
       } else if (msg.t === "rs" && validKey(msg.k) && opts.onRawStatus) {
         // on demand: a chapter this device asked a device with the extension for (requestRaw) is wanted once that one has it, whichever address it is kept
-        // under (the one asked, or the source site's own, said in "u"), though nothing opened it by its own key
-        if (msg.s === "done" && rawAsks.delete(msg.k)) {
-          const own = [msg.k.replace(/#original$/, ""), /^https:\/\//.test(String(msg.u || "")) ? "translation:" + String(msg.u).slice(0, 600) : ""].filter((k) => k && validKey(k));
+        // under (the one asked, or the source site's own, said in "u"), though nothing opened it by its own key. Asked for its original text alone
+        // (translate: false, a novel this page translates with a profile), the original text is wanted too.
+        if (msg.s === "done" && rawAsks.has(msg.k)) {
+          const original = rawAsks.get(msg.k);
+          rawAsks.delete(msg.k);
+          const own = [msg.k.replace(/#original$/, ""), /^https:\/\//.test(String(msg.u || "")) ? "translation:" + String(msg.u).slice(0, 600) : "", original ? msg.k : ""].filter((k) => k && validKey(k));
           for (const k of own) { if (onDemand) wanted.add(k); enqueueFetch(k, true); }
         }
         opts.onRawStatus(msg.k, String(msg.s || "").slice(0, 30), { pageTitle: String(msg.p || "").slice(0, 300), error: String(msg.e || "").slice(0, 300), url: /^https:\/\//.test(String(msg.u || "")) ? String(msg.u).slice(0, 600) : "", note: String(msg.n || "").slice(0, 120) });
@@ -1359,7 +1362,11 @@
       // Asks the connected devices that can fetch from the source site to save this chapter's original text. Returns how many were asked.
       requestRaw: (key, meta = {}) => {
         let asked = 0;
-        if (!meta.findNext && !String(key).endsWith("#notes") && !String(key).endsWith("#details") && !String(key).endsWith("#list")) { rawAsks.add(key); if (rawAsks.size > 200) rawAsks.delete(rawAsks.values().next().value); }
+        if (!meta.findNext && !String(key).endsWith("#notes") && !String(key).endsWith("#details") && !String(key).endsWith("#list")) {
+          rawAsks.delete(key); // (asked again: kept as the newest, with what this ask wants)
+          rawAsks.set(key, meta.translate === false && String(key).endsWith("#original")); // (not said: a site chapter read from its source, kept under its own key)
+          if (rawAsks.size > 200) rawAsks.delete(rawAsks.keys().next().value);
+        }
         for (const p of memberPeers()) {
           if (!p.ready) continue;
           say(p, { t: "raw", k: key, n: meta.novelName || "", p: meta.pageTitle || "", tr: !!meta.translate, s: meta.source || "", a: meta.ahead || 0, f: !!meta.findNext, x: !!meta.force, rt: !!meta.retranslate, w: meta.wtrRawId || "", ...(meta.lang ? { l: String(meta.lang) } : {}), ...(Number.isFinite(meta.notes) ? { nt: meta.notes } : {}), ...(meta.custom ? { cp: { p: String(meta.custom.prompt || ""), n: !!meta.custom.notes, g: meta.custom.glossary !== false, e: !!meta.custom.replace } } : {}) });

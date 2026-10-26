@@ -7,6 +7,7 @@ const vm = require("vm");
 
 let mode = "google";
 let geminiUp = true;
+let googleUp = true;
 const calls = { google: 0, gemini: 0 };
 const ctx = {
   console, JSON, Array, String, URLSearchParams, decodeURIComponent, encodeURIComponent, setTimeout,
@@ -15,6 +16,7 @@ const ctx = {
   fetch: async (url, opts) => {
     if (/translate\.googleapis/.test(url)) { // Google: "G:" before each line
       calls.google++;
+      if (!googleUp) throw new Error("NetworkError"); // (its "unusual traffic" page: a redirect the browser does not follow)
       const lines = decodeURIComponent(String(opts.body).replace(/^q=/, "")).split("\n");
       return { ok: true, json: async () => [[[lines.map((l) => "G:" + l).join("\n"), ""]]] };
     }
@@ -54,6 +56,18 @@ const reset = () => { calls.google = 0; calls.gemini = 0; };
   assert.deepStrictEqual(await tr(book, "book"), book.map((t) => "G:" + t), "else Google");
   mode = "gemini";
   assert.deepStrictEqual(await tr(book, "book"), book, "Gemini alone: as it was");
+
+  // Google refusing: Gemini with the key does it, in the default mode too; no more is asked of Google for a while
+  reset();
+  mode = "google";
+  geminiUp = true;
+  googleUp = false;
+  assert.deepStrictEqual(await tr(titles, "titles"), ["M:第一章", "Chapter 2", "M:第三章"], "Google refusing: Gemini instead");
+  assert.deepStrictEqual(await tr(book, "book"), book.map((t) => "M:" + t), "a book too");
+  assert.strictEqual(calls.google, 1, "Google asked once, then left alone");
+  googleUp = true;
+  vm.runInContext("googlePausedUntil = 0", ctx); // (the pause over)
+  assert.deepStrictEqual(await tr(titles, "titles"), ["G:第一章", "G:Chapter 2", "G:第三章"], "Google again when it answers");
 
   reset();
   mode = "off";

@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Allow</title>
+<style>
+  :root { --bg: #fbfbfa; --fg: #1c1e21; --muted: #6a7078; --border: #d9dbd6; --accent: #3a82c8; --card: #f0f0ec; }
+  :root[data-theme="dark"] { --bg: #1b1d20; --fg: #eceef0; --muted: #9aa1a9; --border: #34383d; --accent: #5b9bdc; --card: #25282c; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: transparent; color: var(--fg); font: 15px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { height: 100%; display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: center; gap: 4px 12px; padding: 14px; background: var(--bg); border: 1px solid var(--border); border-radius: 16px; }
+  .ico { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: color-mix(in srgb, #d9a23a 18%, transparent); color: #d9a23a; }
+  .ico svg { width: 22px; height: 22px; display: block; }
+  .txt { display: grid; gap: 1px; min-width: 0; }
+  b { font-size: 16px; font-weight: 600; overflow-wrap: anywhere; }
+  small { color: var(--muted); font-size: 13px; }
+  small:empty { display: none; }
+  .acts { grid-column: 1 / -1; display: flex; gap: 8px; }
+  button { flex: 1; min-height: 44px; font: inherit; font-weight: 500; color: var(--fg); background: color-mix(in srgb, var(--fg) 7%, var(--bg)); border: 1px solid transparent; border-radius: 10px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #fff; font-weight: 600; }
+  button:disabled { opacity: .55; cursor: default; }
+</style>
+</head>
+<body>
+<main>
+  <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l7 3v5c0 4.2-2.9 7.6-7 9-4.1-1.4-7-4.8-7-9v-5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9 12l2.2 2.2L15.5 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+  <div class="txt"><b id="title"></b><small id="more"></small></div>
+  <div class="acts"><button id="no" type="button">Not now</button><button id="yes" type="button" class="primary">Allow</button></div>
+</main>
+<script src="site-access.js"></script>
+<script src="access.js"></script>
+</body>
+</html>

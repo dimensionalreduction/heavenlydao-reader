@@ -87,6 +87,7 @@ const OT = vm.runInContext("OriginalTranslate", ctx);
   const spanish = ("El viejo maestro miró al muchacho y le dijo que no había venido a la montaña por la espada. Era una historia muy larga y muy antigua. ").repeat(5);
   assert.deepStrictEqual([english, chinese, spanish, "short English text", "", null].map((t) => OT.isEnglish(t)), [true, false, false, false, false, false], "English prose is told from other scripts, other Latin-script languages, and text too short to judge");
   assert.strictEqual(OT.isEnglish(english.slice(0, 120) + chinese.slice(0, 200)), false, "a page with a good deal of another script is not English");
+  assert.deepStrictEqual([[spanish, "es"], [spanish, "pt-BR"], [english, "es"], [english, "en"], [chinese, "zh"], [chinese, "ja"], [chinese, "es"], [spanish, "en"]].map(([t, l]) => OT.isLanguage(t, l)), [true, false, false, true, true, false, false, false], "text already in the language to translate into is told from other languages");
   const translated = []; // what reaches the translator
   ctx.translateText = async (text) => { translated.push(text.slice(0, 20)); return { translated: "T:" + text.slice(0, 10), suggestions: [], model: "gemini" }; };
   Object.keys(storage).forEach((k) => delete storage[k]);
