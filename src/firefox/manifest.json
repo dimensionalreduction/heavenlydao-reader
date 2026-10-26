@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "heavenlydao.com Reader",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "browser_specific_settings": {
     "gecko": {
       "id": "reader@heavenlydao.com",
@@ -66,6 +66,7 @@
       "term-notes.js",
       "profile-model.js",
       "profile-translate.js",
+      "lang-detect.js",
       "original-translate.js",
       "watcher.js",
       "book-visit.js",

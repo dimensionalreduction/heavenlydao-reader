@@ -19,7 +19,7 @@
   // the library site's addresses (where site-bridge.js runs, from the manifest), and the one opened when no tab of it is: heavenlydao.com,
   // else the first https one
   const site = document.getElementById("lockSite");
-  const bridge = (ext.runtime.getManifest().content_scripts || []).find((c) => c.js.includes("site-bridge.js"));
+  const bridge = (ext.runtime.getManifest().content_scripts || []).find((c) => c.js.some((j) => /site-bridge\.js$/.test(j)));
   const SITE_MATCHES = bridge ? bridge.matches : [];
   const siteMatch = SITE_MATCHES.find((m) => m.startsWith("https://heavenlydao.com/")) || SITE_MATCHES.find((m) => m.startsWith("https://"));
   if (siteMatch) {
@@ -76,6 +76,7 @@
   async function detect(openIfNone) {
     looking = true;
     drawFound();
+    const shownFor = sleep(700); // (an answer that comes at once is still seen as an answer)
     let tabs = await siteTabs();
     let opened = null;
     if (!tabs.length && openIfNone && site.href) {
@@ -92,6 +93,7 @@
         return { tab, error: e };
       }
     }));
+    await shownFor;
     looking = false;
     detected = true;
     drawFound();

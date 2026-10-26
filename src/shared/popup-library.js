@@ -132,7 +132,7 @@
       const r = await call("leave");
       let removed = false;
       if (r.proof) {
-        const bridge = (ext.runtime.getManifest().content_scripts || []).find((c) => c.js.includes("site-bridge.js"));
+        const bridge = (ext.runtime.getManifest().content_scripts || []).find((c) => c.js.some((j) => /site-bridge\.js$/.test(j)));
         const tabs = bridge ? await Promise.resolve(ext.tabs.query({ url: bridge.matches })).catch(() => []) : [];
         for (const t of tabs) {
           const a = await Promise.race([Promise.resolve(ext.tabs.sendMessage(t.id, { type: "site:ask", op: "leaving", args: [r.proof] })).catch(() => null), new Promise((ok) => setTimeout(ok, 8000))]);

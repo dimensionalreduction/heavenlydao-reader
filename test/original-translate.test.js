@@ -36,6 +36,7 @@ vm.runInContext(fs.readFileSync(path.join(shared, "wtr-terms.js"), "utf8"), ctx,
 vm.runInContext(fs.readFileSync(path.join(shared, "term-match.js"), "utf8"), ctx, { filename: "term-match.js" }); // (the novel's index of mentions)
 vm.runInContext(require("../tools/sources").bundleText(), ctx, { filename: "raw-sources.js" }); // the engine and every site's rules, as shipped
 vm.runInContext(fs.readFileSync(path.join(shared, "term-notes.js"), "utf8"), ctx, { filename: "term-notes.js" }); // (notes on terms: off here, the server stand-in has no settings)
+vm.runInContext(fs.readFileSync(path.join(shared, "lang-detect.js"), "utf8"), ctx, { filename: "lang-detect.js" });
 vm.runInContext(fs.readFileSync(path.join(shared, "original-translate.js"), "utf8"), ctx, { filename: "original-translate.js" });
 const OT = vm.runInContext("OriginalTranslate", ctx);
 

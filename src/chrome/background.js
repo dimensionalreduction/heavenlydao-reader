@@ -1,4 +1,4 @@
-importScripts("p2p-core.js", "term-match.js", "gemini.js", "site-matches.js", "site-access.js", "access-offer.js", "fish-speech.js", "glossary-server.js", "wtr-terms.js", "base-glossary.js", "term-pool.js", "pool-hints.js", "pool-share.js", "raw-sources.js", "user-rules.js", "term-notes.js", "profile-model.js", "profile-translate.js", "original-translate.js", "watcher.js", "book-visit.js", "notice-bg.js");
+importScripts("p2p-core.js", "term-match.js", "gemini.js", "site-matches.js", "site-access.js", "access-offer.js", "fish-speech.js", "glossary-server.js", "wtr-terms.js", "base-glossary.js", "term-pool.js", "pool-hints.js", "pool-share.js", "raw-sources.js", "user-rules.js", "term-notes.js", "profile-model.js", "profile-translate.js", "lang-detect.js", "original-translate.js", "watcher.js", "book-visit.js", "notice-bg.js");
 UserRules.start(chrome); // the rules the person added: read from storage here, handed to the offscreen document below
 
 const RAW_TEXT_VAR_CANDIDATES = ["txt_content"];

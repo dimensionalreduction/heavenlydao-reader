@@ -119,6 +119,37 @@
   UserRules.apply((await ext.storage.local.get(UserRules.KEY))[UserRules.KEY] || {});
   const rule = onPage ? RawSources.ruleFor(tab.url) : null;
   const hostname = onPage ? new URL(tab.url).hostname.replace(/^www\./, "") : "";
+  // (set up before the slower parts below: a click is answered as soon as the popup is there)
+  // Detect with AI asks Gemini with the key the library's page handed over (profileKeys, by Google's address), or one typed here before the popup had no place for it
+  const hasGeminiKey = async () => {
+    const { profileKeys, geminiApiKey } = await ext.storage.local.get(["profileKeys", "geminiApiKey"]);
+    return !!((profileKeys && profileKeys[GEMINI_KEY_BASE]) || geminiApiKey);
+  };
+  let keyHere = false; // (known before a click: the browser's question below has to come first in it)
+  const showKeyNote = async () => { keyHere = await hasGeminiKey(); $("geminiNote").hidden = keyHere; };
+  showKeyNote();
+  ext.storage.onChanged.addListener((changes, area) => { if (area === "local" && (changes.profileKeys || changes.geminiApiKey)) showKeyNote(); });
+  $("detectBtn").onclick = async () => {
+    if (!keyHere) keyHere = await hasGeminiKey(); // (a click before the first look at the key had finished)
+    if (!keyHere) { $("geminiNote").hidden = false; $("detInfo").textContent = "Not run: no Gemini key yet."; return; }
+    $("detInfo").textContent = "Detecting…";
+    $("detectBtn").disabled = true;
+    // what is found is saved as this site's rule, and a rule does nothing until the browser lets the extension read the site. Asked first, before anything
+    // is waited for: Firefox asks only straight from the click (after an await it refuses, even a site already allowed).
+    const granted = await ext.permissions.request({ origins: ["https://*." + hostname + "/*"] }).catch(() => false);
+    if (!granted) {
+      $("detInfo").textContent = "Not run: the browser did not give permission to read " + hostname + ", and what is found there would not be used.";
+      $("detectBtn").disabled = false;
+      return;
+    }
+    const r = await ext.runtime.sendMessage({ type: "startDetect", tabId: tab.id }).catch((err) => ({ error: err.message }));
+    if (r && r.error) {
+      $("detInfo").textContent = "Not run: " + r.error;
+      $("detectBtn").disabled = false;
+      return;
+    }
+    window.close();
+  };
 
   // ---------- sites to allow ----------
   // No novel site is allowed at install: the browser's own question is asked here, by a click, the first time a site is needed (site-access.js). The bar lists the page's
@@ -220,27 +251,6 @@
   // The page where the person adds a rule of their own for this site (it opens with the site's address filled in).
   $("siteRuleBtn").onclick = () => {
     ext.tabs.create({ url: ext.runtime.getURL("rules.html") + "?url=" + encodeURIComponent(tab.url) });
-    window.close();
-  };
-  // Detect with AI asks Gemini with the key the library's page handed over (profileKeys, by Google's address), or one typed here before the popup had no place for it
-  const hasGeminiKey = async () => {
-    const { profileKeys, geminiApiKey } = await ext.storage.local.get(["profileKeys", "geminiApiKey"]);
-    return !!((profileKeys && profileKeys[GEMINI_KEY_BASE]) || geminiApiKey);
-  };
-  let keyHere = false; // (known before a click: the browser's question below has to come first in it)
-  const showKeyNote = async () => { keyHere = await hasGeminiKey(); $("geminiNote").hidden = keyHere; };
-  showKeyNote();
-  ext.storage.onChanged.addListener((changes, area) => { if (area === "local" && (changes.profileKeys || changes.geminiApiKey)) showKeyNote(); });
-  $("detectBtn").onclick = async () => {
-    if (!keyHere) { $("geminiNote").hidden = false; return; }
-    // what is found is saved as this site's rule, and a rule does nothing until the browser lets the extension read the site. Asked first, before anything
-    // is waited for: Firefox asks only straight from the click (after an await it refuses, even a site already allowed).
-    const granted = await ext.permissions.request({ origins: ["https://*." + hostname + "/*"] }).catch(() => false);
-    if (!granted) {
-      $("detInfo").textContent = "Not run: the browser did not give permission to read " + hostname + ", and what is found there would not be used.";
-      return;
-    }
-    await ext.runtime.sendMessage({ type: "startDetect", tabId: tab.id });
     window.close();
   };
   // ---------- header: the novel's name ----------

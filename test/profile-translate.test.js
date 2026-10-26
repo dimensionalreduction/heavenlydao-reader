@@ -60,6 +60,7 @@ load("wtr-terms.js");
 load("term-match.js");
 vm.runInContext(profileModelText(), ctx, { filename: "profile-model.js" }); // (the playground's translate.js, as build.js ships it)
 load("profile-translate.js");
+load("lang-detect.js");
 load("original-translate.js");
 const PT = vm.runInContext("ProfileTranslate", ctx);
 const OT = vm.runInContext("OriginalTranslate", ctx);
