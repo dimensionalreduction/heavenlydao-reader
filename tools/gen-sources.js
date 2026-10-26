@@ -118,7 +118,9 @@ function junkOf(body) {
 }
 
 function charsetOf(body) {
-  const m = /TextDecoder\(\s*["']([\w-]+)["']\s*\)/.exec(body);
+  // (not in a comment: NullTranslation.js says `TextDecoder("iso-8859-1") ... doesn't work` in one, and decodes UTF-8)
+  const code = body.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'])\/\/.*$/gm, "$1");
+  const m = /TextDecoder\(\s*["']([\w-]+)["']\s*\)/.exec(code);
   return m ? m[1].toLowerCase() : null;
 }
 // A class that fetches its pages its own way says what that way is; one that fetches them without naming an encoding (a site that does

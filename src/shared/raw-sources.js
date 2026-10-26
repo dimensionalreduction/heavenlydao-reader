@@ -28,6 +28,8 @@
 //             extractAuthor, ...); titleDrop: elements inside the title to leave out of it. Used by the script that records a book when its page is open (book-capture.js).
 //   fromHtml  fromHtml(html, url) -> Promise<{ text, next? } | null>, for a site whose chapter text is not in the page's elements (it is encrypted
 //             or built by a script): it gets the page's HTML before scripts are removed, and gives the text itself. `selector` is then unused.
+//   textUrl   textUrl(address) -> where a chapter's text is fetched from instead of its page (the site's data, for a site whose pages a script fills in);
+//             fromHtml then reads that response (a rule the person made from the site's data: user-rules.js)
 //   toc.parse parse(text, listUrl) -> [{ title, url }]: for a list that is JSON, not a page (with toc.url giving where it is)
 //   parser    the WebToEpub parser class the rule was made from (the generator adds it), so a file of rules for one family of sites can find them
 //             all: hostsOf("NovelfullParser")
@@ -208,15 +210,51 @@
     return (host && Object.prototype.hasOwnProperty.call(SOURCES, host) && SOURCES[host]) || null;
   }
 
-  // Page bytes -> text. The charset is the rule's if it names one, else the response header's, else the page's own <meta>, else UTF-8.
+  // Page bytes -> text, in the encoding charsetOf says.
   function decode(bytes, contentType, rule) {
-    let charset = (rule && rule.charset) || (/charset=["']?([\w-]+)/i.exec(contentType || "") || [])[1];
-    if (!charset) charset = (/<meta[^>]+charset=["']?([\w-]+)/i.exec(new TextDecoder("latin1").decode(bytes.subarray(0, 4096))) || [])[1];
     try {
-      return new TextDecoder(charset || "utf-8").decode(bytes);
+      return new TextDecoder(charsetOf(bytes, contentType, rule)).decode(bytes);
     } catch (e) {
       return new TextDecoder("utf-8").decode(bytes); // an unknown charset label
     }
+  }
+
+  // The encoding a page is read in. A rule's encoding (the one WebToEpub's parser hard-codes for a site that says none, or says it wrong) comes first, unless the
+  // page says UTF-8 and is: a site that has moved to UTF-8 since (69shuba.tw, 230book.net), or a page of the site the rule's encoding was not for
+  // (marxists.org's English pages: it is for the Chinese ones). Then what the page says (its header, its <meta>). A page that says none is read as what its bytes
+  // read best in, as a browser does: UTF-8 when they read as UTF-8; else the Chinese encoding they read cleanly in with more of the most common characters
+  // (GB18030, which covers GBK and GB2312, or Big5: GBK read as Big5 gives real but rare characters, so it is the common ones that tell); else windows-1252 (an
+  // old western page). So a Chinese site that does not say is read right without a rule (a site added with Detect with AI has none); tools/check-encodings.js
+  // tries this on the sites WebToEpub hard-codes an encoding for. A page that says UTF-8 and plainly is not (a template some Chinese sites share) is read in the
+  // Chinese encoding when one reads it cleanly.
+  const COMMON_HAN = new Set("的一是不了人我在有他这个们中来上大为和国地到以说时要就出会可也你对生能而子那得于着下自之年过发后作里用道行所然家种事成方多经么去法学如都同现当没动面起看定天分还进好小部其些主样理心她本前开但因只从想实日這個們來為國說時會對發後過裡經學現當沒動開從實");
+  const brokenIn = (t) => (t.match(/\uFFFD/g) || []).length;
+  // (at most a broken character here and there: GBK read as UTF-8 breaks nearly every one)
+  const readsAsUtf8 = (utf8) => brokenIn(utf8) <= (utf8.match(/[^\x00-\x7f]/g) || []).length * 0.1;
+  function charsetOf(bytes, contentType, rule) {
+    let said = (/charset=["']?([\w-]+)/i.exec(contentType || "") || [])[1];
+    if (!said) said = (/<meta[^>]+charset=["']?([\w-]+)/i.exec(new TextDecoder("latin1").decode(bytes.subarray(0, 4096))) || [])[1];
+    const saysUtf8 = !!said && /^utf-?8$/i.test(said);
+    if (rule && rule.charset) return saysUtf8 && !/^utf-?8$/i.test(rule.charset) && readsAsUtf8(new TextDecoder("utf-8").decode(bytes)) ? "utf-8" : rule.charset;
+    if (said && !saysUtf8) return said;
+    const utf8 = new TextDecoder("utf-8").decode(bytes);
+    if (readsAsUtf8(utf8)) return "utf-8";
+    let best = null;
+    for (const cs of ["gb18030", "big5"]) {
+      let t = "";
+      try {
+        t = new TextDecoder(cs).decode(bytes);
+      } catch (e) {
+        continue; // (a browser without it)
+      }
+      const han = t.match(/[\u4e00-\u9fff]/g) || [];
+      if (han.length < 20 || brokenIn(t) > han.length * 0.02) continue;
+      let common = 0;
+      for (const c of han) if (COMMON_HAN.has(c)) common++;
+      if (!best || common / han.length > best.score) best = { cs, score: common / han.length };
+    }
+    if (best) return best.cs;
+    return saysUtf8 ? "utf-8" : "windows-1252"; // (one that said UTF-8 stays UTF-8 when no Chinese encoding reads it)
   }
 
   // The chapter text on one page: one paragraph per line, "" when the page has no chapter text (a Cloudflare page, a changed layout).
@@ -350,7 +388,7 @@
   const stripScripts = (html) => html.replace(/<script[\s\S]*?<\/script>/gi, "").replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*')/gi, "");
 
   const api = {
-    SOURCES, MIRRORS, register, registerAll, extend, hostsOf, waitFor, setUserRules, userHosts: () => Object.keys(USER), rawRule: (host) => RAW[String(host).replace(/^www\./, "").toLowerCase()] || null, registerMirror, mirrorUrl, ruleFor, hostOf, hostForSlug, decode, textOf, nextPart, nextChapter, prevChapter, tocFor, tocLinkOf, tocChapters, tocPageUrls, tocJoin, tocChaptersFromText, stripScripts,
+    SOURCES, MIRRORS, register, registerAll, extend, hostsOf, waitFor, setUserRules, userHosts: () => Object.keys(USER), rawRule: (host) => RAW[String(host).replace(/^www\./, "").toLowerCase()] || null, registerMirror, mirrorUrl, ruleFor, hostOf, hostForSlug, decode, charsetOf, textOf, nextPart, nextChapter, prevChapter, tocFor, tocLinkOf, tocChapters, tocPageUrls, tocJoin, tocChaptersFromText, stripScripts,
     // for the rules in sources/ that need more than a selector
     helpers: { JUNK, chapterId, absolute, samePart, linksUnder }
   };

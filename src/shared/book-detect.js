@@ -7,6 +7,9 @@
 // the page before it is kept. So nothing Gemini says can become anything but a selector that finds the element it named. What is sent is the candidates (about
 // 100 snippets of at most 160 characters, picture and link addresses), not the page. The answer is saved like a picked part is (a rule on top of the site's own),
 // the book is recorded again, and the bar that says what was found offers Undo.
+// The list (and a chapter's text) is then looked for in the page as the site sends it, which is what the extension will fetch: on a site whose pages a script
+// fills in from its own data (JSON), it is not there, and the rule is made to read that data instead (listFromData, textInData; nothing is sent to Gemini for it).
+// On a site that sends its pages whole, where a chapter's text is comes from two chapters' pages as sent (textSelectorFor: on a book's page, its first two chapters).
 (function () {
   const isNode = typeof module !== "undefined" && module.exports;
   const Rules = typeof UserRules !== "undefined" ? UserRules : isNode ? require("./user-rules.js") : null; // (injected before this script; pagerOf and listUrlRule are in it)
@@ -35,7 +38,8 @@
   }
 
   // A selector that finds exactly this element on the page: its id, or its tag and classes, or the path from an ancestor; "" when none does.
-  function selectorFor(el, doc) {
+  // `noIds`: without ids (a site may number them per chapter, id="chapter-1234").
+  function selectorFor(el, doc, noIds) {
     const unique = (sel) => {
       try {
         const found = doc.querySelectorAll(sel);
@@ -44,7 +48,7 @@
         return false;
       }
     };
-    if (el.id && unique("#" + escapeCss(el.id))) return "#" + escapeCss(el.id);
+    if (!noIds && el.id && unique("#" + escapeCss(el.id))) return "#" + escapeCss(el.id);
     let bare = ""; // a bare tag that happens to be unique here ("img"): kept only if nothing more specific is
     for (const withPosition of [false, true]) {
       const parts = [segment(el, withPosition)];
@@ -54,7 +58,7 @@
       }
       let node = el.parentElement;
       for (let depth = 0; node && node !== doc.documentElement && depth < 6; depth++, node = node.parentElement) {
-        if (node.id && node.id.length < 40) {
+        if (!noIds && node.id && node.id.length < 40) {
           const withId = ["#" + escapeCss(node.id), ...parts].join(" > ");
           if (unique(withId)) return withId;
         }
@@ -77,12 +81,22 @@
   };
 
   // A menu or a list of links (a sidebar, a footer's links, a list of commenters): most of its text is link text. Its words are not details of the book.
-  const linkHeavy = (el, cache) => {
+  // `listed`: the links of the long lists on the page (a chapter list), left out of the count: a book's page whose details sit beside its chapter list, in one
+  // box (a page a script draws, as chikari.moe's), is not a menu.
+  const linkHeavy = (el, cache, listed) => {
     if (!cache.has(el)) {
-      const links = el.querySelectorAll("a[href]");
+      let n = 0;
       let linked = 0;
-      if (links.length >= 6) for (const a of links) linked += clean(a.textContent).length;
-      cache.set(el, links.length >= 6 && linked >= clean(el.textContent).length * 0.7);
+      let skipped = 0;
+      for (const a of el.querySelectorAll("a[href]")) {
+        const len = clean(a.textContent).length;
+        if (listed && listed.has(a)) skipped += len;
+        else {
+          n++;
+          linked += len;
+        }
+      }
+      cache.set(el, n >= 6 && linked >= (clean(el.textContent).length - skipped) * 0.7);
     }
     return cache.get(el);
   };
@@ -266,6 +280,8 @@
 
     // text: an element that is a field, not a wrapper (a wrapper of one child is left to the child) and not a whole section of the page
     const heavy = new Map();
+    const listed = new Set(); // (the links of the chapter-list candidates above)
+    for (const [el] of lists.slice(0, 5)) for (const a of el.querySelectorAll("a[href]")) listed.add(a);
     for (const el of body.querySelectorAll("*")) {
       if (candidates.length >= MAX_CANDIDATES) break;
       if (el.closest(SKIP) || hidden(el) || (/^(IMG|BR|HR|SCRIPT|STYLE)$/.test(el.tagName))) continue;
@@ -273,7 +289,7 @@
       if (text.length < 2 || text.length > 1500 || seen.has(text)) continue;
       if (repeated(el, body)) continue;
       let menu = false;
-      for (let n = el; n && n !== body && !menu; n = n.parentElement) menu = linkHeavy(n, heavy);
+      for (let n = el; n && n !== body && !menu; n = n.parentElement) menu = linkHeavy(n, heavy, listed);
       if (menu) continue;
       const kids = [...el.children].filter((c) => clean(c.textContent));
       if (kids.length > 8 || (kids.length === 1 && clean(kids[0].textContent) === text)) continue;
@@ -359,10 +375,333 @@
     if (found.next) nav.next = found.next;
     if (found.prev) nav.prev = found.prev;
     if (Object.keys(nav).length) parts.nav = nav;
+    // read from the site's data (a page a script fills in): the list, and the chapter's text
+    if (extras && extras.dataList) parts.toc = { json: extras.dataList.json, listUrl: extras.dataList.listUrl, reverse: !!extras.dataList.reverse };
+    if (extras && extras.dataText) parts.json = extras.dataText;
+    // where a chapter's text is (a site that sends its pages whole)
+    if (extras && extras.textSelector) parts.selector = extras.textSelector;
     return parts;
   }
 
-  if (isNode) module.exports = { collect, selectorFor, interpret, asRuleParts, orderOf, titleDropFor, stableClasses, KINDS, MAX_CANDIDATES };
+  // ---------- pages a script fills in ----------
+  // Some sites send an empty frame and fill it in with a script, from their own data (JSON from /api/...): the list and the text the person sees are not in the
+  // page the extension fetches, so a selector found here would find nothing there. The data the page loaded is looked through for what the page shows, and the
+  // rule is made to read that data. As with the selectors, nothing is made up: each part is found in the data, matched with the page, and tried before it is kept.
+  const norm = (t) => clean(t).toLowerCase();
+  const KEY = /^[\w$@-]+$/; // (a field a rule can name)
+  const decode = (t) => {
+    try {
+      return decodeURIComponent(t);
+    } catch (e) {
+      return t;
+    }
+  };
+  // An address's query, [[name, value]] in order. (Not [...u.searchParams]: in a Firefox content script the page's objects come wrapped, and that hides their
+  // iterator: "is not iterable". forEach goes through.)
+  const paramsOf = (u) => {
+    const out = [];
+    u.searchParams.forEach((v, k) => out.push([k, v]));
+    return out;
+  };
+
+  // The arrays of objects in a piece of data: [{ path, items, parent, parentPath }] (path as a rule names it: "data.chapters", "" for the data itself; parent:
+  // the object that holds the array).
+  function arraysIn(data, path = "", parent = null, parentPath = "", depth = 0, out = []) {
+    if (Array.isArray(data)) {
+      const objects = data.filter((x) => x && typeof x === "object" && !Array.isArray(x)).length;
+      if (data.length >= 2 && objects >= data.length * 0.9) out.push({ path, items: data, parent, parentPath });
+      return out;
+    }
+    if (data && typeof data === "object" && depth < 5) {
+      for (const [k, v] of Object.entries(data)) if (v && typeof v === "object" && KEY.test(k)) arraysIn(v, path ? path + "." + k : k, data, path, depth + 1, out);
+    }
+    return out;
+  }
+
+  // An object's fields that hold a string or a number, one level of objects down too: [[path, text]].
+  function fieldsOf(item) {
+    const out = [];
+    for (const [k, v] of Object.entries(item && typeof item === "object" ? item : {})) {
+      if (!KEY.test(k)) continue;
+      if (typeof v === "string" || typeof v === "number") out.push([k, String(v)]);
+      else if (v && typeof v === "object" && !Array.isArray(v)) {
+        for (const [k2, v2] of Object.entries(v)) if (KEY.test(k2) && (typeof v2 === "string" || typeof v2 === "number")) out.push([k + "." + k2, String(v2)]);
+      }
+    }
+    return out;
+  }
+
+  // The numbers beside a list in its data (and in an object beside it, like meta.total): how many chapters there are, or how many parts. { count, pages } (paths).
+  function totalsNear(parent, parentPath, items) {
+    const found = [];
+    const at = (p) => (parentPath ? parentPath + "." + p : p);
+    for (const [k, v] of Object.entries(parent && typeof parent === "object" ? parent : {})) {
+      if (!KEY.test(k)) continue;
+      if (typeof v === "number") found.push([at(k), k, v]);
+      else if (v && typeof v === "object" && !Array.isArray(v)) for (const [k2, v2] of Object.entries(v)) if (KEY.test(k2) && typeof v2 === "number") found.push([at(k + "." + k2), k2, v2]);
+    }
+    const counts = found.filter(([, k, v]) => /total|count/i.test(k) && !/page/i.test(k) && v >= items.length);
+    counts.sort((x, y) => Number(/chapter/i.test(y[1])) - Number(/chapter/i.test(x[1])) || Number(/^(total|count|total_?count|total_?items)$/i.test(y[1])) - Number(/^(total|count|total_?count|total_?items)$/i.test(x[1])));
+    const pages = found.find(([, k, v]) => /page/i.test(k) && /total|count|last|max|pages/i.test(k) && v >= 1);
+    return { count: counts.length ? counts[0][0] : "", countValue: counts.length ? counts[0][2] : 0, pages: pages ? pages[0] : "", pagesValue: pages ? pages[2] : 0 };
+  }
+
+  const OFFSET = /^(offset|skip|start|from)$/i;
+  const PAGE = /^(page|p|pg|page_?(no|num|number|index)|pageindex|pagenum)$/i;
+  const LIMIT = /^(limit|size|per_?page|page_?size|count|take|max)$/i;
+  const sameAddress = (a, b) => String(a).split("#")[0].replace(/\/+$/, "") === String(b).split("#")[0].replace(/\/+$/, "");
+
+  // The chapter list in a piece of data the page loaded, matched with the list the page shows (entries: [{ url, text }], absolute addresses).
+  // { json, listUrl, reverse, shown, count, partial, pairs } or null. json is the rule's toc.json; shown: the chapters in this part of the data; count: how many
+  // the data says there are; partial: the data holds only some of them and does not say how to ask for the rest.
+  function listFromData(data, dataUrl, entries) {
+    if (!Rules || !entries || !entries.length) return null;
+    const byText = new Map(entries.map((e) => [norm(e.text), e]));
+    const texts = entries.map((e) => [norm(e.text), e]);
+    // the entry the page shows for a title: the one that is the title, or that starts with it (a date may follow)
+    const entryFor = (t) => byText.get(t) || (texts.find(([x]) => x.startsWith(t) && !/[\p{L}\p{N}]/u.test(x.charAt(t.length))) || [])[1];
+    let best = null;
+    for (const { path, items, parent, parentPath } of arraysIn(data)) {
+      // each chapter in the data paired with the entry the page shows for it, by its title
+      let pairs = [];
+      let titleField = "";
+      for (const [f] of fieldsOf(items[0])) {
+        const got = [];
+        for (const item of items) {
+          const t = norm(Rules.jsonAt(item, f));
+          if (t.length < 2 || /^[\d.]+$/.test(t)) continue; // (a bare number is not a title)
+          const e = entryFor(t);
+          if (e) got.push({ item, entry: e });
+        }
+        if (got.length > pairs.length) {
+          pairs = got;
+          titleField = f;
+        }
+      }
+      if (pairs.length < Math.min(3, items.length)) continue;
+      // each part of the entries' addresses that is a field of their chapter (the same field for nearly all of them) becomes {field}
+      let first = null;
+      try {
+        first = new URL(pairs[0].entry.url);
+      } catch (e) {
+        continue;
+      }
+      const urls = pairs.map((p) => new URL(p.entry.url));
+      const fieldFor = (valueOf) => {
+        const v0 = valueOf(first);
+        for (const [f, v] of fieldsOf(pairs[0].item)) {
+          if (!v || v !== v0) continue;
+          const same = pairs.filter((p, i) => valueOf(urls[i]) === String(Rules.jsonAt(p.item, f))).length;
+          if (same >= pairs.length * 0.8) return f;
+        }
+        return "";
+      };
+      const segs = first.pathname.split("/").map((s, i) => {
+        const f = s ? fieldFor((u) => decode(u.pathname.split("/")[i] || "")) : "";
+        return f ? "{" + f + "}" : s;
+      });
+      const query = paramsOf(first).map(([k]) => {
+        const f = fieldFor((u) => u.searchParams.get(k) || "");
+        return encodeURIComponent(k) + "=" + (f ? "{" + f + "}" : encodeURIComponent(first.searchParams.get(k)));
+      });
+      if (!segs.some((s) => /^\{.+\}$/.test(s)) && !query.some((q) => /=\{.+\}$/.test(q))) continue; // (no part of the addresses comes from the data)
+      // the data's first part (offset 0, page 1), and how to get to it from a chapter's address (or the book's): the part of it they hold too, the book's slug or id
+      let dataAt = null;
+      try {
+        dataAt = new URL(dataUrl);
+      } catch (e) {
+        continue;
+      }
+      const keys = paramsOf(dataAt).map(([k]) => k);
+      const page = keys.find((k) => OFFSET.test(k)) || keys.find((k) => PAGE.test(k)) || "";
+      if (page && OFFSET.test(page)) dataAt.searchParams.set(page, "0");
+      else if (page && Number(dataAt.searchParams.get(page)) > 1) dataAt.searchParams.set(page, "1");
+      const listUrl = Rules.listUrlRule(dataAt.href, first.href, true);
+      if (!listUrl) continue;
+      const book = new RegExp(listUrl.match).exec(first.href);
+      const bookPart = book ? book[1] : "";
+      // (the book's part of a chapter's address, when the data does not hold it, is the same part of the book's address: $1)
+      const link = first.origin + segs.map((s) => (bookPart && s === bookPart ? "$1" : s)).join("/") + (query.length ? "?" + query.join("&") : "");
+      const groups = Rules.groupsOf(listUrl.to, dataAt.href);
+      const fits = pairs.filter((p) => sameAddress(Rules.fillLink(link, groups, p.item, dataAt.href), p.entry.url)).length;
+      if (fits < pairs.length * 0.8) continue;
+      // how many there are, and how to ask for the rest
+      const totals = totalsNear(parent, parentPath, items);
+      const json = { ...(path ? { items: path } : {}), title: titleField, link };
+      if (page && (totals.count || totals.pages)) {
+        json.page = page;
+        if (totals.count) json.count = totals.count;
+        else json.pages = totals.pages;
+      }
+      const limit = keys.find((k) => LIMIT.test(k) && k !== page);
+      const partial = !json.page && ((totals.countValue > items.length) || totals.pagesValue > 1 || (!!limit && Number(dataAt.searchParams.get(limit)) === items.length));
+      const order = orderOf(items.map((item) => ({ text: String(Rules.jsonAt(item, titleField) || ""), href: Rules.fillLink(link, groups, item, dataAt.href) })));
+      const got = { json, listUrl, reverse: order === "desc", shown: items.length, count: totals.countValue || 0, partial, pairs: pairs.length };
+      if (!best || (best.partial && !got.partial) || (best.partial === got.partial && got.pairs > best.pairs)) best = got;
+    }
+    return best;
+  }
+
+  // The chapter's text in a piece of data the page loaded: the longest text in it whose start, middle and end are all in what the page shows. { field, length } or null.
+  function textInData(data, shownText) {
+    const shown = norm(shownText);
+    let best = null;
+    const walk = (v, path, depth) => {
+      if (typeof v === "string") {
+        if (v.length < 300) return;
+        const plain = norm(v.replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'"));
+        if (plain.length < 300) return;
+        const bits = [0.15, 0.5, 0.85].map((at) => plain.slice(Math.floor(plain.length * at), Math.floor(plain.length * at) + 30).trim());
+        if (bits.every((b) => shown.includes(b)) && (!best || plain.length > best.length)) best = { field: path, length: plain.length, bits };
+      } else if (v && typeof v === "object" && !Array.isArray(v) && depth < 6) {
+        for (const [k, x] of Object.entries(v)) if (KEY.test(k)) walk(x, path ? path + "." + k : k, depth + 1);
+      }
+    };
+    walk(data, "", 0);
+    return best;
+  }
+
+  // How to get a chapter's data address from the chapter's own: the parts of the chapter's address that are a slug or an id (a hyphen or a digit in them) and are
+  // in the data's address too become $1, $2... { match, to } or null when the data's address is not made from the chapter's (it must come back out of it).
+  function dataUrlRule(pageUrl, dataUrl) {
+    let page = null;
+    let data = null;
+    try {
+      page = new URL(pageUrl);
+      data = new URL(dataUrl);
+    } catch (e) {
+      return null;
+    }
+    const bare = (h) => h.replace(/^www\./, "");
+    if (page.protocol !== "https:" || !Rules.sameSite(data.href, bare(page.hostname))) return null;
+    const esc = (t) => t.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+    const dataSegs = data.pathname.split("/");
+    const query = paramsOf(data);
+    const used = new Set();
+    const usedQ = new Set();
+    const parts = [];
+    let n = 0;
+    for (const s of page.pathname.split("/").filter(Boolean)) {
+      const value = decode(s);
+      const i = n < 9 && /\d|-/.test(s) ? dataSegs.findIndex((d, k) => !used.has(k) && decode(d) === value) : -1;
+      const q = n < 9 && /\d|-/.test(s) && i < 0 ? query.findIndex(([, v], k) => !usedQ.has(k) && v === value) : -1;
+      if (i < 0 && q < 0) {
+        parts.push(esc(s));
+        continue;
+      }
+      n++;
+      parts.push("([^/?#]+)");
+      if (i >= 0) {
+        dataSegs[i] = "$" + n;
+        used.add(i);
+      } else {
+        query[q] = [query[q][0], "$" + n];
+        usedQ.add(q);
+      }
+    }
+    if (!n) return null;
+    const match = "^https://(?:www\\.)?" + esc(bare(page.hostname)) + "/" + parts.join("/") + "(?:[/?#]|$)";
+    const to = data.origin + dataSegs.join("/") + (query.length ? "?" + query.map(([k, v]) => encodeURIComponent(k) + "=" + (/^\$\d$/.test(v) ? v : encodeURIComponent(v))).join("&") : "");
+    const m = new RegExp(match).exec(page.href);
+    const back = m ? Rules.expand(to, m, page.href) : "";
+    return back && sameAddress(new URL(back).href, data.href) ? { match, to } : null;
+  }
+
+  // The next chapter's address from a chapter's data, given the address the page links to as the next one: the one part of it that differs from this chapter's
+  // address is a field of the data (next_number: 6), the parts the data's address was made from are $1, $2... "" when no field of the data holds it.
+  function nextFromData(data, dataUrl, rule, pageUrl, nextUrl) {
+    let page = null;
+    let next = null;
+    try {
+      page = new URL(pageUrl);
+      next = new URL(nextUrl);
+    } catch (e) {
+      return "";
+    }
+    const mine = page.pathname.split("/");
+    const theirs = next.pathname.split("/");
+    if (mine.length !== theirs.length || page.host !== next.host) return "";
+    const differ = mine.map((s, i) => i).filter((i) => mine[i] !== theirs[i]);
+    if (differ.length !== 1) return "";
+    const wanted = decode(theirs[differ[0]]);
+    const holding = fieldsOf(data).filter(([, v]) => v === wanted).map(([f]) => f);
+    const field = holding.find((f) => /next/i.test(f)) || holding[0]; // (a field named next wins over one that only happens to hold the same number)
+    if (!field) return "";
+    const groups = Rules.groupsOf(rule.to, dataUrl);
+    const segs = mine.map((s, i) => {
+      if (i === differ[0]) return "{" + field + "}";
+      const g = groups.findIndex((v, k) => k > 0 && v === decode(s));
+      return g > 0 ? "$" + g : s;
+    });
+    const template = page.origin + segs.join("/");
+    return sameAddress(Rules.fillLink(template, groups, data, dataUrl), next.href) ? template : "";
+  }
+
+  // ---------- where a chapter's text is ----------
+  // A site that sends its pages whole: the element that holds a chapter's text, on a chapter's page as the site sends it. The deepest box that still holds most
+  // (80%) of the page's paragraphs; or, for text set straight in a box with <br> between the lines (many Chinese sites), the box with the most text of its own.
+  // null when the page has no chapter's worth of text (500 characters).
+  function textBoxOf(doc) {
+    const body = doc && doc.body;
+    if (!body) return null;
+    const pText = (el) => {
+      let n = 0;
+      for (const p of el.querySelectorAll("p")) {
+        if (p.closest(SKIP) || hidden(p)) continue;
+        const len = clean(p.textContent).length;
+        if (len >= 15) n += len;
+      }
+      return n;
+    };
+    let lined = null;
+    let linedLen = 0;
+    for (const el of body.querySelectorAll("div, td, article, section, pre")) {
+      if (el.closest(SKIP) || hidden(el)) continue;
+      let len = 0;
+      for (const n of el.childNodes) if (n.nodeType === 3) len += clean(n.textContent).length;
+      if (len > linedLen) {
+        lined = el;
+        linedLen = len;
+      }
+    }
+    const total = pText(body);
+    if (linedLen >= 500 && linedLen > total) return lined;
+    if (total < 500) return null;
+    let box = body;
+    for (;;) {
+      const next = [...box.children].find((c) => !c.closest(SKIP) && pText(c) >= total * 0.8);
+      if (!next) break;
+      box = next;
+    }
+    return box === body ? null : box;
+  }
+
+  // A selector for a chapter's text that finds it on two chapters' pages as the site sends them (docA, docB: documents of two chapters): made from the box
+  // textBoxOf finds on the first (with its id first; without, when the id is the chapter's own and not on the other page), and kept only if it finds one
+  // element with a chapter's worth of text (300 characters) on both. A page where the selector finds something is taken for a chapter by the book-recording
+  // script (book-capture.js), so it must find nothing on the book's page (`bookPage`, when known); without that page to try it on, only a selector that names
+  // the box (an id or a class) is kept, not a bare path. { selector, sizes: [characters on each] } or null.
+  function textSelectorFor(docA, docB, bookPage) {
+    const box = textBoxOf(docA);
+    if (!box) return null;
+    const textOn = (sel, doc) => {
+      try {
+        const found = doc.querySelectorAll(sel);
+        return found.length === 1 ? clean(found[0].textContent).length : 0;
+      } catch (e) {
+        return 0;
+      }
+    };
+    for (const sel of [selectorFor(box, docA), selectorFor(box, docA, true)]) {
+      if (!sel || sel === "body") continue;
+      if (bookPage ? !!bookPage.querySelector(sel) : !/[#.]/.test(sel)) continue;
+      const sizes = [textOn(sel, docA), docB ? textOn(sel, docB) : 0];
+      if (sizes[0] >= 300 && (!docB || sizes[1] >= 300)) return { selector: sel, sizes };
+    }
+    return null;
+  }
+
+  if (isNode) module.exports = { collect, selectorFor, interpret, asRuleParts, orderOf, titleDropFor, stableClasses, KINDS, MAX_CANDIDATES, listFromData, textInData, dataUrlRule, nextFromData, textBoxOf, textSelectorFor };
   if (typeof document === "undefined" || typeof location === "undefined") return; // loaded by a test, not injected into a page
   if (!/^https?:$/.test(location.protocol)) return;
   // A bar still on the page: a run in progress is left alone; one that has finished (its answer is only showing) is replaced by this run.
@@ -516,6 +855,133 @@
     return { found: { chapterList: found.chapterList, ...(found.pager ? { pager: found.pager } : {}) }, order, tried, url };
   }
 
+  // This page as the site sends it, before any script has run (what the extension will fetch): a document without its scripts, or null when it cannot be had.
+  async function pageAsSent() {
+    const res = await fetch(location.href, { credentials: "include" }).catch(() => null);
+    if (!res || !res.ok) return null;
+    const html = (await res.text().catch(() => "")).replace(/<script[\s\S]*?<\/script>/gi, "");
+    return new DOMParser().parseFromString(html, "text/html");
+  }
+
+  // The data (JSON) this page loaded from its own site, fetched again: [{ url, data }], the latest first (what was opened last, like the whole list). At most 20.
+  let loadedCache = null;
+  async function loadedData() {
+    if (loadedCache) return loadedCache;
+    const out = [];
+    const seen = new Set();
+    const asked = performance.getEntriesByType("resource").filter((e) => e.initiatorType === "fetch" || e.initiatorType === "xmlhttprequest").reverse();
+    for (const e of asked) {
+      const url = String(e.name).split("#")[0];
+      if (out.length >= 20 || seen.has(url) || !Rules.sameSite(url, host)) continue;
+      seen.add(url);
+      const res = await fetch(url, { credentials: "include", ...(typeof AbortSignal !== "undefined" && AbortSignal.timeout ? { signal: AbortSignal.timeout(8000) } : {}) }).catch(() => null);
+      const text = res && res.ok ? await res.text().catch(() => "") : "";
+      if (!/^\s*[[{]/.test(text)) continue;
+      try {
+        out.push({ url: res.url || url, data: JSON.parse(text) });
+      } catch (err) {
+        // not JSON after all
+      }
+    }
+    loadedCache = out;
+    return out;
+  }
+
+  // The chapter list in the data this page loaded, for the list the page shows (its links: `selector`), tried the way "Refresh chapters" will run it.
+  // { dataList, summary } when it can be read, { partial } when the data holds only part of it, or null.
+  async function listFromLoaded(selector) {
+    const entries = [...document.querySelectorAll(selector)].map((a) => ({ url: a.href, text: clean(a.textContent) })).filter((e) => /^https?:/.test(e.url));
+    let best = null;
+    for (const { url, data } of await loadedData()) {
+      const got = listFromData(data, url, entries);
+      if (got && (!best || (best.partial && !got.partial) || (best.partial === got.partial && got.pairs > best.pairs))) best = got;
+    }
+    if (!best) return null;
+    if (best.partial) return { partial: best };
+    const spec = { host, toc: { json: best.json, listUrl: best.listUrl, ...(best.reverse ? { reverse: true } : {}) } };
+    const v = Rules.validate(spec, null);
+    if (!v.ok) return null;
+    const rule = Rules.toRule(v.spec, null);
+    const fromBook = rule.toc.url(location.href);
+    const address = fromBook || rule.toc.url(entries[0].url);
+    const res = address ? await fetch(address, { credentials: "include" }).catch(() => null) : null;
+    if (!res || !res.ok) return null;
+    const text = await res.text().catch(() => "");
+    const chapters = rule.toc.list(null, res.url || address, text);
+    const more = rule.toc.pages(null, res.url || address, text);
+    if (chapters.length < Math.min(5, best.shown)) return null;
+    const bits = [(best.count || chapters.length) + " chapters" + (more.length ? " in " + (more.length + 1) + " parts" : ""), best.reverse ? "newest first" : "oldest first"];
+    if (fromBook) bits.push("found from the book's address");
+    return { dataList: best, summary: bits.join(", ") };
+  }
+
+  // The chapter's text in the data this page loaded, when the page as the site sends it does not have it: { dataText, summary } or null. Tried on the chapter
+  // next to this one (`neighbour`: its address, from the page's next or previous link) before it is kept: its data must hold its text in the same place.
+  async function textFromLoaded(sent, next, prev) {
+    const shown = document.body ? document.body.innerText : "";
+    if (norm(sent.body ? sent.body.textContent : "").length >= norm(shown).length * 0.5) return null; // (the page as sent has its text: no script fills it in)
+    let best = null;
+    for (const { url, data } of await loadedData()) {
+      const got = textInData(data, shown);
+      if (got && (!best || got.length > best.length)) best = { ...got, url, data };
+    }
+    if (!best) return null;
+    const sentText = norm(sent.body ? sent.body.textContent : "");
+    if (best.bits.every((b) => sentText.includes(b))) return null; // the text is in the page as sent: no data needed
+    const rule = dataUrlRule(location.href, best.url);
+    if (!rule) return null;
+    const dataText = { match: rule.match, to: rule.to, text: best.field };
+    const nextLink = next ? nextFromData(best.data, best.url, rule, location.href, next) : "";
+    if (nextLink) dataText.next = nextLink;
+    const v = Rules.validate({ host, json: dataText }, null);
+    if (!v.ok) return null;
+    const engine = Rules.toRule(v.spec, null);
+    const neighbour = next || prev;
+    const there = neighbour ? engine.textUrl(neighbour) : null;
+    const res = there ? await fetch(there, { credentials: "include" }).catch(() => null) : null;
+    const read = res && res.ok ? await engine.fromHtml(await res.text().catch(() => ""), res.url || there) : null;
+    if (!read || read.text.length < 200) return null;
+    return { dataText: v.spec.json, summary: best.url.replace(/^https?:\/\/[^/]+/, "") + " (" + best.field + ")" + (nextLink ? ", with the next chapter's address" : "") };
+  }
+
+  // Where a chapter's text is, for a site that sends its pages whole (what the add-on downloads chapters with): on a chapter's page, from this page as sent
+  // (`sent`) and the chapter next to it (`neighbour`); on a book's page, from the first two chapters of its list. { selector, summary } or null; nothing when
+  // the site's saved rule already finds the text (a selector the person set is kept).
+  async function chapterTextRule(sent, found, neighbour) {
+    const fetchDoc = async (url) => {
+      const res = await fetch(url, { credentials: "include" }).catch(() => null);
+      if (!res || !res.ok) return null;
+      return new DOMParser().parseFromString((await res.text().catch(() => "")).replace(/<script[\s\S]*?<\/script>/gi, ""), "text/html");
+    };
+    let docA = null;
+    let docB = null;
+    let where = "";
+    if (found.next || found.prev) {
+      docA = sent;
+      docB = neighbour ? await fetchDoc(neighbour) : null;
+      where = "this chapter and the " + (found.next ? "next" : "previous") + " one";
+    } else if (found.chapterList) {
+      const links = [...new Set([...document.querySelectorAll(found.chapterList)].map((a) => a.href).filter((u) => /^https?:/.test(u)))];
+      if (links.length < 2) return null;
+      docA = await fetchDoc(links[0]);
+      docB = await fetchDoc(links[1]);
+      where = "its first two chapters";
+    }
+    if (!docA || !docB) return null;
+    const mine = ((((await ext.storage.local.get(UserRules.KEY))[UserRules.KEY] || {})[host] || {}).spec || {}).selector;
+    if (mine) {
+      try {
+        const e = docA.querySelector(mine);
+        if (e && clean(e.textContent).length >= 300) return null;
+      } catch (err) {
+        // a selector the browser cannot use: replaced
+      }
+    }
+    // (on a book's page, the selector must find nothing here: the book-recording script takes a page where it finds something for a chapter)
+    const got = textSelectorFor(docA, docB, found.next || found.prev ? null : document);
+    return got ? { selector: got.selector, summary: got.selector + ", " + got.sizes[0] + " and " + got.sizes[1] + " characters on " + where } : null;
+  }
+
   (async () => {
     say("Looking at the page…");
     const { candidates, selectors } = collect(document, location.href);
@@ -535,8 +1001,37 @@
         if (fromListPage) Object.assign(found, fromListPage.found);
       }
     }
+    // A page a script fills in: the list and the text found on it are not in the page the site sends (what the extension fetches), so the site's data is read instead.
+    let fromData = null;
+    let textData = null;
+    let dataNote = "";
+    const sent = (found.chapterList && !fromListPage) || found.next || found.prev ? await pageAsSent().catch(() => null) : null;
+    if (sent && found.chapterList && !fromListPage && !present("chapterList", found.chapterList, sent)) {
+      say("The chapter list is filled in by the page's script. Looking for it in the data the page loaded…");
+      const got = await listFromLoaded(found.chapterList).catch(() => null);
+      delete found.chapterList;
+      delete found.pager;
+      if (got && got.dataList) fromData = got;
+      else if (got && got.partial) dataNote = " The chapter list was left out: the data this page loaded holds only " + got.partial.shown + (got.partial.count ? " of its " + got.partial.count : "") + " chapters. Show the whole list on the page, then run this again.";
+      else dataNote = " The chapter list was left out: the page's script fills it in, and it was not found in the data the page loaded.";
+    }
+    const linkOf = (sel) => {
+      try {
+        const a = sel ? document.querySelector(sel) : null;
+        return a && a.getAttribute("href") ? new URL(a.getAttribute("href"), location.href).href : null;
+      } catch (e) {
+        return null;
+      }
+    };
+    if (sent && (found.next || found.prev)) textData = await textFromLoaded(sent, linkOf(found.next), linkOf(found.prev)).catch(() => null);
+    // where a chapter's text is, for a site that sends its pages whole (one whose text comes from its data has it above)
+    let textSel = null;
+    if (!textData && !fromData && (found.next || found.prev || (found.chapterList && !fromListPage))) {
+      say("Looking for where a chapter's text is…");
+      textSel = await chapterTextRule(sent, found, linkOf(found.next) || linkOf(found.prev)).catch(() => null);
+    }
     const names = Object.keys(found);
-    if (!names.length) return say("Gemini found none of the details, the chapter list or the chapter links on this page.", "#ff9d8f");
+    if (!names.length && !fromData && !textData && !textSel) return say("Gemini found none of the details, the chapter list or the chapter links on this page." + dataNote, "#ff9d8f");
     // the list's order is read from its own numbers when they say; Gemini's guess is only for lists whose entries carry none
     let order = fromListPage ? fromListPage.order : reply.picks && reply.picks.listOrder;
     if (found.chapterList && !fromListPage) order = orderOf([...document.querySelectorAll(found.chapterList)].map((a) => ({ text: clean(a.textContent), href: a.getAttribute("href") }))) || order;
@@ -545,10 +1040,11 @@
     if (tried) {
       if (!tried.pagesOk) delete found.pager;
     }
-    const before = await save(asRuleParts(found, order, tried ? { listUrl: tried.listUrl, titleDrop: tried.titleDrop } : null));
-    const missing = Object.keys(KINDS).filter((f) => !found[f]).map((f) => LABEL[f]);
+    const before = await save(asRuleParts(found, order, { ...(tried ? { listUrl: tried.listUrl, titleDrop: tried.titleDrop } : {}), dataList: fromData && fromData.dataList, dataText: textData && textData.dataText, textSelector: textSel && textSel.selector }));
+    const missing = Object.keys(KINDS).filter((f) => !found[f] && !((fromData || dataNote) && (f === "chapterList" || f === "pager"))).map((f) => LABEL[f]);
     const partial = !fromListPage && skipped.chapterList && /^only the latest/.test(skipped.chapterList) ? " The chapter list was left out: " + skipped.chapterList + "." : "";
-    say("Found and saved for " + host + ": " + Object.keys(found).map((f) => LABEL[f]).join(", ") + "." + (tried ? " Chapter list tried on " + (fromListPage ? "its own page" : "this page") + ": " + tried.summary + "." : "") + (missing.length ? " Not on this page: " + missing.join(", ") + ". (The details and the chapter list are on a book's page; the next and previous links are on a chapter's page: run it there too.)" : "") + partial + " The book is being recorded again.", "#7ed17e");
+    const saved = Object.keys(found).map((f) => LABEL[f]).concat(fromData ? ["chapter list (from the site's data)"] : [], textData ? ["chapter text (from the site's data)"] : [], textSel ? ["chapter text"] : []);
+    say("Found and saved for " + host + ": " + saved.join(", ") + "." + (tried ? " Chapter list tried on " + (fromListPage ? "its own page" : "this page") + ": " + tried.summary + "." : "") + (fromData ? " Chapter list tried on the site's data: " + fromData.summary + "." : "") + (textData ? " Chapter text: " + textData.summary + "." : "") + (textSel ? " Chapter text: " + textSel.summary + "." : "") + dataNote + (missing.length ? " Not on this page: " + missing.join(", ") + ". (The details and the chapter list are on a book's page; the next and previous links are on a chapter's page: run it there too.)" : "") + partial + " The book is being recorded again.", "#7ed17e");
     action.textContent = "Undo";
     action.hidden = false;
     action.onclick = async () => {

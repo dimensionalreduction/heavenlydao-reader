@@ -43,6 +43,50 @@ assert.strictEqual(RS.decode(gbkDi, "text/html; charset=gbk", { selector: "x" })
 assert.strictEqual(RS.decode(Uint8Array.from([...Buffer.from('<meta charset="gbk">'), 0xb5, 0xda]), "text/html", { selector: "x" }).slice(-1), "第", "else the page's own meta tag");
 assert.strictEqual(RS.decode(Buffer.from("第"), "text/html", { selector: "x" }), "第", "else UTF-8");
 assert.strictEqual(RS.decode(Buffer.from("第"), "text/html; charset=nonsense-9", { selector: "x" }), "第", "an unknown charset falls back to UTF-8");
+// a page that says no encoding (a site added with Detect with AI has no rule to say it): what its bytes read as. Node can decode GBK and Big5 but not encode
+// them, so an encoder is made from the decoder (every two-byte pair, decoded once).
+const encoderOf = (cs) => {
+  const map = new Map();
+  const dec = new TextDecoder(cs, { fatal: true });
+  for (let a = 0x81; a <= 0xfe; a++) {
+    for (let b = 0x40; b <= 0xfe; b++) {
+      try {
+        const ch = dec.decode(Uint8Array.from([a, b]));
+        if (ch.length === 1 && !map.has(ch)) map.set(ch, [a, b]);
+      } catch (e) {
+        // not a pair of this encoding
+      }
+    }
+  }
+  return (text) => Uint8Array.from([...text].flatMap((ch) => (ch.charCodeAt(0) < 128 ? [ch.charCodeAt(0)] : map.get(ch) || [0x3f])));
+};
+const story = "第一章 风起\n他说：“我们来到这个地方的时候，天上没有一个人。”她看着他，不知道要说什么。这是一个大国的年代，人们都在想自己的事情。".repeat(4);
+const storyTw = "第一章 風起\n他說：「我們來到這個地方的時候，天上沒有一個人。」她看著他，不知道要說什麼。這是一個大國的年代，人們都在想自己的事情。".repeat(4);
+const htmlOf = (body) => Uint8Array.from([...Buffer.from("<html><head><title>x</title></head><body><div id=\"c\">"), ...body, ...Buffer.from("</div></body></html>")]);
+const gbkPage = htmlOf(encoderOf("gbk")(story));
+const big5Page = htmlOf(encoderOf("big5")(storyTw));
+assert.strictEqual(RS.charsetOf(gbkPage, "text/html", null), "gb18030", "GBK that says nothing is read as GBK (GB18030 covers it)");
+assert.ok(RS.decode(gbkPage, "text/html", null).includes("我们来到这个地方"), "and comes out as the story");
+assert.strictEqual(RS.charsetOf(big5Page, "text/html", null), "big5", "Big5 that says nothing is read as Big5, not as GBK (it reads as GBK too, as rarer characters)");
+assert.ok(RS.decode(big5Page, "text/html", null).includes("我們來到這個地方"), "and comes out as the story");
+assert.strictEqual(RS.charsetOf(gbkPage, "text/html; charset=utf-8", null), "gb18030", "a page that says UTF-8 and is GBK is read as GBK");
+assert.strictEqual(RS.charsetOf(htmlOf(Buffer.from(story)), "text/html", null), "utf-8", "UTF-8 that says nothing stays UTF-8");
+assert.strictEqual(RS.charsetOf(htmlOf(Buffer.from(story + "é")).map((b, i, a) => (i === a.length - 30 ? 0xff : b)), "text/html", null), "utf-8", "(a broken byte here and there does not make it something else)");
+const latin = htmlOf(Uint8Array.from([...Buffer.from("Caf"), 0xe9, ...Buffer.from(" cr"), 0xe8, ...Buffer.from("me br"), 0xfb, ...Buffer.from("l"), 0xe9, ...Buffer.from(" and na"), 0xef, ...Buffer.from("ve")]));
+assert.strictEqual(RS.charsetOf(latin, "text/html", null), "windows-1252", "an old western page that says nothing is windows-1252, as a browser reads it");
+assert.strictEqual(RS.decode(latin, "text/html", null).includes("Café crème brûlé and naïve"), true);
+assert.strictEqual(RS.charsetOf(latin, "text/html; charset=utf-8", null), "utf-8", "one that says UTF-8 is read so when no Chinese encoding reads it");
+assert.strictEqual(RS.charsetOf(gbkPage, "text/html; charset=utf-8", { selector: "x", charset: "utf-8" }), "utf-8", "a rule that says UTF-8 is believed");
+assert.strictEqual(RS.charsetOf(big5Page, "text/html; charset=big5", null), "big5", "a page that says its encoding is believed");
+// a rule's encoding (copied from a WebToEpub parser) and a page that says UTF-8: the page is believed when it is UTF-8 (69shuba.tw has moved to UTF-8;
+// marxists.org's English pages are not the Chinese ones its parser decodes as GBK), and the rule when it is not
+const gbkRule = { selector: "x", charset: "gbk" };
+assert.strictEqual(RS.charsetOf(htmlOf(Buffer.from(story)), "text/html; charset=utf-8", gbkRule), "utf-8", "a page that says UTF-8 and is UTF-8 is read so, whatever the rule says");
+assert.ok(RS.decode(htmlOf(Buffer.from(story)), "text/html; charset=utf-8", gbkRule).includes("我们来到这个地方"));
+assert.strictEqual(RS.charsetOf(gbkPage, "text/html; charset=utf-8", gbkRule), "gbk", "one that says UTF-8 and is GBK is read as the rule says");
+assert.strictEqual(RS.charsetOf(gbkPage, "text/html", gbkRule), "gbk", "and one that says nothing too");
+assert.strictEqual(RS.charsetOf(gbkPage, "text/html; charset=gb2312", gbkRule), "gbk", "(the rule wins over another encoding the page names)");
+assert.strictEqual(RS.SOURCES["nulltranslation.com"].charset, undefined, "(nulltranslation.com decodes UTF-8: the iso-8859-1 in its WebToEpub parser is in a comment)");
 
 // ---- reading a page ----
 // A tiny stand-in for a DOM: the element tree is described by plain objects.

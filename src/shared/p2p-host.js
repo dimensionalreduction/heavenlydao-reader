@@ -126,12 +126,20 @@
   }
   const said = (res) => "HTTP " + res.status + (res.refusal ? " (" + res.refusal + ")" : "");
 
-  // The text of a chapter, from the response for its first page; follows the "next part" links of sites that split chapters.
-  async function readChapter(res) {
+  // Where a chapter's text is read from when it is not its page: the site's data for it (a rule's textUrl, for a site whose pages a script fills in), else null.
+  const textAddress = (url) => {
+    const rule = RawSources.ruleFor(url);
+    return (rule && rule.textUrl && rule.textUrl(url)) || null;
+  };
+  const fetchChapter = (url) => fetchSite(textAddress(url) || url, { credentials: "include" });
+
+  // The text of a chapter, from the response for its first page (or for its data: fetchChapter); follows the "next part" links of sites that split chapters.
+  // `address`: the chapter's own address, when the response is not for it (its data may be elsewhere on the site, like api.example.com).
+  async function readChapter(res, address) {
     const parts = [];
     let next = null; // the next chapter, from the last part's own link
     let url = res.url;
-    const rule = RawSources.ruleFor(url);
+    const rule = RawSources.ruleFor(address || url);
     if (!rule) throw new Error("the source is " + (RawSources.hostOf(url) || "unknown") + ", which this extension cannot read yet");
     for (let n = 0; n < MAX_PARTS; n++) {
       if (!res.ok) throw new Error(said(res));
@@ -346,7 +354,7 @@
       if (existing && existing.translated && existing.model !== "original") return report(key, "done", meta, undefined, sourceUrl);
       let raw = await store.getTranslation(sourceKey + "#original");
       if (!raw || !raw.translated) {
-        const read = await readChapter(res);
+        const read = textAddress(sourceUrl) ? await readChapter(await fetchChapter(sourceUrl), sourceUrl) : await readChapter(res);
         raw = { translated: read.text, suggestions: [], savedAt: Date.now(), model: "original", pageTitle: meta.pageTitle, novelName: meta.novelName, next: read.next || undefined };
         await store.setTranslation(sourceKey + "#original", raw);
       } else if (res.body && res.body.cancel) {
@@ -476,7 +484,8 @@
         saving = saving.then(() => apply(found)).then((reply) => { if (reply && reply.error) log("partial chapter list not saved", chapterUrl, reply.error); }, () => {});
       }, () => stopped.has(key));
       await saving; // (so a partial list can never land after the whole one)
-      if (!chapters.length) throw new Error("the chapter list page had no chapters");
+      // (a rule the person made on a page that a script fills in: the list was on the page they saw, not on the page the site sends)
+      if (!chapters.length) throw new Error("the chapter list page had no chapters" + (toc.rule.user && !toc.rule.toc.data ? " (if a script fills in this site's pages, run Detect with AI on the novel's page again)" : ""));
       const found = { kind: "toc", tocUrl: chapters.tocUrl, chapters: chapters.map((c) => [c.num, c.title, c.url]) };
       // first with the site's own titles, so the list is in the library at once; then again with the titles translated (minutes for a long list)
       const reply = await apply({ ...found, quick: true });
@@ -680,7 +689,7 @@
         report(key, "queued", meta);
         await turn();
         report(key, "downloading", meta);
-        const read = await readChapter(await fetchSite(baseUrl, { credentials: "include" }));
+        const read = await readChapter(await fetchChapter(baseUrl), baseUrl);
         if (!read.next) throw new Error("the page has no next-chapter link (this may be the last chapter)");
         const saved = await store.getTranslation("translation:" + baseUrl);
         if (saved && saved.translated) await store.setTranslation("translation:" + baseUrl, { ...saved, next: read.next, savedAt: Date.now() });
@@ -704,7 +713,7 @@
         report(key, "queued", meta);
         await turn();
         report(key, "downloading", meta);
-        const read = await readChapter(await fetchSite(baseUrl, { credentials: "include" }));
+        const read = await readChapter(await fetchChapter(baseUrl), baseUrl);
         entry = { translated: read.text, suggestions: [], savedAt: Date.now(), model: "original", pageTitle: meta.pageTitle, novelName: meta.novelName, next: read.next || undefined };
         await store.setTranslation(key, entry);
       }
@@ -732,6 +741,7 @@
 
   // The next chapter after the one at `url`, as a reader finds it: the link on the last page of that chapter.
   async function nextChapterOf(url) {
+    if (textAddress(url)) return (await readChapter(await fetchChapter(url), url)).next; // (the site's data says where the next one is, if it does)
     let res = await fetchSite(url, { credentials: "include" });
     let at = res.url || url;
     const rule = RawSources.ruleFor(at);
@@ -773,6 +783,9 @@
   async function readList(toc, chapterUrl, progress, halted) {
     const decoded = async (res) => RawSources.decode(new Uint8Array(await res.arrayBuffer()), res.headers && res.headers.get && res.headers.get("content-type"), toc.rule);
     const asDoc = (html) => new DOMParser().parseFromString(RawSources.stripScripts(html), "text/html");
+    // where the list is said to be (what the library ties it to the book by): its page, or for a list that is the site's data (/api/...: no page of the
+    // book), the address it was asked for
+    const listedAt = (url) => (toc.rule.toc.data ? chapterUrl : url);
     let gap = toc.rule.toc.gap || RAW_GAP_MS; // grows when the site says it is being asked too fast, and stays so for the rest of the list
     let status = { done: 0, total: 1, count: 0, partial: () => [] };
     const halt = () => { if (halted && halted()) throw new Error(STOPPED); };
@@ -853,14 +866,14 @@
       } catch (e) {
         const part = RawSources.tocJoin(sofar(false), here);
         if (part.length) {
-          part.tocUrl = first.url;
+          part.tocUrl = listedAt(first.url);
           e.partial = part;
         }
         throw e;
       }
       chapters = RawSources.tocJoin(sofar(true), here);
     }
-    chapters.tocUrl = first.url;
+    chapters.tocUrl = listedAt(first.url);
     return chapters;
   }
 

@@ -149,7 +149,8 @@ function runContentScript({ href, storage, wtrBase, G, page, clock, calls }) {
   const ctx = {
     location: { href },
     document: { addEventListener: (type, fn) => { if (type === "click") clickHandler = fn; }, querySelectorAll: (sel) => (sel.includes("chapter-tracker") ? (page.trackers || []) : page.terms.map((h) => ({ getAttribute: (n) => (n === "data-hash" ? h : null) }))), getElementById: (id) => (id === "__NEXT_DATA__" ? { textContent: JSON.stringify({ buildId: "BUILD123" }) } : null) },
-    fetch: (u, opts) => fetch(u.startsWith("/") ? wtrBase + u : u, opts),
+    // as in a Firefox content script, which fetches as the extension: a bare "/api/..." is no address there (it threw, and nothing of the site was recorded on Firefox)
+    fetch: (u, opts) => (u.startsWith("/") ? Promise.reject(new TypeError(u + " is not a valid URL.")) : fetch(u.replace(/^https:\/\/wtr-lab\.com\//, wtrBase + "/"), opts)),
     chrome: { storage: { local: { ...storage, get: (k) => (Array.isArray(k) && k.includes("libraryOn") ? Promise.resolve({ libraryOn: { libId: "test" } }) : storage.get(k)), set: (o) => storage.set(o) } }, runtime: { sendMessage: handler } },
     WtrTerms,
     setTimeout: (fn) => setImmediate(fn),

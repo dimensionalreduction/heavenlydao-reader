@@ -209,5 +209,99 @@ const selectors = { c1: 'meta[property="og:image"]', c2: "h1.title", c3: "a.auth
   const keepPause = UR.withDetected({ "x.example": { spec: { host: "x.example", selector: "p", toc: { list: "ul a", gap: 3000, pages: { kind: "links", selector: "a.p" } } }, enabled: true } }, "x.example", { toc: { list: "ol a", pages: { kind: "numbered", selector: "ul.pagination a" } } }, 14);
   assert.deepStrictEqual(keepPause["x.example"].spec.toc, { list: "ol a", gap: 3000, pages: { kind: "numbered", selector: "ul.pagination a" } }, "a bar found replaces the pages that were there; a pause set by hand stays");
 
+  // ---- a site whose pages a script fills in from its data (chikari.moe's shapes: the page is an empty frame, /api/... holds the list and the text) ----
+  const slug = "the-heroes-who-executed-me-are-obsessed-with-me";
+  const site = "https://chikari.moe";
+  const bookUrl = site + "/novels/" + slug;
+  const chapter = (n) => ({ number: n, volume: "", title: "Chapter " + n + " : Title " + n, lang: "en", created_at: "2026-01-28T01:02:00+00:00" });
+  const newest = (from, k) => Array.from({ length: k }, (_, i) => chapter(from - i));
+  const listUrl0 = site + "/api/novels/" + slug + "/chapters?order=desc&limit=100&offset=0";
+  const listData = { items: newest(202, 100), total: 202, limit: 100, offset: 0 };
+  // what the page shows: the list's links, with the date after each title
+  const shownList = newest(202, 100).map((c) => ({ url: bookUrl + "/" + c.number, text: c.title + " 9 months ago" }));
+  let dl = D.listFromData(listData, listUrl0, shownList);
+  assert.deepStrictEqual(dl.json, { items: "items", title: "title", link: site + "/novels/$1/{number}", page: "offset", count: "total" }, "the chapters, their titles and addresses, and how to ask for the rest, all found in the data");
+  assert.deepStrictEqual(dl.listUrl, { match: "^https://(?:www\\.)?chikari\\.moe/novels/([^/?#]+)(?:[/?#]|$)", to: site + "/api/novels/$1/chapters?order=desc&limit=100&offset=0" }, "the data's address from the book's (or a chapter's): its slug");
+  assert.deepStrictEqual([dl.reverse, dl.partial, dl.shown, dl.count], [true, false, 100, 202], "newest first; the whole list can be read");
+  // the list shown after scrolling on (offset 100): the rule still starts at the beginning
+  dl = D.listFromData({ items: newest(102, 100), total: 202 }, site + "/api/novels/" + slug + "/chapters?order=desc&limit=100&offset=100", newest(102, 100).map((c) => ({ url: bookUrl + "/" + c.number, text: c.title })));
+  assert.ok(/offset=0$/.test(dl.listUrl.to), "the data's first part, whichever part the page had loaded");
+  // the book's own record holds only the latest ten: not the list
+  const novelData = { id: 14402, slug, title: "The Heroes", chapter_count: 202, comment_count: 4, genres: [{ slug: "action", name: "Action" }, { slug: "drama", name: "Drama" }], chapters_head: newest(202, 10), chapters_tail: newest(10, 10).reverse() };
+  dl = D.listFromData(novelData, site + "/api/novels/" + slug, shownList.slice(0, 10));
+  assert.deepStrictEqual([dl.partial, dl.shown, dl.count, dl.json.count], [true, 10, 202, undefined], "ten of 202, and no way to ask for more: partial");
+  assert.strictEqual(D.listFromData({ items: [{ name: "Action" }, { name: "Drama" }, { name: "Fantasy" }] }, listUrl0, shownList), null, "data that is not the list the page shows is no list");
+  assert.strictEqual(D.listFromData(listData, listUrl0, []), null, "(nothing shown, nothing to match)");
+
+  // the rule made of it, as the engine runs it
+  const dataSpec = UR.validate({ host: "chikari.moe", toc: { json: D.listFromData(listData, listUrl0, shownList).json, listUrl: D.listFromData(listData, listUrl0, shownList).listUrl, reverse: true } });
+  assert.ok(dataSpec.ok, "what is saved is a rule the rules page accepts (no selectors needed)");
+  const dataRule = UR.toRule(dataSpec.spec);
+  assert.strictEqual(dataRule.toc.url(bookUrl), listUrl0, "from the book's address");
+  assert.strictEqual(dataRule.toc.url(site + "/novels/another-book-7/12"), site + "/api/novels/another-book-7/chapters?order=desc&limit=100&offset=0", "from another book's chapter");
+  const part1 = dataRule.toc.list(null, listUrl0, JSON.stringify(listData));
+  assert.deepStrictEqual([part1.length, part1[0], part1[99].url], [100, { title: "Chapter 202 : Title 202", url: bookUrl + "/202" }, bookUrl + "/103"], "each chapter's title and address");
+  assert.deepStrictEqual(dataRule.toc.pages(null, listUrl0, JSON.stringify(listData)), [listUrl0.replace("offset=0", "offset=100"), listUrl0.replace("offset=0", "offset=200")], "the other parts, up to the total");
+  assert.deepStrictEqual(dataRule.toc.list(null, listUrl0, "<html>Cloudflare</html>"), [], "an answer that is not the data has no chapters");
+  assert.strictEqual(dataRule.toc.data, true);
+  const paged = UR.toRule(UR.validate({ host: "x.example", toc: { json: { items: "data.list", title: "name", link: "/read/{id}", page: "page", pages: "meta.last_page" }, listUrl: { match: "^https://x\\.example/b/(\\d+)", to: "https://x.example/api/b/$1?page=1" } } }).spec);
+  assert.deepStrictEqual(paged.toc.pages(null, "https://x.example/api/b/9?page=1", JSON.stringify({ data: { list: [{ id: 1, name: "a" }] }, meta: { last_page: 3 } })), ["https://x.example/api/b/9?page=2", "https://x.example/api/b/9?page=3"], "parts counted by page, up to the last");
+  assert.deepStrictEqual(paged.toc.list(null, "https://x.example/api/b/9?page=1", JSON.stringify({ data: { list: [{ id: 1, name: "a" }, { id: 2 }, { name: "no id" }, { id: 1, name: "again" }] } })), [{ title: "a", url: "https://x.example/read/1" }, { title: "", url: "https://x.example/read/2" }], "a chapter with no address is left out, each address once");
+  const offSite = UR.toRule(UR.validate({ host: "x.example", toc: { json: { title: "t", link: "{url}" }, listUrl: { match: "^https://x\\.example/b/(\\d+)", to: "https://x.example/api/b/$1" } } }).spec);
+  assert.deepStrictEqual(offSite.toc.list(null, "https://x.example/api/b/1", JSON.stringify([{ t: "a", url: "https://evil.example/1" }, { t: "b", url: "/c/2" }])), [{ title: "b", url: "https://x.example/c/2" }], "an address the data gives whole is kept only on the rule's site");
+  // what the rules page refuses
+  let bad = UR.validate({ host: "x.example", toc: { json: { title: "t", link: "https://evil.example/{id}" }, listUrl: { match: "^a", to: "https://x.example/l" } } });
+  assert.deepStrictEqual(bad.errors.map((e) => e.field), ["toc.json.link"], "a chapter address on another site");
+  bad = UR.validate({ host: "x.example", toc: { json: { link: "/c/{id}", title: "a b" } } });
+  assert.deepStrictEqual(bad.errors.map((e) => e.field).sort(), ["toc.json.title", "toc.listUrl"], "a field that is not a name; a list with no address for its data");
+
+  // the chapter's text: the longest text in the data that the page shows, and its address from the chapter's
+  const body = Array.from({ length: 40 }, (_, i) => "Paragraph " + i + " of the chapter, where the knight said something “quoted” and went on.").join("\n\n");
+  const chapterData = { number: 5, title: "Chapter 5 : Tangled Threads", novel_slug: slug, body, comment_count: 6, prev_number: 4, next_number: 6, latest_number: 202 };
+  const shownPage = "Home  The Heroes\nChapter 5 : Tangled Threads\n" + body.replace(/\n\n/g, "\n") + "\nPrevious chapter Next chapter";
+  const found5 = D.textInData(chapterData, shownPage);
+  assert.deepStrictEqual([found5.field, found5.length > 1000], ["body", true], "the text the page shows, found in the data");
+  assert.strictEqual(D.textInData(chapterData, "Home  The Heroes"), null, "not shown on the page: not the chapter's text");
+  const chapterUrl = bookUrl + "/5";
+  const dataUrl5 = site + "/api/novels/" + slug + "/chapters/5/read";
+  const tr = D.dataUrlRule(chapterUrl, dataUrl5);
+  assert.deepStrictEqual(tr, { match: "^https://(?:www\\.)?chikari\\.moe/novels/([^/?#]+)/([^/?#]+)(?:[/?#]|$)", to: site + "/api/novels/$1/chapters/$2/read" }, "the slug and the number, from the chapter's address into the data's");
+  assert.deepStrictEqual(D.dataUrlRule("https://x.example/read?id=12-3", "https://x.example/api/text?chapter=12-3"), null, "(a chapter's address with nothing in its path that the data's holds)");
+  assert.deepStrictEqual(D.dataUrlRule("https://x.example/book/77/3", "https://api.x.example/v1/chapter?book=77&n=3"), { match: "^https://(?:www\\.)?x\\.example/book/([^/?#]+)/([^/?#]+)(?:[/?#]|$)", to: "https://api.x.example/v1/chapter?book=$1&n=$2" }, "data on the site's api part, named in its query");
+  assert.strictEqual(D.dataUrlRule("https://x.example/book/77/3", "https://other.example/api/77/3"), null, "data on another site");
+  const next5 = D.nextFromData(chapterData, dataUrl5, tr, chapterUrl, bookUrl + "/6");
+  assert.strictEqual(next5, site + "/novels/$1/{next_number}", "the next chapter's address: the field named next, not the count that happens to be 6");
+  assert.strictEqual(D.nextFromData(chapterData, dataUrl5, tr, chapterUrl, bookUrl + "/77"), "", "no field holds it");
+  const textSpec = UR.validate({ host: "chikari.moe", json: { ...tr, text: "body", next: next5 } });
+  assert.ok(textSpec.ok, "a rule with only the text from the data, no selector");
+  const textRule = UR.toRule(textSpec.spec);
+  assert.strictEqual(textRule.textUrl(bookUrl + "/77"), site + "/api/novels/" + slug + "/chapters/77/read", "another chapter's data");
+  assert.strictEqual(textRule.textUrl("https://chikari.moe/about"), null, "(not a chapter's address)");
+  const read77 = await textRule.fromHtml(JSON.stringify({ ...chapterData, number: 77, next_number: 78 }), site + "/api/novels/" + slug + "/chapters/77/read");
+  assert.deepStrictEqual([read77.text.split("\n").length, read77.text.split("\n")[1], read77.next], [40, "Paragraph 1 of the chapter, where the knight said something “quoted” and went on.", bookUrl + "/78"], "its text, one paragraph a line, and the next chapter's address");
+  assert.strictEqual(await textRule.fromHtml("<html>Just a moment...</html>", dataUrl5), null, "a bot check's page is no text");
+  assert.strictEqual(UR.linesOf("<p>One &amp; two</p><p>Three<br>Four</p><script>x()</script>"), "One & two\nThree\nFour", "text with markup, read as a page's is");
+  assert.strictEqual(UR.linesOf("How much time had passed?\n\n<em>Drip, drip.</em>\n\nRain fell."), "How much time had passed?\nDrip, drip.\nRain fell.", "plain text with a tag here and there (chikari's)");
+  assert.strictEqual(UR.linesOf("<p>[Quest] <System> says:</p><p>a < b</p>"), "[Quest] <System> says:\na < b", "a < of the story's own stays");
+  assert.strictEqual(UR.linesOf("<System> Level up!\n\nYou gained <Skill: Fireball>."), "<System> Level up!\nYou gained <Skill: Fireball>.", "(text with no markup at all is left as it is)");
+  assert.deepStrictEqual(UR.groupsOf("https://x.example/api/b/$1?page=1&slug=$2", "https://x.example/api/b/9?page=4&slug=a%20b").slice(1), ["9", "a b"], "the parts an address was made from, in its path and its query");
+  assert.deepStrictEqual(UR.validate({ host: "x.example", json: { match: "(", to: "https://evil.example/$1", text: "" } }).errors.map((e) => e.field), ["json.match", "json.to", "json.text"], "what the rules page refuses for the text");
+
+  // saving it: a list from the data replaces one read from a page, and the other way round
+  let ds = UR.withDetected({ "chikari.moe": { spec: { host: "chikari.moe", toc: { list: "div a", titleDrop: "span.x", pages: { kind: "numbered", selector: "ul a" }, gap: 2000 } }, enabled: true } }, "chikari.moe", { toc: { json: dataSpec.spec.toc.json, listUrl: dataSpec.spec.toc.listUrl, reverse: true }, json: textSpec.spec.json }, 20);
+  assert.deepStrictEqual(Object.keys(ds["chikari.moe"].spec.toc).sort(), ["gap", "json", "listUrl", "reverse"], "the page's list settings go; the pause stays");
+  assert.deepStrictEqual(ds["chikari.moe"].spec.json, textSpec.spec.json);
+  assert.ok(UR.validate(ds["chikari.moe"].spec, {}).ok, "and what is saved is a rule the rules page accepts");
+  ds = UR.withDetected(ds, "chikari.moe", { toc: { list: "ol a" } }, 21);
+  assert.ok(!("json" in ds["chikari.moe"].spec.toc) && ds["chikari.moe"].spec.json, "a list found on a page later replaces the data's; the text's rule stays");
+  // where a chapter's text is, on a site that sends its pages whole (found on two chapters' pages: the Firefox end-to-end test tries it on a real page)
+  assert.deepStrictEqual(D.asRuleParts({ chapterList: "ul a" }, null, { textSelector: "div#chapter-text" }), { toc: { list: "ul a", pages: null, titleDrop: null }, selector: "div#chapter-text" }, "the text's place goes in the rule");
+  let ts = UR.withDetected({}, "plain.example", { toc: { list: "ul a" }, selector: " main > div.text " }, 30);
+  assert.strictEqual(ts["plain.example"].spec.selector, "main > div.text", "saved as the rule's chapter text");
+  assert.ok(UR.validate(ts["plain.example"].spec, {}).ok, "and what is saved is a rule the rules page accepts");
+  ts = UR.withDetected(ts, "plain.example", { nav: { next: "a.next" } }, 31);
+  assert.strictEqual(ts["plain.example"].spec.selector, "main > div.text", "a later detection that found no text place keeps it");
+  assert.deepStrictEqual(D.asRuleParts({ next: "a.n" }, null, { dataList: { json: { title: "t", link: "/c/{id}" }, listUrl: { match: "^a", to: "b" }, reverse: true }, dataText: { match: "^a", to: "b", text: "body" } }), { nav: { next: "a.n" }, toc: { json: { title: "t", link: "/c/{id}" }, listUrl: { match: "^a", to: "b" }, reverse: true }, json: { match: "^a", to: "b", text: "body" } }, "the parts read from the data, as the parts of a rule");
+
   console.log("OK — book-detect checks passed");
 })().catch((e) => { console.error("FAIL:", e); process.exit(1); });

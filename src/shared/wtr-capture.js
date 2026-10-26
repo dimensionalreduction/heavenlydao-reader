@@ -19,7 +19,8 @@
   const CHAPTER_MIN_CHARS = 300; // shorter than this is a placeholder (locked / still loading), not a chapter
   const CHAPTER_MIN_LINES = 3;
   const BACKOFF_MS = 10 * 60 * 1000;
-
+  // The site's full address for one of its paths. Firefox's content scripts fetch as the extension, not as the page: a bare "/api/..." is "not a valid URL" there.
+  const own = (path) => new URL(path, location.href).href;
 
   let lastId = null;
   let lastTry = 0;
@@ -32,7 +33,7 @@
   // same, and the library keeps the ones it has.
   async function personalTerms(info) {
     try {
-      const res = await fetch("/api/v2/user/config", { credentials: "same-origin" });
+      const res = await fetch(own("/api/v2/user/config"), { credentials: "same-origin" });
       if (!res.ok) return { pairs: [], replace: [], ok: false };
       const json = await res.json();
       return { pairs: WtrTerms.personalPairs(json, info.rawId), replace: WtrTerms.personalReplacements(json, info.rawId), ok: true };
@@ -41,7 +42,7 @@
     }
   }
   async function sendGlossary(info) {
-    const res = await fetch("/api/v2/reader/terms/" + info.rawId + ".json", { credentials: "same-origin" });
+    const res = await fetch(own("/api/v2/reader/terms/" + info.rawId + ".json"), { credentials: "same-origin" });
     if (!res.ok) return false;
     const personal = await personalTerms(info);
     const entry = WtrTerms.toLibraryEntry(await res.json(), info.rawId, info.slug, personal.pairs);
@@ -71,7 +72,7 @@
     if (!buildId) return false;
     const lang = (/^https:\/\/wtr-lab\.com\/([^/]+)\//.exec(location.href) || [])[1] || "en";
     const res = await fetch(
-      "/_next/data/" + buildId + "/" + lang + "/novel/" + info.rawId + "/" + info.slug + ".json?locale=" + lang + "&raw_id=" + info.rawId + "&serie_slug=" + info.slug,
+      own("/_next/data/" + buildId + "/" + lang + "/novel/" + info.rawId + "/" + info.slug + ".json?locale=" + lang + "&raw_id=" + info.rawId + "&serie_slug=" + info.slug),
       { credentials: "same-origin" }
     );
     if (!res.ok) return false;
@@ -101,7 +102,7 @@
   async function sendChapterList(info) {
     if (!info.slug) return false;
     const lang = (/^https:\/\/wtr-lab\.com\/([^/]+)\//.exec(location.href) || [])[1] || "en";
-    const res = await fetch("/api/chapters/" + info.rawId, { credentials: "same-origin" });
+    const res = await fetch(own("/api/chapters/" + info.rawId), { credentials: "same-origin" });
     if (!res.ok) return false;
     const list = (((await res.json().catch(() => null)) || {}).chapters || []).slice(0, MAX_LIST);
     const base = "https://wtr-lab.com/" + lang + "/novel/" + info.rawId + "/" + info.slug + "/chapter-";
@@ -285,7 +286,7 @@
       let res = null;
       try {
         res = await fetch(
-          "/api/v2/term-preferences?source_id=id.raw." + rawId + "&hash=" + encodeURIComponent(term) + "&lang=" + encodeURIComponent(lang),
+          own("/api/v2/term-preferences?source_id=id.raw." + rawId + "&hash=" + encodeURIComponent(term) + "&lang=" + encodeURIComponent(lang)),
           { credentials: "same-origin" }
         );
       } catch (e) {

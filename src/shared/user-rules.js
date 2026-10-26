@@ -19,7 +19,15 @@
 //                        (numbered: the selector finds the page links of a pagination bar, ?page=2 ... ?page=76, and every page up to the highest number is read)
 //                 titleDrop: ".small, time",                                  parts of a chapter link that are not its title (the date)
 //                 gap: 2000,                                                                       ms between those pages
-//                 listUrl: { match: "^https://example\\.com/book/(\\d+)", to: "https://example.com/list/$1" } }   the list page from any address of the novel
+//                 listUrl: { match: "^https://example\\.com/book/(\\d+)", to: "https://example.com/list/$1" },  the list page from any address of the novel
+//                 json: { items: "items", title: "title", link: "https://example.com/novel/$1/{number}", page: "offset", count: "total" | pages: "last_page" } }
+//                        the list is the site's data (JSON) at listUrl, not a page: where the chapters are in it ("" or left out: the data is the list), each one's
+//                        title and address ($1 as in listUrl.to, {field} a field of the chapter), the address part that moves through the list (offset, skip,
+//                        start, from: by the chapters one part holds; any other, like page: by one) and the field that says how many chapters (count) or parts
+//                        (pages) there are
+//     json      { match: "^https://example\\.com/novel/([^/?#]+)/(\\d+)", to: "https://example.com/api/novel/$1/chapters/$2", text: "body", next: "https://example.com/novel/$1/{next_number}" }
+//               a chapter's text from the site's data (JSON) instead of its page, for a site whose pages a script fills in: the data's address from the chapter's,
+//               where the text is in it, and (optional) the next chapter's address ($1 as in match, {field} a field of the data)
 //     book      { title, author, description, cover, genre }      where a book's page says what the book is (selectors)
 //     nav       { next, prev }                                    the links to the next and previous chapter on a chapter's page (selectors)
 //   }
@@ -120,8 +128,9 @@
 
   // How to get a novel's list page from any address of it (toc.listUrl: { match, to }), from one list page and the address of one chapter on it: the list page's
   // last path part is the book (its slug or id), and the chapter's address holds it too. The pair is tried on the chapter and must give back the list page,
-  // else null.
-  function listUrlRule(listPage, chapterHref) {
+  // else null. `withQuery`: the list is the site's data (/api/...?offset=0&limit=100), whose query is part of the address kept (a page's is its page number);
+  // it may be on a part of the site of its own (api.example.com).
+  function listUrlRule(listPage, chapterHref, withQuery) {
     let page = null;
     let chapter = null;
     try {
@@ -131,7 +140,7 @@
       return null;
     }
     const bare = (h) => h.replace(/^www\./, "");
-    if (page.protocol !== "https:" || bare(chapter.hostname) !== bare(page.hostname)) return null;
+    if (page.protocol !== "https:" || (bare(chapter.hostname) !== bare(page.hostname) && !(withQuery && sameSite(page.href, bare(chapter.hostname))))) return null;
     const pageParts = page.pathname.split("/").filter(Boolean);
     const chapterParts = chapter.pathname.split("/").filter(Boolean);
     const esc = (t) => t.replace(/[.*+?^$(){}|[\]\\/]/g, "\\$&");
@@ -143,7 +152,7 @@
     for (const ti of spots) {
       const at = chapterParts.indexOf(pageParts[ti]);
       const match = "^https://(?:www\\.)?" + esc(bare(page.hostname)) + "/" + chapterParts.slice(0, at).map((x) => esc(x) + "/").join("") + "([^/?#]+)(?:[/?#]|$)";
-      const to = page.origin + "/" + pageParts.slice(0, ti).concat("$1", pageParts.slice(ti + 1)).join("/") + (page.pathname.endsWith("/") ? "/" : "");
+      const to = page.origin + "/" + pageParts.slice(0, ti).concat("$1", pageParts.slice(ti + 1)).join("/") + (page.pathname.endsWith("/") ? "/" : "") + (withQuery ? page.search : "");
       let back = "";
       try {
         const m = new RegExp(match).exec(chapter.href);
@@ -181,9 +190,45 @@
       return "";
     };
 
+    // A field of the site's data: a name, or names joined by dots (data.chapters, items.0.title).
+    const pathField = (field, value, required, example) => {
+      const v = str(value);
+      if (!v) {
+        if (required) bad(field, "This is needed: a field of the data, like " + example + ".");
+        return "";
+      }
+      if (v.length > 100 || !/^[\w$@-]+(\.[\w$@-]+)*$/.test(v)) bad(field, "A field's name, or names joined by dots, like " + example + ".");
+      else return v;
+      return "";
+    };
+    // An address made from parts ($1, {field}): on the rule's own site whatever the parts are.
+    const templateField = (field, value, required) => {
+      const v = str(value);
+      if (!v) {
+        if (required) bad(field, "This is needed: an address, like https://" + (host || "example.com") + "/novel/$1/{number}.");
+        return "";
+      }
+      if (v.length > 300) bad(field, "Too long for an address.");
+      else if (host && !sameSite(expand(v.replace(/\{[^{}]*\}/g, "x"), ["", "x", "x", "x", "x", "x", "x", "x", "x", "x"], "https://" + host + "/"), host)) bad(field, "The address must be on " + host + ".");
+      else return v;
+      return "";
+    };
+    const regexField = (field, value) => {
+      const v = str(value);
+      try {
+        if (v) new RegExp(v);
+        else throw new Error("empty");
+      } catch (e) {
+        bad(field, "The pattern is not a valid regular expression.");
+        return "";
+      }
+      return v;
+    };
+
     // (the chapter text selector is needed for a site with nothing built in, unless the spec is for the chapter list: "Detect with AI" on a book's page saves the
-    // list before any chapter's page has been looked at, and the list must work without waiting for the text selector)
-    const selector = selectorField("selector", raw.selector, !base && !(raw.toc && typeof raw.toc === "object"));
+    // list before any chapter's page has been looked at, and the list must work without waiting for the text selector; or the text is read from the site's data)
+    const hasJson = raw.json && typeof raw.json === "object" && !!(str(raw.json.match) || str(raw.json.to) || str(raw.json.text));
+    const selector = selectorField("selector", raw.selector, !base && !(raw.toc && typeof raw.toc === "object") && !hasJson);
     if (selector) spec.selector = selector;
     const junk = selectorField("junk", raw.junk, false);
     if (junk) spec.junk = junk;
@@ -203,9 +248,28 @@
     if (raw.toc && typeof raw.toc === "object") {
       const t = raw.toc;
       const toc = {};
-      const list = selectorField("toc.list", t.list, false);
-      const boxes = selectorField("toc.boxes", t.boxes, false);
-      if (list) toc.list = list;
+      const j = t.json && typeof t.json === "object" && (str(t.json.link) || str(t.json.title) || str(t.json.items)) ? t.json : null;
+      const list = j ? "" : selectorField("toc.list", t.list, false);
+      const boxes = j ? "" : selectorField("toc.boxes", t.boxes, false);
+      if (j) {
+        // the list is the site's data
+        const json = {};
+        const items = pathField("toc.json.items", j.items, false, "data.chapters");
+        if (items) json.items = items;
+        const title = pathField("toc.json.title", j.title, true, "title");
+        if (title) json.title = title;
+        const link = templateField("toc.json.link", j.link, true);
+        if (link) json.link = link;
+        const page = str(j.page);
+        if (page && /^[\w.[\]-]{1,40}$/.test(page)) json.page = page;
+        else if (page) bad("toc.json.page", "The name of a part of the address, like offset or page.");
+        const count = pathField("toc.json.count", j.count, false, "total");
+        if (count) json.count = count;
+        const pages = pathField("toc.json.pages", j.pages, false, "last_page");
+        if (pages && !count) json.pages = pages;
+        if (!(t.listUrl && str(t.listUrl.to))) bad("toc.listUrl", "Say where the list's data is: the list's address.");
+        toc.json = json;
+      } else if (list) toc.list = list;
       else if (boxes) {
         toc.boxes = boxes;
         const pick = str(t.pick).toLowerCase() || "first";
@@ -213,9 +277,9 @@
         else bad("toc.pick", 'Use "first", "last" or a number.');
       } else if (str(t.list) === "" && str(t.boxes) === "") bad("toc.list", "The chapter list needs the links' selector, like ul.chapters a.");
       if (t.reverse) toc.reverse = true;
-      const titleDrop = selectorField("toc.titleDrop", t.titleDrop, false);
+      const titleDrop = j ? "" : selectorField("toc.titleDrop", t.titleDrop, false); // (the parts of a page's links; data has none)
       if (titleDrop) toc.titleDrop = titleDrop;
-      if (t.pages && typeof t.pages === "object" && str(t.pages.selector)) {
+      if (!j && t.pages && typeof t.pages === "object" && str(t.pages.selector)) {
         const selector2 = selectorField("toc.pages", t.pages.selector, false);
         const kind = t.pages.kind === "options" ? "options" : t.pages.kind === "numbered" ? "numbered" : "links";
         if (selector2) toc.pages = { kind, selector: selector2, ...(kind === "options" ? { attr: str(t.pages.attr) || "value" } : {}) };
@@ -240,6 +304,21 @@
         else toc.listUrl = { match, to };
       }
       if (Object.keys(toc).length) spec.toc = toc;
+    }
+
+    if (hasJson) {
+      // the chapter's text from the site's data
+      const j = raw.json;
+      const json = {};
+      const match = regexField("json.match", j.match);
+      if (match) json.match = match;
+      const to = templateField("json.to", j.to, true);
+      if (to) json.to = to;
+      const text = pathField("json.text", j.text, true, "body");
+      if (text) json.text = text;
+      const next = templateField("json.next", j.next, false);
+      if (next) json.next = next;
+      spec.json = json;
     }
 
     if (raw.nav && typeof raw.nav === "object") {
@@ -269,6 +348,146 @@
     } catch (e) {
       return "";
     }
+  }
+
+  // ---------- the site's data (JSON) ----------
+  // A field of the data by its path ("data.chapters", "items.0.title"; "" is the data itself), or undefined.
+  function jsonAt(data, path) {
+    let v = data;
+    for (const k of String(path || "").split(".").filter(Boolean)) {
+      if (v == null || typeof v !== "object") return undefined;
+      v = v[k];
+    }
+    return v;
+  }
+
+  // The parts of `url` that the $1, $2... of `template` stand for, when the address was made from it: [, "the-slug", "5"] (empty where it was not).
+  function groupsOf(template, url) {
+    const out = [];
+    let u = null;
+    try {
+      u = new URL(url);
+    } catch (e) {
+      return out;
+    }
+    const [path, query] = String(template).split("#")[0].split("?");
+    const esc = (t) => t.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+    const fit = (pattern, text) => {
+      const nums = [];
+      const m = new RegExp("^" + esc(pattern).replace(/\\\$(\d)/g, (_, n) => (nums.push(Number(n)), "([^/?#&]*)")) + "$").exec(text);
+      if (m) nums.forEach((n, i) => {
+        try {
+          out[n] = decodeURIComponent(m[i + 1]);
+        } catch (e) {
+          out[n] = m[i + 1];
+        }
+      });
+    };
+    fit(path.replace(/^https?:\/\/[^/]+/, ""), u.pathname);
+    // (forEach, not for...of: a Firefox content script, where Detect with AI runs this, cannot iterate the page's URLSearchParams)
+    new URLSearchParams(query || "").forEach((v, k) => {
+      if (/\$\d/.test(v)) fit(v, u.searchParams.get(k) || "");
+    });
+    return out;
+  }
+
+  // An address made from a template: $1, $2... from `groups`, {field} from the data `item`. A template that is one field ("{url}") takes it as it is; inside
+  // an address a field is one part of it. "" when a field is missing.
+  function fillLink(template, groups, item, base) {
+    const whole = /^\{([^{}]+)\}$/.exec(template);
+    if (whole) {
+      const v = jsonAt(item, whole[1]);
+      return typeof v === "string" && v ? expand(v, [], base) : "";
+    }
+    let missing = false;
+    const t = String(template).replace(/\{([^{}]+)\}/g, (_, f) => {
+      const v = jsonAt(item, f);
+      if ((typeof v !== "string" && typeof v !== "number") || v === "") missing = true;
+      return encodeURIComponent(String(v));
+    });
+    return missing ? "" : expand(t, groups, base);
+  }
+
+  // A chapter's text as the data holds it -> one paragraph per line. Text with markup (<p>, <br>, <em>) is read the way a page's text is; a "<" that does not
+  // start one of those tags is the story's own ("<System>", "<Skill: Fireball>") and stays.
+  const TAGS = "p|br|div|span|em|i|b|strong|u|s|a|h[1-6]|li|ul|ol|blockquote|hr|img|sup|sub|small|font|center|table|tbody|thead|tr|td|th|section|article|ruby|rt|rp";
+  const MARKUP = new RegExp("<\\/?(?:" + TAGS + ")(?:\\s[^<>]*)?\\/?>", "i");
+  const NOT_A_TAG = new RegExp("<(?!\\/?(?:" + TAGS + "|script|style|iframe|ins)[\\s/>])", "gi");
+  function linesOf(value) {
+    if (typeof value !== "string") return "";
+    let text = value;
+    if (MARKUP.test(value)) {
+      const html = value.replace(NOT_A_TAG, "&lt;");
+      if (typeof DOMParser !== "undefined") {
+        const box = new DOMParser().parseFromString("<div>" + html + "</div>", "text/html").body;
+        box.querySelectorAll(JUNK).forEach((n) => n.remove());
+        box.querySelectorAll("br").forEach((br) => br.replaceWith("\n"));
+        box.querySelectorAll("p, div, li, h1, h2, h3, h4, h5, h6, blockquote, tr, section").forEach((el) => el.append("\n"));
+        text = box.textContent || "";
+      } else {
+        text = html.replace(/<(script|style|iframe)[\s\S]*?<\/\1>/gi, "").replace(/<br\s*\/?>|<\/(p|div|li|h\d|blockquote|tr|section|article)>/gi, "\n").replace(new RegExp(MARKUP.source, "gi"), "")
+          .replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+      }
+    }
+    return text.split(/\n+/).map((l) => l.replace(/　/g, " ").trim()).filter(Boolean).join("\n");
+  }
+
+  // One part of a list that is the site's data -> [{ title, url }] (`json`: the rule's toc.json; `to`: the list's address template, for $1).
+  function dataChapters(text, base, json, to, host) {
+    let data = null;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      return [];
+    }
+    const items = jsonAt(data, json.items);
+    if (!Array.isArray(items)) return [];
+    const groups = groupsOf(to, base);
+    const out = [];
+    const seen = new Set();
+    for (const item of items) {
+      const url = item && typeof item === "object" ? fillLink(json.link, groups, item, base) : "";
+      if (!url || seen.has(url) || !sameSite(url, host)) continue;
+      seen.add(url);
+      const title = jsonAt(item, json.title);
+      out.push({ title: typeof title === "string" || typeof title === "number" ? String(title).replace(/\s+/g, " ").trim() : "", url });
+    }
+    return out;
+  }
+
+  // The other parts of such a list, named by the first: its address with the moving part (json.page) set for each of them, up to the count the data gives.
+  // An offset (offset, skip, start, from) moves by the chapters the first part holds, anything else (page) by one.
+  function dataPages(text, base, json, host) {
+    if (!json.page || !(json.count || json.pages)) return [];
+    let data = null;
+    let u = null;
+    try {
+      data = JSON.parse(text);
+      u = new URL(base);
+    } catch (e) {
+      return [];
+    }
+    const items = jsonAt(data, json.items);
+    const size = Array.isArray(items) ? items.length : 0;
+    if (!size) return [];
+    const byItems = /offset|skip|start|from/i.test(json.page);
+    const given = u.searchParams.has(json.page) ? Number(u.searchParams.get(json.page)) : NaN;
+    const first = Number.isFinite(given) ? given : byItems ? 0 : 1;
+    const count = Number(jsonAt(data, json.count));
+    const parts = Number(jsonAt(data, json.pages));
+    const out = [];
+    const at = (n) => {
+      u.searchParams.set(json.page, String(n));
+      if (sameSite(u.href, host)) out.push(u.href);
+    };
+    if (byItems) {
+      const total = json.count ? count : parts * size;
+      for (let n = first + size; Number.isFinite(total) && n < total && out.length < 1000; n += size) at(n);
+    } else {
+      const last = (json.pages ? parts : Math.ceil(count / size)) + first - 1;
+      for (let n = first + 1; Number.isFinite(last) && n <= last && out.length < 1000; n++) at(n);
+    }
+    return out;
   }
 
   // A validated spec -> the rule the engine runs (raw-sources.js). Everything it can make the extension fetch stays on the rule's site. `base`: the
@@ -309,13 +528,21 @@
           return out;
         };
       } else if (t.list) toc.list = t.list;
+      if (t.json) {
+        // the list is the site's data: read from the response's text (the engine hands it over as the last argument), its other parts named by the first
+        const json = t.json;
+        const to = t.listUrl ? t.listUrl.to : "";
+        toc.list = (doc, base2, text) => dataChapters(text, base2, json, to, host);
+        toc.pages = (doc, base2, text) => dataPages(text, base2, json, host);
+        toc.data = true;
+      }
       if (t.boxes) {
         toc.boxes = t.boxes;
         toc.pick = t.pick || "first";
       }
       if (typeof t.reverse === "boolean") toc.reverse = t.reverse;
       if (t.gap) toc.gap = t.gap;
-      if (t.pages) {
+      if (t.pages && !t.json) {
         const { kind, selector, attr } = t.pages;
         toc.pages = (doc, base2) => {
           let els = [];
@@ -352,6 +579,34 @@
         };
       }
       own.toc = toc;
+    }
+    if (spec.json) {
+      // the chapter's text from the site's data: the engine fetches textUrl(the chapter's address) instead of the page, and fromHtml reads the text out of it
+      const { match, to, text: field, next } = spec.json;
+      let re = null;
+      try {
+        re = new RegExp(match);
+      } catch (e) {
+        re = null;
+      }
+      own.textUrl = (address) => {
+        const m = re && re.exec(String(address));
+        if (!m) return null;
+        const url = expand(to, m, address);
+        return sameSite(url, host) ? url : null;
+      };
+      own.fromHtml = async (body, url) => {
+        let data = null;
+        try {
+          data = JSON.parse(body);
+        } catch (e) {
+          return null;
+        }
+        const text = linesOf(jsonAt(data, field));
+        if (!text) return null;
+        const after = next && data && typeof data === "object" ? fillLink(next, groupsOf(to, url), data, url) : "";
+        return { text, next: after && sameSite(after, host) ? after : null };
+      };
     }
     if (spec.book) own.book = spec.book;
     if (spec.nav) own.nav = spec.nav;
@@ -415,7 +670,8 @@
     return next;
   }
 
-  // The saved rules with what was found on a page set for `host`: { book: { title, ... }, toc: { list, reverse }, nav: { next, prev } } (any part may be missing).
+  // The saved rules with what was found on a page set for `host`: { book: { title, ... }, toc: { list, reverse }, nav: { next, prev }, selector, json } (any part may
+  // be missing).
   // The book selectors and the nav links are set field by field; a found chapter list replaces the rule's list selector and keeps its other list settings
   // (pages, pause, the list's address). A rule is made if the site has none, on top of the built-in one. Pure: the map it is given is not changed.
   function withDetected(stored, host, found, now) {
@@ -428,10 +684,20 @@
       for (const k of ["next", "prev"]) if (typeof f.nav[k] === "string" && f.nav[k].trim()) nav[k] = f.nav[k].trim();
       if (Object.keys(nav).length) spec.nav = nav;
     }
-    if (f.toc && typeof f.toc.list === "string" && f.toc.list.trim()) {
+    if (f.toc && f.toc.json && typeof f.toc.json === "object" && f.toc.listUrl && f.toc.listUrl.match && f.toc.listUrl.to) {
+      // a list that is the site's data replaces a list read from a page, whatever it was (only the pause stays)
+      const toc = { ...(spec.toc || {}) };
+      for (const k of ["list", "boxes", "pick", "pages", "titleDrop"]) delete toc[k];
+      toc.json = { ...f.toc.json };
+      toc.listUrl = { match: f.toc.listUrl.match, to: f.toc.listUrl.to };
+      if (f.toc.reverse === true) toc.reverse = true;
+      else delete toc.reverse;
+      spec.toc = toc;
+    } else if (f.toc && typeof f.toc.list === "string" && f.toc.list.trim()) {
       const toc = { ...(spec.toc || {}) };
       delete toc.boxes; // (a list found by its links replaces a list read from a box)
       delete toc.pick;
+      delete toc.json; // (and one read from the site's data)
       toc.list = f.toc.list.trim();
       if (f.toc.reverse === true) toc.reverse = true;
       else if (f.toc.reverse === false) delete toc.reverse;
@@ -448,6 +714,10 @@
       if (f.toc.listUrl && f.toc.listUrl.match && f.toc.listUrl.to) toc.listUrl = { match: f.toc.listUrl.match, to: f.toc.listUrl.to };
       spec.toc = toc;
     }
+    // the chapter's text from the site's data
+    if (f.json && f.json.match && f.json.to && f.json.text) spec.json = { match: f.json.match, to: f.json.to, text: f.json.text, ...(f.json.next ? { next: f.json.next } : {}) };
+    // where a chapter's text is on its page (found on two chapters as the site sends them)
+    if (typeof f.selector === "string" && f.selector.trim()) spec.selector = f.selector.trim();
     next[host] = { ...entry, spec };
     return next;
   }
@@ -487,7 +757,7 @@
     return ready;
   }
 
-  const api = { KEY, JUNK, BOOK_FIELDS, CHARSETS, cleanHost, baseFor, pagerOf, listUrlRule, validate, toRule, compile, bookTable, withBookSelectors, withDetected, apply, current: () => lastStored, start, sameSite, expand, ready: Promise.resolve() };
+  const api = { KEY, JUNK, BOOK_FIELDS, CHARSETS, cleanHost, baseFor, pagerOf, listUrlRule, validate, toRule, compile, bookTable, withBookSelectors, withDetected, apply, current: () => lastStored, start, sameSite, expand, jsonAt, groupsOf, fillLink, linesOf, ready: Promise.resolve() };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.UserRules = api;
   if (root.__USER_RULES__) apply(root.__USER_RULES__); // a script injected into a tab is handed the rules before it runs

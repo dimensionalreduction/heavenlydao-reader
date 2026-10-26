@@ -65,6 +65,14 @@ const ctx = {
     if (/^https:\/\/paged\.example\/book\/9\?page=2$/.test(url)) return { ok: true, url: String(url), arrayBuffer: async () => new TextEncoder().encode('<ul class="paged"><a href="/r/4">第4章 d</a><a href="/r/5">第5章 e</a></ul>').buffer };
     if (/^https:\/\/fixture\.example\/read\/1\/5\.html$/.test(url)) return { ok: true, url: String(url), arrayBuffer: async () => new TextEncoder().encode(ctx.fixtureLink ? '<div class="c">x</div><a href="/book/1">目录</a><a href="/read/1/6.html">下一章</a>' : '<div class="c">x</div><a href="/read/1/6.html">下一章</a>').buffer };
     if (/^https:\/\/fixture\.example\/read\/1\/6\.html$/.test(url)) return { ok: true, url: String(url), arrayBuffer: async () => new TextEncoder().encode('<div class="c">y</div>').buffer };
+    // a made-up site whose pages a script fills in: its pages are an empty frame, its data (five chapters, two to a part, newest first) is at /api
+    if (/^https:\/\/data\.example\/novels\//.test(url)) return { ok: true, url: String(url), arrayBuffer: async () => new TextEncoder().encode('<div id="app"></div><script src="/app.js"></script>').buffer };
+    if (/^https:\/\/data\.example\/api\/novels\/a-book\/chapters\?order=desc&limit=2&offset=(\d)$/.test(url)) {
+      const at = Number(/offset=(\d)/.exec(url)[1]);
+      const items = [5, 4, 3, 2, 1].slice(at, at + 2).map((n) => ({ number: n, title: "Chapter " + n + " : T" + n }));
+      return { ok: true, url: String(url), arrayBuffer: async () => new TextEncoder().encode(JSON.stringify({ items, total: 5, limit: 2, offset: at })).buffer };
+    }
+    if (/^https:\/\/data\.example\/api\/novels\/a-book\/chapters\/3\/read$/.test(url)) return { ok: true, url: String(url), arrayBuffer: async () => new TextEncoder().encode(JSON.stringify({ number: 3, body: "Line one.\n\n<em>Line two.</em>", next_number: 4 })).buffer };
     if (/api\/chapters\/8053/.test(url)) return { ok: true, json: async () => ({ chapters: [
       { order: 2, title: "Chapter 2 Beta", name: "第2章" }, { order: 1, title: "Chapter 1 Alpha", name: "第1章" }, { order: "x", title: "no number", name: "" }, { order: 3, title: "Chapter 3 Gamma", name: "第3章" }] }) };
     if (/uuread\.tw\/chapter\/1\/11\.html/.test(url)) return { ok: true, url: String(url), arrayBuffer: async () => new TextEncoder().encode('<div class="txt_tcontent"><p>Eleven</p></div><a href="/chapter/1/12.html">下一章</a>').buffer };
@@ -584,6 +592,30 @@ const SOURCE = "https://www.69shuba.com/txt/77582/38804612";
   const ownList = sent.find((m) => m.type === "list:apply");
   assert.deepStrictEqual(Array.from(ownList.found.chapters, (c) => c[0]), [1, 2, 3], "its chapters, in order");
   assert.strictEqual(ownList.found.tocUrl, "https://fixture.example/book/1");
+
+  // ---- a site whose pages a script fills in: a rule the person made (Detect with AI) reads its data instead ----
+  const dataSpec = ctx.UserRules.validate({
+    host: "data.example",
+    toc: { json: { items: "items", title: "title", link: "https://data.example/novels/$1/{number}", page: "offset", count: "total" }, listUrl: { match: "^https://(?:www\\.)?data\\.example/novels/([^/?#]+)(?:[/?#]|$)", to: "https://data.example/api/novels/$1/chapters?order=desc&limit=2&offset=0" }, reverse: true },
+    json: { match: "^https://(?:www\\.)?data\\.example/novels/([^/?#]+)/([^/?#]+)(?:[/?#]|$)", to: "https://data.example/api/novels/$1/chapters/$2/read", text: "body", next: "https://data.example/novels/$1/{next_number}" }
+  });
+  assert.ok(dataSpec.ok, JSON.stringify(dataSpec.errors));
+  ctx.RawSources.setUserRules({ "data.example": ctx.UserRules.toRule(dataSpec.spec) });
+  sent.length = 0;
+  calls = [];
+  await onRawRequest("translation:https://data.example/novels/a-book#list", { ...meta });
+  const dataPart = (n) => "https://data.example/api/novels/a-book/chapters?order=desc&limit=2&offset=" + n;
+  assert.deepStrictEqual(calls, [dataPart(0), dataPart(4), dataPart(2)], "the data's first part, then the others from the oldest end: never the empty page");
+  const dataLists = sent.filter((m) => m.type === "list:apply").map((m) => m.found);
+  const dataWhole = dataLists.find((f) => f.chapters.length === 5);
+  assert.deepStrictEqual(Array.from(dataWhole.chapters, (c) => Array.from(c)), [1, 2, 3, 4, 5].map((n) => [n, "Chapter " + n + " : T" + n, "https://data.example/novels/a-book/" + n]), "every chapter, oldest first, with its title and its page's address");
+  assert.ok(dataLists.every((f) => f.tocUrl === "https://data.example/novels/a-book"), "kept under the address it was asked for (the book's record is tied to its list by it), not the data's: " + dataLists.map((f) => f.tocUrl));
+  calls = [];
+  await onRawRequest("translation:https://data.example/novels/a-book/3#original", { ...meta, translate: false, ahead: 0, source: "" });
+  assert.deepStrictEqual(calls, ["https://data.example/api/novels/a-book/chapters/3/read"], "a chapter's text from its data, without its empty page");
+  const fromData = store.get("translation:https://data.example/novels/a-book/3#original");
+  assert.deepStrictEqual([fromData.translated, fromData.next], ["Line one.\nLine two.", "https://data.example/novels/a-book/4"], "one paragraph a line, and the next chapter's address from the data");
+  ctx.RawSources.setUserRules({});
 
 
   // ---- a site without a list page is followed page by page, from the latest chapter known ----

@@ -39,6 +39,20 @@
       { id: "toc.listMatch", label: "The list's address: when an address looks like", hint: "A pattern with a group, like ^https://example\\.com/book/(\\d+)", mono: true, wide: true },
       { id: "toc.listTo", label: "…the list is at", hint: "Like https://example.com/list/$1/ ($1 is the group above)", mono: true, wide: true }
     ]],
+    ["Chapter list from the site's data (optional)", [
+      { id: "toc.json.items", label: "Where the chapters are in the data", hint: "Like items or data.chapters; empty when the data is the list", mono: true },
+      { id: "toc.json.title", label: "Each chapter's title", hint: "Like title", mono: true },
+      { id: "toc.json.link", label: "Each chapter's address", hint: "Like https://example.com/novel/$1/{number}", mono: true, wide: true },
+      { id: "toc.json.page", label: "The part of the list's address that moves through it", hint: "Like offset or page", mono: true },
+      { id: "toc.json.count", label: "How many chapters there are", hint: "Like total", mono: true },
+      { id: "toc.json.pages", label: "…or how many parts", hint: "Like last_page", mono: true }
+    ]],
+    ["Chapter text from the site's data (optional)", [
+      { id: "json.match", label: "When a chapter's address looks like", hint: "Like ^https://example\\.com/novel/([^/?#]+)/(\\d+)", mono: true, wide: true },
+      { id: "json.to", label: "…its data is at", hint: "Like https://example.com/api/novel/$1/chapters/$2", mono: true, wide: true },
+      { id: "json.text", label: "The text", hint: "Like body or data.content", mono: true },
+      { id: "json.next", label: "The next chapter's address", hint: "Like https://example.com/novel/$1/{next_number}", mono: true, wide: true }
+    ]],
     ["Book page (optional)", [
       { id: "book.title", label: "Title", hint: "On the book's own page", mono: true },
       { id: "book.author", label: "Author", mono: true },
@@ -99,9 +113,12 @@
     const toc = {
       list: val("toc.list"), boxes: val("toc.boxes"), pick: val("toc.pick"), reverse: val("toc.reverse"), gap: val("toc.gap"), titleDrop: val("toc.titleDrop"),
       pages: { kind: val("toc.pagesKind"), selector: val("toc.pagesSelector"), attr: val("toc.pagesAttr") },
-      listUrl: { match: val("toc.listMatch"), to: val("toc.listTo") }
+      listUrl: { match: val("toc.listMatch"), to: val("toc.listTo") },
+      json: { items: val("toc.json.items"), title: val("toc.json.title"), link: val("toc.json.link"), page: val("toc.json.page"), count: val("toc.json.count"), pages: val("toc.json.pages") }
     };
-    if (toc.list || toc.boxes || toc.pages.selector || toc.gap || toc.listUrl.match || toc.listUrl.to || toc.reverse) spec.toc = toc;
+    if (toc.list || toc.boxes || toc.pages.selector || toc.gap || toc.listUrl.match || toc.listUrl.to || toc.reverse || toc.json.title || toc.json.link || toc.json.items) spec.toc = toc;
+    const json = { match: val("json.match"), to: val("json.to"), text: val("json.text"), next: val("json.next") };
+    if (json.match || json.to || json.text) spec.json = json;
     const nav = { next: val("nav.next"), prev: val("nav.prev") };
     if (nav.next || nav.prev) spec.nav = nav;
     const book = { title: val("book.title"), author: val("book.author"), description: val("book.description"), cover: val("book.cover"), genre: val("book.genre") };
@@ -129,6 +146,8 @@
     setVal("toc.pagesAttr", t.pages ? t.pages.attr : "");
     setVal("toc.listMatch", t.listUrl ? t.listUrl.match : "");
     setVal("toc.listTo", t.listUrl ? t.listUrl.to : "");
+    for (const f of ["items", "title", "link", "page", "count", "pages"]) setVal("toc.json." + f, t.json ? t.json[f] : "");
+    for (const f of ["match", "to", "text", "next"]) setVal("json." + f, s.json ? s.json[f] : "");
     for (const f of UR.BOOK_FIELDS) setVal("book." + f, s.book ? s.book[f] : "");
     setVal("nav.next", s.nav ? s.nav.next : "");
     setVal("nav.prev", s.nav ? s.nav.prev : "");
@@ -180,10 +199,10 @@
       };
       const edit = el("button", { textContent: "Edit" });
       edit.onclick = () => open(host);
-      const also = [spec.toc ? "chapter list" : "", spec.book ? "book details" : ""].filter(Boolean);
+      const also = [spec.toc ? "chapter list" : "", spec.book ? "book details" : "", spec.json || (spec.toc && spec.toc.json) ? "site's data" : ""].filter(Boolean);
       return el("tr", {},
         el("td", {}, el("strong", { textContent: host }), spec.name ? el("div", { className: "hint", textContent: spec.name, style: "color:var(--muted)" }) : null),
-        el("td", { className: "sel", textContent: spec.selector || "(the built-in one)" }),
+        el("td", { className: "sel", textContent: spec.selector || (spec.json ? "(the site's data)" : "(the built-in one)") }),
         el("td", {}, ...(also.length ? also.map((a) => el("span", { className: "chip", textContent: a, style: "margin-right:4px" })) : [el("span", { style: "color:var(--muted)", textContent: "–" })])),
         el("td", {}, on), el("td", {}, el("div", { className: "bar" }, edit, del)));
     }));
@@ -300,7 +319,13 @@
       // the rule as the engine runs it (this page's own copy of the registry: nothing else here reads it)
       RawSources.setUserRules({ [v.spec.host]: UR.toRule(v.spec, baseOf(v.spec)) });
       const rule = RawSources.ruleFor("https://" + v.spec.host + "/");
-      if (kind === "chapter") {
+      if (kind === "chapter" && rule.textUrl && rule.textUrl(address)) {
+        // the chapter's text from the site's data
+        const page = await fetchForTrial(rule, v.spec.host, rule.textUrl(address));
+        const read = await rule.fromHtml(page.html, page.url);
+        if (!read) return say("Nothing found: the data at " + page.url + " has no text at " + v.spec.json.text + ".");
+        say(read.text.split("\n").length + " paragraphs, " + read.text.length + " characters.\nThe chapter's data: " + page.url + "\nThe next chapter's address: " + (read.next || "not found") + "\n\n" + clip(read.text, 900));
+      } else if (kind === "chapter") {
         const page = await fetchForTrial(rule, v.spec.host, address);
         const text = RawSources.textOf(page.doc, rule);
         if (!text) return say("Nothing found: the page has no element matching " + v.spec.selector + ".\nCheck the selector, or whether the site needs you to be logged in.");
