@@ -117,5 +117,13 @@ var ProfileTranslate = (function () {
     });
   }
 
-  return { profileOf, booksOf, forChapter, customOf, languageGlossary, translate, keep, KEYS, TOKEN, _waitScale: (x) => { waitScale = x; } };
+  // The popup's Translate on a chapter's page paid with tickets (docs/ADD-BOOK.md): the text with the playground's Gemini 3.5 Flash Lite, as the in-page translator answers
+  // (content.js: { translated, suggestions, language, model, tickets } or { error }). Nothing is kept.
+  const TICKETS_MODEL = "google/gemini-3.5-flash-lite";
+  async function pageWithTickets(text, glossary, lang) {
+    const r = await translate({ text }, { pay: "tickets", model: TICKETS_MODEL, name: "Tickets" }, glossary || [], lang || "en");
+    return r.error ? { error: r.error } : { translated: r.text, suggestions: [], language: lang || "en", model: TICKETS_MODEL, tickets: r.tickets };
+  }
+
+  return { profileOf, booksOf, forChapter, customOf, languageGlossary, translate, pageWithTickets, keep, KEYS, TOKEN, _waitScale: (x) => { waitScale = x; } };
 })();

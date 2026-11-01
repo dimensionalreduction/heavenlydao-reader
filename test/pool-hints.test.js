@@ -109,7 +109,7 @@ const TermNotes = require("../src/shared/term-notes.js");
   calls.length = 0;
   await TermNotes.translate({ text, glossary: [{ terms: ["御兽"], translation: "Beast Taming", source: "wtr" }], model: "m", url: job.url, title: "第7章", novelName: "N", notes: 0, lang: "es" });
   const es = new Map(sent.map((e) => [e.terms[0], e.translation]));
-  assert.strictEqual(es.get("御兽"), "Domar bestias", "a term asked for in Spanish is given the pool's, not wtr-lab's English");
+  assert.strictEqual(es.get("御兽"), "Domar bestias", "a term asked for in Spanish is given the pool's, not the translation site's English");
   assert.strictEqual(es.get("散修"), "Cultivador suelto", "and a term the glossary has no entry for");
   const keptEs = calls.find(([m, p2, b]) => m === "POST" && /@es\/add$/.test(decodeURIComponent(p2)) && b.from === "pool");
   assert.ok(keptEs, "kept in the novel in Spanish");

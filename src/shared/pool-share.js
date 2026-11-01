@@ -7,10 +7,11 @@
 // Runs in the background script; never throws and never holds up a translation. Needs term-pool.js and glossary-server.js before it.
 var PoolShare = (function () {
   const ext = typeof browser !== "undefined" ? browser : chrome;
-  const BASE = "https://pool.heavenlydao.com/api/pool"; // (the VPS: turn-server/pool; the same routes are in site/functions/api/pool for Cloudflare)
+  const BASE = "https://pool.heavenlydao.com/api/pool"; // (the pool server on the VPS; the same routes are in the library site's functions/api/pool, for Cloudflare)
   const POW_BITS = 14; // the same as the service asks (functions/_pool.js POW_BITS)
   const MAX_PAIRS = 200;
   const DAY = 24 * 60 * 60 * 1000;
+  const AVAILABLE = false; // the public pool opens later: until then nothing is downloaded or sent (the tests pass { available: true })
 
   async function sha256Hex(text) {
     const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
@@ -71,6 +72,7 @@ var PoolShare = (function () {
   async function maybeRun(options) {
     try {
       const o = options || {};
+      if (!AVAILABLE && !o.available) return { skipped: true, off: true };
       const now = Date.now();
       const { poolShareAt } = await ext.storage.local.get("poolShareAt");
       if (!o.force && now - (poolShareAt || 0) < DAY) return { skipped: true };

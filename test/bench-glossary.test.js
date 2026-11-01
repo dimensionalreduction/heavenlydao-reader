@@ -25,7 +25,7 @@ const translate = async (text, glossary, extra) => {
   assert.strictEqual(r.length, 8, "four conditions, each both ways");
   const by = (c, m) => r.find((x) => x.condition === c && x.matching === m);
   assert.strictEqual(by("novel", "context").chapters, 2);
-  assert.strictEqual(by("novel", "context")["hit%"], 100, "with wtr-lab's list the name and the shared term are in the answer");
+  assert.strictEqual(by("novel", "context")["hit%"], 100, "with the translation site's list the name and the shared term are in the answer");
   assert.ok(by("none", "context")["hit%"] < 100, "without it the translator says Fu Xin Han in the first chapter: not a hit");
   // 白 (a single character): the old way sends it wherever the character is, the new one only as a name
   assert.ok(by("full", "always")["singlesWrong/ch"] > 0, "the old way sends 白 where it is in 明白 and 白色");

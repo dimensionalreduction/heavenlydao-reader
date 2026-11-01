@@ -1,32 +1,34 @@
-// Runs the P2P core inside an extension page that is allowed to use WebRTC:
+// Runs the sync core (p2p-core.js: the chapters and the library's records, passed to the library site's tab in this browser) and the fetching,
+// inside an extension page that has a DOM:
 //   Firefox (MV2): the background page, which also has storage access -> "direct" adapter.
 //   Chrome (MV3):  an offscreen document, which has NO chrome.storage -> "proxy" adapter that asks the
 //                  service worker (background.js) to do storage calls and forwards cache writes back.
 (function () {
   const ext = typeof browser !== "undefined" ? browser : chrome;
   const PREFIX = "translation:";
-  const CONFIG_KEYS = ["p2pEnabled", "p2pPassphrase", "p2pTrackers"];
   const INDEX_KEY = "p2pIndex";
   const direct = !!(ext.storage && ext.storage.local);
   // Every request in this page is to a novel site (or the site): the browser has to have allowed the site (site-access.js; the person's click in the popup). A site
   // not allowed yet is noted for the popup and refused here with an error that says so, instead of failing like a network error.
   const fetch = (url, options) => (typeof SiteAccess !== "undefined" ? SiteAccess.fetch(url, options) : globalThis.fetch(url, options));
 
-  const log = (...a) => console.debug("[p2p]", ...a);
+  // (the last lines are kept too: the popup's support view and the end-to-end tests read them with the message p2p:log)
+  const recent = [];
+  const log = (...a) => {
+    recent.push(new Date().toISOString().slice(11, 19) + " " + a.map((x) => String((x && x.message) || x)).join(" ").slice(0, 400));
+    if (recent.length > 200) recent.shift();
+    console.debug("[p2p]", ...a);
+  };
   if (typeof UserRules !== "undefined") UserRules.start(ext); // the rules the person added (this page has no storage in Chrome: it asks the service worker)
 
   function light(entry) {
-    return { savedAt: (entry && entry.savedAt) || 0, translated: !!(entry && entry.translated) };
+    return { savedAt: (entry && entry.savedAt) || 0, translated: !!(entry && entry.translated), ...(entry && entry.model === "images" ? { images: true } : {}) }; // (images: a chapter of pictures's stand-in)
   }
 
   // (the index in parts: a change saves its part, not the whole index; P2PCore.bucketedIndex)
   const storedIndex = direct ? P2PCore.bucketedIndex({ get: (k) => ext.storage.local.get(k), set: (o) => ext.storage.local.set(o), remove: (k) => ext.storage.local.remove(k), base: INDEX_KEY }) : null;
   const directAdapter = {
-    async getConfig() {
-      const c = await ext.storage.local.get(CONFIG_KEYS);
-      // the passphrase typed in the popup (none: only the library site's tab in this browser is reached)
-      return { enabled: c.p2pEnabled !== false, passphrase: c.p2pPassphrase || "", trackers: c.p2pTrackers };
-    },
+    getConfig: async () => ({}),
     getIndex: () => storedIndex.getIndex(),
     setIndex: (index) => storedIndex.setIndex(index),
     putIndex: (changes) => storedIndex.putIndex(changes),
@@ -51,7 +53,7 @@
     });
   }
   const proxyAdapter = {
-    getConfig: () => call("getConfig"),
+    getConfig: async () => ({}),
     getIndex: () => call("getIndex"),
     setIndex: (i) => call("setIndex", i),
     putIndex: (c) => call("putIndex", c),
@@ -135,8 +137,22 @@
 
   // The text of a chapter, from the response for its first page (or for its data: fetchChapter); follows the "next part" links of sites that split chapters.
   // `address`: the chapter's own address, when the response is not for it (its data may be elsewhere on the site, like api.example.com).
+
+  // Does the box the rule reads text from hold pictures (a comic read as text)?
+  function picturesIn(doc, rule) {
+    try {
+      return !!rule.selector && [...doc.querySelectorAll(rule.selector)].some((box) => box.querySelectorAll("img").length >= 3);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // The text of a chapter, from the response for its first page; follows the "next part" links of sites that split chapters. A chapter that is pictures
+  // (the rule says where they are) comes back as { text: "", urls, next } instead.
   async function readChapter(res, address) {
     const parts = [];
+    const illustrations = []; // the addresses of the pictures between the paragraphs (a rule with illustrations), numbered in the text as ImageChapter.mark
+    const page = res.url; // the chapter's first page: the Referer its pictures are asked for with
     let next = null; // the next chapter, from the last part's own link
     let url = res.url;
     const rule = RawSources.ruleFor(address || url);
@@ -150,8 +166,21 @@
         return { text: read.text, next: read.next || null };
       }
       const doc = new DOMParser().parseFromString(RawSources.stripScripts(html), "text/html");
-      const text = RawSources.textOf(doc, rule);
+      if (rule.images || rule.pictures || !rule.selector) { // a chapter that is pictures: their addresses, in order (savePictures fetches them)
+        // the rule's own <img> elements first, else the list in the page's own data (an Astro page: ImageChapter.urlsFromProps); a rule with neither a text selector
+        // nor pictures' selector (only a chapter list saved) reads such a page too
+        let urls = rule.images ? ImageChapter.urlsOf(doc, rule.images, url) : [];
+        if (!urls.length) urls = ImageChapter.urlsFromProps(doc, url);
+        if (urls.length) return { text: "", urls, next: RawSources.nextChapter(doc, url), page };
+        const locked = typeof rule.locked === "function" ? rule.locked(doc) : ""; // (a chapter the site keeps for its members for now)
+        if (locked) throw new Error(locked);
+        if (rule.images || rule.pictures) throw new Error("no pictures on the page (open it once in the browser to pass the site's check)");
+      }
+      const read = RawSources.readText(doc, rule, url, illustrations.length);
+      const text = read.text;
+      illustrations.push(...read.urls);
       if (!text) {
+        if (!parts.length && picturesIn(doc, rule)) throw new Error("this chapter is pictures: give its site rule the pictures' selector (Site rule…, \"The chapter's pictures\")");
         if (!parts.length) throw new Error("no chapter text on the page (open it once in the browser to pass the site's check)");
         break;
       }
@@ -165,7 +194,7 @@
       res = await fetchSite(part, { credentials: "include" });
       url = res.url || part;
     }
-    return { text: parts.join("\n"), next };
+    return { text: parts.join("\n"), next, illustrations, page };
   }
 
   // When a chapter is asked for together with the ones after it, the next one is requested here, as soon as this one has told us where it
@@ -349,12 +378,14 @@
       // no site named (the novel's source is not known yet): whichever site the Raw link leads to, if it can be read
       if (meta.source ? RawSources.hostOf(sourceUrl) !== meta.source : !RawSources.ruleFor(sourceUrl)) throw new Error("this chapter's source is " + (RawSources.hostOf(sourceUrl) || "unknown") + (meta.source ? ", not " + meta.source : ", which this extension cannot read"));
       const sourceKey = "translation:" + sourceUrl;
-      // already translated from that source (maybe by another device): nothing to do
+      // already translated from that source: nothing to do
       const existing = ownUrl ? null : await store.getTranslation(sourceKey);
       if (existing && existing.translated && existing.model !== "original") return report(key, "done", meta, undefined, sourceUrl);
       let raw = await store.getTranslation(sourceKey + "#original");
       if (!raw || !raw.translated) {
         const read = textAddress(sourceUrl) ? await readChapter(await fetchChapter(sourceUrl), sourceUrl) : await readChapter(res);
+        if (read.urls) throw new Error("this source's chapters are pictures, which are not read from a site novel's Raw link yet");
+        if (read.illustrations && read.illustrations.length) await savePictures(sourceKey + "#original", read.illustrations, meta, read.page).catch((e) => log("the chapter's pictures not kept", sourceKey, e && e.message));
         raw = { translated: read.text, suggestions: [], savedAt: Date.now(), model: "original", pageTitle: meta.pageTitle, novelName: meta.novelName, next: read.next || undefined };
         await store.setTranslation(sourceKey + "#original", raw);
       } else if (res.body && res.body.cancel) {
@@ -425,7 +456,7 @@
     const entry = await store.getTranslation("translation:" + url);
     if (!entry || !entry.translated || entry.model === "original") throw new Error("this chapter's English text is not on this device");
     translating.add(key);
-    const job = { url, title: entry.pageTitle || meta.pageTitle, text: entry.translated, novelName: meta.novelName || entry.novelName, ...(Number.isFinite(meta.notes) ? { notes: meta.notes } : {}), force: !!meta.force, ...(meta.custom ? { custom: meta.custom } : {}) };
+    const job = { url, title: entry.pageTitle || meta.pageTitle, text: typeof ImageChapter !== "undefined" ? ImageChapter.stripIllustrations(entry.translated) : entry.translated, novelName: meta.novelName || entry.novelName, ...(Number.isFinite(meta.notes) ? { notes: meta.notes } : {}), force: !!meta.force, ...(meta.custom ? { custom: meta.custom } : {}) };
     report(key, "notes-queued", meta);
     lastTranslation = lastTranslation
       .then(() => {
@@ -616,63 +647,119 @@
     }
   }
 
-  // ---------- what this extension does for your other devices ----------
-  // Another device of your library may ask it for chapters (their original text and those ahead, a chapter list, a book's details: "fetch") and for
-  // translations with this extension's Gemini ("translate"). Each is done only once switched on in this browser (the site's Settings › Library:
-  // helpDevices, kept in this extension and not in the library, so another device cannot switch it on). The library's tab in this browser, and this
-  // extension's own work (its watches, its popup, the editions of your novels), are not held to them; neither is sync.
-  const HELP_KEY = "helpDevices";
-  const helpOf = (v) => ({ fetch: !!(v && v.fetch), translate: !!(v && v.translate) });
-  const getHelp = async () => helpOf(direct ? (await ext.storage.local.get(HELP_KEY))[HELP_KEY] : await call("getHelp"));
-  async function setHelp(v) {
-    const h = helpOf(v);
-    if (direct) await ext.storage.local.set({ [HELP_KEY]: h });
-    else await call("setHelp", h);
-    return h;
-  }
-  async function deviceName() {
+  // ---------- chapters that are pictures (image-chapter.js, docs/IMAGE-CHAPTERS.md) ----------
+  // The pictures are fetched one after the other, packed into one bundle and kept here (not in the chapter index, which only holds text): the chapter's
+  // "#original" entry is a small stand-in (model "images", the number of pictures as its text) that the library lists and syncs like any other.
+  const pictures = typeof ImageChapter !== "undefined" ? ImageChapter.openStore("p2p-images") : null;
+  // what is kept of them on this device (the popup's Library tab: GB, 10 by default): the ones read longest ago go first
+  const picturesMax = async () => (typeof PictureLimit !== "undefined" ? (await PictureLimit.settings().catch(() => ({ maxGB: 10 }))).maxGB : 10) * 1024 * 1024 * 1024;
+  const keepWithinLimit = async (key) => pictures.trim(await picturesMax(), [key]).catch((e) => log("pictures not trimmed", e && e.message));
+  // A start every PICTURE_GAP_MS and up to 3 at once (Asura's own extension for Mihon allows 2 requests per 2 seconds); each picture is tried again after 2, 4 and 8
+  // seconds. A chapter that still fails keeps the pictures it got in memory for a while, so asking again carries on from there.
+  const PICTURE_GAP_MS = 1000;
+  const PARTIAL_MS = 15 * 60 * 1000;
+  const partialPictures = new Map(); // chapter key -> { urls, pages (holes for the ones missing), at }
+  async function savePictures(key, urls, meta, referer) {
+    if (!pictures) throw new Error("pictures cannot be kept on this device");
+    const kept = partialPictures.get(key);
+    const have = kept && Date.now() - kept.at < PARTIAL_MS && kept.urls.join("\n") === urls.join("\n") ? kept.pages : [];
+    let total = have.reduce((n, p) => n + (p ? p.bytes.length : 0), 0);
+    const fetchOne = async (url, i) => {
+      const res = await fetchSite(url, { credentials: "include" });
+      if (!res.ok) throw Object.assign(new Error(said(res) + " for picture " + (i + 1) + " of " + urls.length), { fatal: res.status === 404 || res.status === 410 });
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      const type = ImageChapter.kindOf(bytes);
+      if (!type) throw new Error("picture " + (i + 1) + " is not a picture (open the chapter on its site once in this browser to pass the site's check)");
+      if (bytes.length > ImageChapter.MAX_PAGE_BYTES || (total += bytes.length) > ImageChapter.MAX_BUNDLE_BYTES) throw Object.assign(new Error("this chapter's pictures are too big to keep"), { fatal: true });
+      const page = await ImageChapter.squeeze(bytes, type);
+      if (!page.w) Object.assign(page, ImageChapter.sizeOf(page.bytes, page.type) || {}); // (its size goes in the manifest: the reader lays the picture out before it loads)
+      return page;
+    };
+    let pages;
+    const release = typeof Referer !== "undefined" ? await Referer.use(urls, referer || "").catch(() => () => {}) : () => {}; // (the page they are shown on, as a browser sends it)
     try {
-      const lib = typeof LibraryHost !== "undefined" ? await LibraryHost.ready : null;
-      const me = lib && lib.status().device;
-      return (me && me.name) || "your computer";
+      pages = await ImageChapter.fetchPages(urls, fetchOne, { have, gap: PICTURE_GAP_MS, onProgress: (done, all) => report(key, "downloading", meta, undefined, undefined, "pictures " + done + " of " + all) });
     } catch (e) {
-      return "your computer";
+      if (e && e.partial) {
+        partialPictures.set(key, { urls, pages: e.partial, at: Date.now() });
+        while (partialPictures.size > 3) partialPictures.delete(partialPictures.keys().next().value);
+        const got = e.partial.filter(Boolean).length;
+        e.message += " (" + got + " of " + urls.length + " pictures fetched; asking again carries on from there)";
+      }
+      throw e;
+    } finally {
+      release();
     }
-  }
-  const declined = (why) => Object.assign(new Error(why), { declined: true });
-  const notFetching = (name) => "The extension on " + name + " doesn't fetch chapters for your other devices: switch it on in Settings › Library in that browser";
-  const notTranslating = (name) => "The extension on " + name + " doesn't translate for your other devices: switch it on in Settings › Library in that browser";
-  // A request from another device, as far as this extension does it for them: -> the request to do (with only translating off, a chapter's text is still
-  // fetched, and the asker told it is not translated: from.decline); throws a declined error when none of it is done.
-  async function forOtherDevice(key, meta, from) {
-    const h = await getHelp();
-    if (h.fetch && h.translate) return meta;
-    const name = await deviceName();
-    if (key.endsWith("#notes")) {
-      if (!h.translate) throw declined(notTranslating(name));
-      return meta;
-    }
-    if (key.endsWith("#details") || key.endsWith("#list") || meta.findNext) {
-      if (!h.fetch) throw declined(notFetching(name));
-      return meta;
-    }
-    if (WTR_KEY.test(key)) {
-      if (!h.fetch) throw declined(notFetching(name));
-      if (meta.source !== WTR_OWN && !h.translate) throw declined(notTranslating(name)); // (from the novel's source site it is translated as it comes)
-      return meta;
-    }
-    const store = direct ? directAdapter : proxyAdapter;
-    const here = !meta.force && !!((await store.getTranslation(key)) || {}).translated;
-    if (!here && !h.fetch) throw declined(notFetching(name));
-    if (!meta.translate || h.translate) return meta;
-    if (here) throw declined(notTranslating(name));
-    if (from && from.decline) from.decline(notTranslating(name));
-    return { ...meta, translate: false, retranslate: false };
+    partialPictures.delete(key);
+    report(key, "downloading", meta, undefined, undefined, "keeping " + pages.length + " pictures");
+    const bundle = ImageChapter.packBundle({ key, title: meta.pageTitle }, pages);
+    const made = await pictures.put(key, bundle);
+    await keepWithinLimit(key);
+    return { count: made.pages };
   }
 
-  // from: { decline } when another device asked (p2p-core.js), else nothing
-  async function saveOriginal(key, meta, from) {
-    if (meta.remote) meta = await forOtherDevice(key, meta, from); // (the chapters ahead keep `remote`, so they are held to the same)
+  // A comic's chapter translated in its page (comic-host.js; the popup's Save to library): the site's pictures kept as the chapter's original and the pictures made as its
+  // translation, the same entries the library page makes for a comic it translates: "<key>#original" (the stand-in, model "images") and the chapter's own key (its lines).
+  // originals / made: [{ bytes, type }] (made: null where nothing was drawn on that picture).
+  async function saveComic({ url, novelName, pageTitle, lang, originals, made, lines, madeWith }) {
+    if (!pictures) throw new Error("pictures cannot be kept on this device");
+    if (typeof LibraryHost === "undefined" || !LibraryHost.isMember()) throw new Error("this extension is not in a library yet");
+    const store = direct ? directAdapter : proxyAdapter;
+    const baseKey = PREFIX + String(url).split("#")[0];
+    if (!P2PCore.kindOf(baseKey)) throw new Error("not a chapter's address");
+    const pagesOf = async (list) => {
+      const out = [];
+      for (const p of list) {
+        const type = ImageChapter.kindOf(p.bytes);
+        if (!type) throw new Error("a picture could not be kept");
+        const page = await ImageChapter.squeeze(p.bytes, type);
+        if (!page.w) Object.assign(page, ImageChapter.sizeOf(page.bytes, page.type) || {});
+        out.push(page);
+      }
+      return out;
+    };
+    const keep = async (key, list) => {
+      const bundle = ImageChapter.packBundle({ key, title: pageTitle }, await pagesOf(list));
+      const put = await pictures.put(key, bundle);
+      await keepWithinLimit(key);
+      return { pages: put.pages };
+    };
+    const origKey = baseKey + "#original";
+    const was = await keep(origKey, originals);
+    await store.setTranslation(origKey, { translated: was.pages + " pictures", suggestions: [], savedAt: Date.now(), model: "images", pageTitle, novelName });
+    const outKey = P2PCore.langKey(baseKey, lang || "en");
+    const now = await keep(outKey, originals.map((o, i) => (made && made[i]) || o));
+    await store.setTranslation(outKey, { translated: lines.map((l) => String(l.en || "").replace(/\s*\n\s*/g, " ")).join("\n\n"), suggestions: [], pageTitle, novelName, savedAt: Date.now(), model: "images",
+      pages: now.pages, lines, ...(madeWith ? { madeWith } : {}) });
+    return { key: baseKey, pages: now.pages };
+  }
+  globalThis.P2PHostComic = { save: saveComic };
+
+  // The library site's tab beside this extension reads a chapter's pictures from here (site-bridge.js, target "img"): info -> { pages, size } or null,
+  // page(key, i) -> { b64, type }. One picture a message.
+  async function answerPictures(op, args) {
+    const key = String(args[0] || "");
+    if (!pictures || !P2PCore.kindOf(key)) return null;
+    if (op === "info") {
+      pictures.touch(key).catch(() => {}); // (being read: the last to be trimmed)
+      return pictures.info(key);
+    }
+    if (op === "pin") { // "Keep on this device" in the reader
+      const on = !!Number(args[1]);
+      const kept = await pictures.pin(key, on);
+      return { pinned: kept ? on : false };
+    }
+    if (op === "page") {
+      const i = Math.floor(Number(args[1]));
+      const page = await pictures.page(key, i);
+      return page ? { b64: ImageChapter.toB64(page.bytes), type: page.type, ...(page.w ? { w: page.w, h: page.h } : {}) } : null;
+    }
+    throw new Error("unknown call");
+  }
+
+
+  // ---------- a chapter's original text, a chapter list, a book's details, a chapter's notes: asked for by the site's tab or the popup ----------
+  async function saveOriginal(key, meta) {
     if (key.endsWith("#notes")) return queueNotes(key, meta);
     if (key.endsWith("#details")) return refreshBookDetails(key, meta);
     if (key.endsWith("#list")) return refreshSourceList(key, meta);
@@ -685,7 +772,7 @@
     try {
       if (meta.findNext) {
         // A chapter translated before links were kept: read its page once for the address of the next chapter and add it to the
-        // saved chapter (a newer version, so it reaches the other devices). The translation itself is not touched.
+        // saved chapter (a newer version, so it reaches the site's tab). The translation itself is not touched.
         report(key, "queued", meta);
         await turn();
         report(key, "downloading", meta);
@@ -699,7 +786,7 @@
         return;
       }
       if (meta.translate && !meta.force && !meta.retranslate) {
-        // already translated (say by another device): nothing to do here, but the chapters after it may still be wanted
+        // already translated: nothing to do here, but the chapters after it may still be wanted
         const done = await store.getTranslation(withLang("translation:" + baseUrl, await langOf(meta)));
         if (done && done.translated && done.model !== "original") {
           report(key, "done", meta);
@@ -709,12 +796,18 @@
       }
       let entry = await store.getTranslation(key);
       // meta.force: read the chapter again from its first page, whatever is saved (a chapter saved with only its first page of several)
-      if (!entry || meta.force) {
+      // (a chapter of pictures whose stand-in is here but not its pictures, dropped to keep within the limit: those are fetched again)
+      const missing = !!entry && entry.model === "images" && !!pictures && !(await pictures.has(key));
+      if (!entry || meta.force || missing) {
         report(key, "queued", meta);
         await turn();
         report(key, "downloading", meta);
         const read = await readChapter(await fetchChapter(baseUrl), baseUrl);
-        entry = { translated: read.text, suggestions: [], savedAt: Date.now(), model: "original", pageTitle: meta.pageTitle, novelName: meta.novelName, next: read.next || undefined };
+        let made = { count: 0 };
+        if (read.urls) made = await savePictures(key, read.urls, meta, read.page);
+        // a text chapter's pictures (a rule with illustrations): kept as a bundle under this key; the text is kept whether or not they come (the reader says which is missing)
+        else if (read.illustrations && read.illustrations.length) made = (await savePictures(key, read.illustrations, meta, read.page).catch((e) => log("the chapter's pictures not kept", key, e && e.message))) || made;
+        entry = { translated: read.urls ? made.count + " pictures" : read.text, suggestions: [], savedAt: Date.now(), model: read.urls ? "images" : "original", pageTitle: meta.pageTitle, novelName: meta.novelName, next: read.next || undefined };
         await store.setTranslation(key, entry);
       }
       // a chapter asked for on behalf of a site novel: that novel's glossary applies to this site's chapters too (bound once)
@@ -723,7 +816,7 @@
         await Promise.resolve(bind).catch((e) => log("could not bind the glossary", e && e.message));
       }
       // retranslate: translate the saved original text again (no download unless it was never saved); force (re-fetch) also downloaded again above
-      if (meta.translate) queueTranslation(key, baseUrl, entry.translated, { ...meta, next: entry.next, force: !!(meta.force || meta.retranslate) });
+      if (meta.translate && entry.model !== "images") queueTranslation(key, baseUrl, entry.translated, { ...meta, next: entry.next, force: !!(meta.force || meta.retranslate) }); // (pictures have no text to translate)
       else report(key, "done", meta);
       askAhead(entry.next, meta); // (the chapters after it: translated too when asked, else only their text fetched)
     } catch (e) {
@@ -852,7 +945,29 @@
       status = { done: 1, total: more.length + 1, count: count(), partial: () => RawSources.tocJoin(sofar(false), here) };
       const note = async () => progress && (await progress(status));
       await note();
-      const order = more.map((u, i) => [i + 1, u]);
+      // A pagination bar often shows only a window of the pages (1 ... 10 of 22: wfwf528.com): the last page named is read, and its bar names the next window
+      // (RawSources.tocMorePages); each page read on the way is kept like the others (the position of a page is its place in `more`, from 1).
+      try {
+        if (toc.rule.toc.windowed) await RawSources.tocMorePages({ first: first.url, more, max: MAX_TOC_PAGES, read: async (u) => {
+          const res = await fetchPage(u);
+          if (!res.ok) return null;
+          const html = await decoded(res);
+          const doc = asDoc(html);
+          got.set(more.indexOf(u) + 1, read(doc, res.url || u, html));
+          status = { ...status, total: more.length + 1, done: got.size, count: count() };
+          await note();
+          return RawSources.tocPageUrls(doc, { rule: toc.rule, url: res.url || u }, html);
+        } });
+      } catch (e) {
+        const part = RawSources.tocJoin(sofar(false), here);
+        if (part.length) {
+          part.tocUrl = listedAt(first.url);
+          e.partial = part;
+        }
+        throw e;
+      }
+      status = { ...status, total: more.length + 1 };
+      const order = more.map((u, i) => [i + 1, u]).filter(([at]) => !got.has(at));
       if (newestFirst) order.reverse(); // the oldest page first
       try {
         for (const [at, u] of order) {
@@ -950,7 +1065,7 @@
   // "<chapter key>#original" -> { error, stop } of a watch's chapter that came but was not translated (stop: its novel's profile cannot be used here until something is
   // changed: a key, the sign-in, tickets), until its batch is looked at
   const untranslated = new Map();
-  const EXT_BUILD = 2; // said to the other devices (p2p-core.js "hi"): 2, the watches fetch what they find (then: "fetch", "all")
+  const EXT_BUILD = 2; // said to the site's tab (p2p-core.js "hi"): 2, the watches fetch what they find (then: "fetch", "all")
   const held = new Set(); // chapters known to be here (their translation), so the list is not read through again
   const fetchFailed = new Map(); // "<chapter key>#original" -> when it was asked for and did not come
   const batches = new Map(); // watch id -> the keys of its batch
@@ -1056,22 +1171,12 @@
 
   const core = P2PCore.createP2P({
     adapter: direct ? directAdapter : proxyAdapter,
-    WebTorrent: self.WebTorrent,
     log,
     role: "extension",
     build: EXT_BUILD, // (what the site's Triggers tab asks of it: watcher.js then "fetch" and "all"; a device that says less is an older build)
-    localOnly: true, // (with no passphrase it still answers the library site's tab in this browser)
-    library: typeof LibraryHost !== "undefined" ? LibraryHost.roomLink : undefined, // your library's records, and devices asking to join it
+    library: typeof LibraryHost !== "undefined" ? LibraryHost.roomLink : undefined, // your library's records
     onRawRequest: saveOriginal,
-    onRawStop: (key) => { if (inflight.has(key) && key.endsWith("#list")) stopped.add(key); },
-    // a read of the library (what a page shows): not for another device (each device of the library keeps its own copy, and a device not in it is
-    // answered nothing by p2p-core.js), only for this browser's tab
-    answerApi: async (p, from) => {
-      if (typeof LibraryHost === "undefined" || (from && from.remote)) return null;
-      const lib = await LibraryHost.ready;
-      if (!lib || lib.status().state !== "member") return null;
-      return LibraryHost.call("api", ["GET", p]);
-    }
+    onRawStop: (key) => { if (inflight.has(key) && key.endsWith("#list")) stopped.add(key); }
   });
 
   if (typeof LibraryHost !== "undefined") {
@@ -1080,35 +1185,27 @@
     LibraryHost.fills = fillsNow;
     LibraryHost.resumeFill = resumeFill;
     LibraryHost.readList = readSourceList;
-    LibraryHost.helpDevices = (v) => (v && typeof v === "object" ? setHelp(v) : getHelp()); // (the site's Settings › Library: what this extension does for your other devices)
-    // your library, published for readers once it is shared, from the chapters this device holds
-    const chapters = direct ? directAdapter : proxyAdapter;
-    chapters.getConfig().then((c) => LibraryHost.startPublishing(chapters, c && c.trackers)).catch((e) => log("publishing not started", e));
+    LibraryHost.setChapters(direct ? directAdapter : proxyAdapter);
   }
   const chapterSaved = (key, entry) => { if (typeof LibraryHost !== "undefined") LibraryHost.chapterSaved(key, entry); };
-  const restart = () => core.start().catch((e) => log("start failed", e));
-  restart();
+  core.start().catch((e) => log("start failed", e));
 
   if (direct) {
     ext.storage.onChanged.addListener((changes, area) => {
       if (area !== "local") return;
-      let reconfigure = false;
       for (const key of Object.keys(changes)) {
         if (key.startsWith(PREFIX) && changes[key].newValue) { core.onLocalSave(key, changes[key].newValue); chapterSaved(key, changes[key].newValue); }
-        if (CONFIG_KEYS.includes(key)) reconfigure = true;
       }
-      if (reconfigure) restart();
     });
   }
 
   // The library site's own tab (through site-bridge.js) connects directly: one more peer for the sync, with no network between the two.
   ext.runtime.onConnect.addListener((port) => {
     if (port.name !== "p2p-local" || typeof LibraryHost === "undefined" || !LibraryHost.fromSite(port.sender)) return; // only site-bridge.js, in a tab of the library site
-    // (the site in this browser: trusted once this extension is in a library, which the site's tab then uses as its own, and answers for in
-    // its room: the records it takes there go into this library, and what it tells of them is passed on; before that it has nothing to say
-    // to it but asking to join)
+    // (the site in this browser: trusted once this extension is in a library, which the site's tab then uses as its own: the records it
+    // writes go into this library, and what it tells of them is passed on)
     const member = () => typeof LibraryHost !== "undefined" && LibraryHost.isMember();
-    const link = core.addLocalPeer({ send: (obj) => port.postMessage(obj) }, { trusted: member, sameLibrary: member });
+    const link = core.addLocalPeer({ send: (obj) => port.postMessage(obj) }, { trusted: member });
     const timer = setInterval(() => link.refresh(), 3000);
     port.onMessage.addListener((m) => link.receive(m));
     port.onDisconnect.addListener(() => { clearInterval(timer); link.close(); });
@@ -1116,6 +1213,14 @@
 
   ext.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (!msg) return;
+    // the library site's tab reads a chapter's pictures (only once this extension is in a library, like everything else it does)
+    if (msg.target === "img") {
+      const ownPage = !sender.tab || (typeof sender.url === "string" && sender.url.startsWith(ext.runtime.getURL("")));
+      if (typeof LibraryHost === "undefined" || !LibraryHost.isMember() || (!ownPage && !LibraryHost.fromSite(sender))) { sendResponse({ error: "not the library's site" }); return; }
+      answerPictures(String(msg.op || ""), Array.isArray(msg.args) ? msg.args : []).then((result) => sendResponse({ result }), (e) => sendResponse({ error: String((e && e.message) || e) }));
+      return true; // answered later
+    }
+    if (msg.type === "p2p:log") return void sendResponse(recent.slice());
     if (msg.type === "p2p:status") {
       sendResponse(core.status());
       return; // sync response
@@ -1128,8 +1233,7 @@
       fetchFound(msg.items, msg.watch || {}, msg.opts || {}).then((r) => sendResponse(r), (e) => sendResponse({ error: String((e && e.message) || e) }));
       return true; // answered later
     }
-    // The popup's Refresh details (and the same request the library site makes of a device): fetch a chapter's text, its notes or a novel's details. Only
-    // once this extension is in a library (it does nothing before).
+    // The popup's Refresh details: fetch a chapter's text, its notes or a novel's details. Only once this extension is in a library (it does nothing before).
     if (msg.target === "p2p-host" && msg.type === "work") {
       const key = String(msg.key || "");
       const m = msg.meta || {};
@@ -1143,7 +1247,6 @@
     // Chrome only: the service worker forwards storage events here.
     if (msg.target === "p2p-host") {
       if (msg.type === "changed") { core.onLocalSave(msg.key, msg.entry); chapterSaved(msg.key, msg.entry); }
-      else if (msg.type === "reconfigure") restart();
     }
   });
 })();

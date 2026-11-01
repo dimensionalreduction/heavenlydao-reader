@@ -1,13 +1,11 @@
 // Where a site's book page says what the book is comes from its rule (src/shared/sources/, WebToEpub's extractTitle / extractAuthor / ...), as the table
 // BookRules that the build puts in book-rules.js; a page with the standard novel metadata needs no rule.
-// Runs on every site the extension can read (the build adds them all to this script's matches). When the page you are on is a book's page, one
-// that carries the standard novel metadata (<meta property="og:novel:book_name"> and its neighbours, which many Chinese novel sites emit), it
-// records the book in the library: title, author, cover, synopsis, category and status go to your library, so the novel gets a page of
-// its own (with its chapter list, read by the extension on request) even before a chapter of it is translated. Nothing else on the page is
-// looked at, and nothing is sent from a page without that metadata. Titles are put into English in one batch (the background does it).
+// Run in a book's page when the person asks (docs/ADD-BOOK.md: Import to library in the popup, or Refresh details), never on its own: it reads the book (the
+// standard novel metadata, <meta property="og:novel:book_name"> and its neighbours, else the site's rule; the person said it is a book's page, so a chapter-text
+// selector that also matches does not stop it) and records it in the library: title, author, cover, synopsis, category and status, so the novel gets a page of its
+// own (its chapter list is read next). Titles are put into English in one batch (the background does it).
 (function () {
   const isNode = typeof module !== "undefined" && module.exports;
-  const FRESH_MS = 12 * 60 * 60 * 1000; // a book's details change rarely
 
   // 连载 -> Ongoing ...; anything else is not guessed at
   function statusOf(text) {
@@ -22,6 +20,48 @@
     const out = {};
     for (const m of doc.querySelectorAll('meta[property^="og:"]')) out[m.getAttribute("property")] = String(m.getAttribute("content") || "").trim();
     return out;
+  }
+
+  // A book whose page keeps its details in an Astro island's props (asurascans.com): rule.book.astro = { component, title, author, description, cover, genre, status }, each
+  // the name of a prop ("genre": "genres.name" is the `name` of every item of the list `genres`). The props are wrapped ([0, value], [1, list]); unwrapAstro is the same as
+  // RawSources.helpers.astroProps' (this script is loaded without the site rules).
+  function unwrapAstro(v) {
+    if (Array.isArray(v)) {
+      if (!v.length) return null;
+      if (v.length === 2 && Number.isInteger(v[0])) return unwrapAstro(v[1]);
+      if (v.length === 1 && Number.isInteger(v[0])) return null;
+      return v.map(unwrapAstro);
+    }
+    if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, unwrapAstro(x)]));
+    return v;
+  }
+  function fromAstro(doc, spec) {
+    let island = null;
+    try {
+      island = [...doc.querySelectorAll("astro-island")].find((i) => String(i.getAttribute("component-url") || "").includes(spec.component));
+    } catch (e) {
+      return null;
+    }
+    let props = null;
+    try {
+      props = island && unwrapAstro(JSON.parse(island.getAttribute("props")));
+    } catch (e) {
+      return null;
+    }
+    if (!props) return null;
+    const get = (value, parts) => (!parts.length ? value : Array.isArray(value) ? value.map((x) => get(x, parts)) : get(value && value[parts[0]], parts.slice(1)));
+    const at = (path) => (path ? get(props, String(path).split(".")) : null);
+    const text = (v) => (typeof v === "string" ? v.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim() : "");
+    const cover = at(spec.cover);
+    const genres = at(spec.genre);
+    return {
+      title: text(at(spec.title)),
+      author: text(at(spec.author)),
+      description: paragraphs(typeof at(spec.description) === "string" ? at(spec.description).replace(/<\/p>/gi, "\n") : ""),
+      cover: typeof cover === "string" && /^https:\/\//.test(cover) ? cover : "",
+      genres: Array.isArray(genres) ? genres.filter((g) => typeof g === "string" && g.trim() && g.length <= 40).map((g) => g.trim()) : [],
+      status: statusOf(at(spec.status))
+    };
   }
 
   // The synopsis as paragraphs: the description may carry <br /> tags.
@@ -151,10 +191,12 @@
   // A book's page read through its site's rule (`rule`: { book, selector, fallback }); null if the page is a chapter, or says too little to be a book.
   // `fallback`: the site's built-in book selectors, when `book` has the person's own on top of them: a selector of theirs that finds nothing on this page
   // (it was picked on another book's page, where the author was the third line and not the second) gives way to the built-in one for that field.
-  function readBookByRule(doc, href, rule) {
+  // opts.asBook: the person said this is a book's page (Import to library, Refresh details): a chapter-text selector that also finds something here does not make it a
+  // chapter (generic ones, ".entry-content", match a third of the sites' book pages: docs/ADD-BOOK.md)
+  function readBookByRule(doc, href, rule, opts = {}) {
     if (!rule || !rule.book) return null;
     try {
-      if (rule.selector && doc.querySelector(rule.selector)) return null; // the chapter's text is here: this is a chapter, not a book
+      if (!opts.asBook && rule.selector && doc.querySelector(rule.selector)) return null; // the chapter's text is here: this is a chapter, not a book
     } catch (err) {
       return null;
     }
@@ -164,12 +206,19 @@
       const v = how(b[key], b);
       return (!v || !v.length) && f[key] && f[key] !== b[key] ? how(f[key], f) : v;
     };
-    const title = read("title", (sel, from) => firstText(doc, sel, from.titleDrop));
-    const author = read("author", (sel) => authorOf(doc, sel));
-    const description = read("description", (sel) => descriptionOf(doc, sel));
-    const cover = read("cover", (sel) => coverOf(doc, sel, href));
+    const astro = b.astro && b.astro.component ? fromAstro(doc, b.astro) : null; // (the page's own data, when the rule says where: it is believed first)
+    const title = (astro && astro.title) || read("title", (sel, from) => firstText(doc, sel, from.titleDrop));
+    const author = (astro && astro.author) || read("author", (sel) => authorOf(doc, sel));
+    let description = astro && astro.description.length ? astro.description : read("description", (sel) => descriptionOf(doc, sel));
+    // (a site whose synopsis is only in the page's description tag: wfwf528.com, a comic site)
+    if (!description.length) {
+      const md = doc.querySelector('meta[property="og:description"], meta[name="description"]');
+      const said = md ? String(md.getAttribute("content") || "").trim() : "";
+      if (said.length >= 30) description = paragraphs(said);
+    }
+    const cover = (astro && astro.cover) || read("cover", (sel) => coverOf(doc, sel, href));
     if (!title || !(author || cover || description.length)) return null;
-    const genres = read("genre", (sel) => genresOf(doc, sel));
+    const genres = astro && astro.genres.length ? astro.genres : read("genre", (sel) => genresOf(doc, sel));
     const url = new URL(href);
     const host = url.hostname.replace(/^www\./, "");
     return {
@@ -180,7 +229,7 @@
       authorRaw: author,
       synopsis: description,
       category: genres.slice(0, 8).join(" / "),
-      status: "",
+      status: (astro && astro.status) || "",
       cover,
       listUrl: href.split("#")[0] // the book's page is usually its list too; the extension finds the list from it with the site's rule
     };
@@ -226,11 +275,8 @@
     }
     const rule = builtin || mine ? { selector: (mine && mine.selector) || (builtin && builtin.selector), book: { ...((builtin && builtin.book) || {}), ...((mine && mine.book) || {}) }, fallback: (builtin && builtin.book) || null } : null;
     // a page with the standard metadata, completed (and corrected) through the selectors; or a page read through the selectors alone
-    const book = fillGaps(readBook(document, location.href), document, location.href, builtin && builtin.book, mine && mine.book) || readBookByRule(document, location.href, rule);
-    if (!book) return { saved: false, reason: "this page does not look like a book's page (it needs a title, and an author, a cover or a synopsis)" };
-    const stamps = (await ext.storage.local.get("bookCapturedAt")).bookCapturedAt || {};
-    const stamp = book.id + "#3"; // (the number says how the book was recorded: #2 titles by Gemini, #3 covers whole and copied to the library, so a book recorded by an older build is recorded again)
-    if (Date.now() - (stamps[stamp] || 0) < FRESH_MS) return { saved: true, fresh: true };
+    const book = fillGaps(readBook(document, location.href), document, location.href, builtin && builtin.book, mine && mine.book) || readBookByRule(document, location.href, rule, { asBook: true });
+    if (!book) return { saved: false, reason: "Too little was read from this page: a title, and an author, a cover or a synopsis" };
     const texts = textsOf(book);
     const ok = (r) => r && Array.isArray(r.texts) && r.texts.length === texts.length;
     // Gemini says what a title means; a build without it answers nothing, and the batch translator (Google) does it instead
@@ -240,10 +286,9 @@
     const info = toNovelInfo(book, english);
     const saved = await ext.runtime.sendMessage({ type: "novel:save", info }).catch(() => null);
     if (saved && saved.ok) {
-      stamps[stamp] = Date.now(); // only a successful hand-off counts, so a down server is retried on the next visit
-      await ext.storage.local.set({ bookCapturedAt: stamps });
-      const cover = await copyCover(info);
-      return { saved: true, cover };
+      // (Import to library is answered once the book is saved; its cover is copied after. A Refresh details visit waits for it: the visit's tab closes when told)
+      const cover = added ? (copyCover(info).catch(() => null), null) : await copyCover(info);
+      return { saved: true, cover, info: { id: info.id, title: info.title, author: info.author, url: info.url, listUrl: info.listUrl } };
     }
     return { saved: false, reason: "the library did not take the book" + (saved && saved.error ? " (" + saved.error + ")" : "") };
   }
@@ -280,12 +325,14 @@
     }
     return (await ext.runtime.sendMessage({ type: "cover:copy", id: info.id, url: info.cover, force }).catch((e) => ({ ok: false, error: e.message }))) || { ok: false, error: "no answer" };
   }
-  // A visit made by book-visit.js (its address ends in the marker) is told when the recording has finished, and how it went.
-  // (nothing until this extension is a device of a library, nor with "Library copy" off in its popup: it records nothing then)
-  (typeof browser !== "undefined" ? browser : chrome).storage.local.get(["libraryOn", "libraryCopy"]).then((r) => !!r.libraryOn && r.libraryCopy !== false, () => false)
+  // A book is recorded only when the person asks (docs/ADD-BOOK.md): Import to library in the popup (the background sets window.__p2preadAdd and runs this in the tab),
+  // or Refresh details (a visit made by book-visit.js: its address ends in the marker). Either is told when the recording has finished, and how it went.
+  // (nothing until this extension is a device of a library)
+  const added = window.__p2preadAdd === true;
+  window.__p2preadAdd = false;
+  if (!visited && !added) return;
+  (typeof browser !== "undefined" ? browser : chrome).storage.local.get(["libraryOn"]).then((r) => !!r.libraryOn, () => false)
     .then((on) => (on ? run() : { saved: false, reason: "the extension is not in a library yet" }))
     .catch((e) => ({ saved: false, reason: String((e && e.message) || e) }))
-    .then((result) => {
-      if (visited) ext.runtime.sendMessage({ type: "bookcapture:done", ...(result || { saved: false, reason: "nothing was recorded" }) }).catch(() => {});
-    });
+    .then((result) => ext.runtime.sendMessage({ type: "bookcapture:done", added, ...(result || { saved: false, reason: "nothing was recorded" }) }).catch(() => {}));
 })();

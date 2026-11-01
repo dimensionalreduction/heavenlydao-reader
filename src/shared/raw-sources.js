@@ -53,6 +53,38 @@
       return null;
     }
   };
+  // A rule can name one address for a chapter whatever the page says (rule.canonical(url): a book's address with a changing end left out), so the chapter keeps
+  // the same key when the site changes it; the site sends the short form on to the right page.
+  const canon = (rule, url) => (rule && typeof rule.canonical === "function" ? rule.canonical(url) : url);
+  // An Astro page keeps what its components show in the props of its <astro-island> elements, every value wrapped as [0, value] (a plain value) or [1, list]
+  // (asurascans.com). astroProps(doc, name): the props of the island whose component's file name has `name` in it, unwrapped; null when there is none.
+  function unwrapAstro(v) {
+    if (Array.isArray(v)) {
+      if (!v.length) return null;
+      if (v.length === 2 && Number.isInteger(v[0])) return unwrapAstro(v[1]);
+      if (v.length === 1 && Number.isInteger(v[0])) return null;
+      return v.map(unwrapAstro);
+    }
+    if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, unwrapAstro(x)]));
+    return v;
+  }
+  function astroProps(doc, name) {
+    let islands = [];
+    try {
+      islands = [...doc.querySelectorAll("astro-island")];
+    } catch (e) {
+      return null;
+    }
+    for (const island of islands) {
+      if (!String(island.getAttribute("component-url") || "").includes(name)) continue;
+      try {
+        return unwrapAstro(JSON.parse(island.getAttribute("props")));
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
+  }
   // The link to a further part of this chapter, never to the next chapter.
   const samePart = (href, url) => {
     const next = absolute(href, url);
@@ -259,24 +291,46 @@
 
   // The chapter text on one page: one paragraph per line, "" when the page has no chapter text (a Cloudflare page, a changed layout).
   function textOf(doc, rule) {
+    return readText(doc, rule).text;
+  }
+
+  // The same, and for a rule that keeps a chapter's pictures (rule.illustrations; needs the page's address, baseUrl, for them to be found): each picture between the
+  // paragraphs becomes a line of the text, "⟦image:N⟧" (ImageChapter.mark), numbered from `first` + 1, and its address is in `urls` (a picture shown twice is one).
+  // { text, urls }
+  function readText(doc, rule, baseUrl, first) {
+    const none = { text: "", urls: [] };
     let box = null;
-    if (!rule.selector) return ""; // (a site with only its chapter list saved: no text selector yet)
+    if (!rule.selector) return none; // (a site with only its chapter list saved: no text selector yet)
     try {
       box = doc.querySelector(rule.selector);
     } catch (e) {
-      return ""; // a selector the browser cannot use (a rule written wrong) finds nothing rather than failing the chapter
+      return none; // a selector the browser cannot use (a rule written wrong) finds nothing rather than failing the chapter
     }
-    if (!box) return "";
+    if (!box) return none;
     try {
       box.querySelectorAll(rule.junk || JUNK).forEach((n) => n.remove());
     } catch (e) {
       // an unusable junk selector: the junk stays, the story is still there
     }
     if (rule.clean) rule.clean(box);
+    const urls = [];
+    if (rule.illustrations && baseUrl && typeof ImageChapter !== "undefined") {
+      const number = new Map(); // address -> its number
+      for (const img of [...box.querySelectorAll("img")]) {
+        const w = Number(img.getAttribute("width"));
+        const h = Number(img.getAttribute("height"));
+        const url = (w && w < 60) || (h && h < 60) ? "" : ImageChapter.imgUrl(img, baseUrl); // (an icon, or a picture this cannot fetch, is not one)
+        if (!url) continue;
+        if (!number.has(url)) { urls.push(url); number.set(url, (first || 0) + urls.length); }
+        const line = doc.createElement("p");
+        line.textContent = ImageChapter.mark(number.get(url));
+        img.replaceWith(line);
+      }
+    }
     box.querySelectorAll("br").forEach((br) => br.replaceWith("\n"));
     // textContent runs block elements together: a line break after each paragraph (or heading, list item...) keeps them apart
     box.querySelectorAll("p, div, li, h1, h2, h3, h4, h5, h6, blockquote, tr, section").forEach((el) => el.append("\n"));
-    return String(box.textContent || "").split(/\n+/).map((l) => l.replace(/　/g, " ").trim()).filter(Boolean).join("\n");
+    return { text: String(box.textContent || "").split(/\n+/).map((l) => l.replace(/　/g, " ").trim()).filter(Boolean).join("\n"), urls };
   }
 
   const nextPart = (doc, url, rule) => (rule.next ? rule.next(doc, url) : null);
@@ -317,25 +371,54 @@
   // whatever the title says: titles repeat numbers (a chapter in parts, "第12章 (2/3)") and some have none, while the place in the list is one
   // number per entry, in order. It is the chapter's index in the library, and what long lists are grouped by.
   function tocChapters(doc, toc, html) {
-    return toc.rule.toc.list(doc, toc.url, html).map((c, i) => ({ num: i + 1, title: c.title, url: c.url }));
+    return toc.rule.toc.list(doc, toc.url, html).map((c, i) => ({ num: i + 1, title: c.title, url: canon(toc.rule, c.url) }));
   }
 
   // The other pages a list runs over, named by the first page: [address] (none for a one-page list).
   function tocPageUrls(doc, toc, html) {
     return typeof toc.rule.toc.pages === "function" ? toc.rule.toc.pages(doc, toc.url, html) : [];
   }
+  // A list's pagination bar often shows only a window of its pages (page 1 shows 2 ... 10, page 10 shows 5 ... 14, page 22 shows 13 ... 21): the last page named is read, its
+  // bar names more, and so on until a page names none that is not known. `more` (the addresses after the first page) is extended in place, in the order they are named; a
+  // page 1 under another name (pg=1, page=1) is the first page, not a new one. read(address) -> the addresses that page's bar names, or null (it could not be read: stop).
+  // 40 reads at most; a bar that shows every page is read once more (its last page) and found to name nothing new.
+  async function tocMorePages({ first, more, read, max = 150 }) {
+    const isFirst = (u) => {
+      try {
+        const a = new URL(u), b = new URL(first);
+        for (const k of [...a.searchParams.keys()]) if (/^(pg|page|paged|p)$/i.test(k) && a.searchParams.get(k) === "1") a.searchParams.delete(k);
+        return a.href === b.href;
+      } catch (e) {
+        return u === first;
+      }
+    };
+    for (let round = 0; more.length >= 5 && more.length < max && round < 40; round++) {
+      let named;
+      try {
+        named = await read(more[more.length - 1]);
+      } catch (e) {
+        return more; // (the pages named so far are read)
+      }
+      if (!named) return more;
+      const known = new Set([first, ...more]);
+      const fresh = named.filter((u) => !known.has(u) && !isFirst(u));
+      if (!fresh.length) return more;
+      more.push(...fresh.slice(0, max - more.length));
+    }
+    return more;
+  }
   // Pages of links joined in order (each address once), reversed once if the site lists newest first, then numbered by place: like tocChapters.
   function tocJoin(pagesOfLinks, toc) {
     const seen = new Set();
     let all = [];
-    for (const links of pagesOfLinks) for (const c of links) if (!seen.has(c.url)) { seen.add(c.url); all.push(c); }
+    for (const links of pagesOfLinks) for (const c of links) { const url = canon(toc.rule, c.url); if (!seen.has(url)) { seen.add(url); all.push({ ...c, url }); } }
     if (toc.rule.toc.reverse) all = all.reverse();
     return all.map((c, i) => ({ num: i + 1, title: c.title, url: c.url }));
   }
 
   // The same for a list that is JSON (toc.parse): [{ num, title, url }].
   function tocChaptersFromText(text, toc) {
-    return toc.rule.toc.parse(text, toc.url).map((c, i) => ({ num: i + 1, title: c.title, url: c.url }));
+    return toc.rule.toc.parse(text, toc.url).map((c, i) => ({ num: i + 1, title: c.title, url: canon(toc.rule, c.url) }));
   }
 
   // ---------- the next chapter ----------
@@ -353,14 +436,24 @@
   function chapterLink(doc, url, which, selectors, wording) {
     const here = chapterId(url);
     const host = hostOf(url);
+    const rule = ruleFor(url);
     const usable = (href) => {
       if (!href || /^\s*(javascript|#)/i.test(href)) return null;
       const found = absolute(href, url);
       if (!found || found === url || hostOf(found) !== host) return null;
-      return here && chapterId(found) === here ? null : found;
+      if (canon(rule, found) === canon(rule, url)) return null;
+      return here && chapterId(found) === here ? null : canon(rule, found);
     };
     const named = (ruleFor(url) || {}).nav;
-    if (named && named[which]) {
+    if (named && typeof named[which] === "function") { // a rule that reads the link from the page's data (asurascans.com)
+      try {
+        const found = named[which](doc, url);
+        const abs = found && absolute(found, url);
+        if (abs && hostOf(abs) === host && canon(rule, abs) !== canon(rule, url)) return canon(rule, abs);
+      } catch (e) {
+        // the usual places are tried
+      }
+    } else if (named && named[which]) {
       try {
         const el = doc.querySelector(named[which]);
         const found = el && usable(el.getAttribute("href"));
@@ -388,9 +481,9 @@
   const stripScripts = (html) => html.replace(/<script[\s\S]*?<\/script>/gi, "").replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*')/gi, "");
 
   const api = {
-    SOURCES, MIRRORS, register, registerAll, extend, hostsOf, waitFor, setUserRules, userHosts: () => Object.keys(USER), rawRule: (host) => RAW[String(host).replace(/^www\./, "").toLowerCase()] || null, registerMirror, mirrorUrl, ruleFor, hostOf, hostForSlug, decode, charsetOf, textOf, nextPart, nextChapter, prevChapter, tocFor, tocLinkOf, tocChapters, tocPageUrls, tocJoin, tocChaptersFromText, stripScripts,
+    canonicalUrl: (url) => canon(ruleFor(url), url), tocMorePages, readText, SOURCES, MIRRORS, register, registerAll, extend, hostsOf, waitFor, setUserRules, userHosts: () => Object.keys(USER), rawRule: (host) => RAW[String(host).replace(/^www\./, "").toLowerCase()] || null, registerMirror, mirrorUrl, ruleFor, hostOf, hostForSlug, decode, charsetOf, textOf, nextPart, nextChapter, prevChapter, tocFor, tocLinkOf, tocChapters, tocPageUrls, tocJoin, tocChaptersFromText, stripScripts,
     // for the rules in sources/ that need more than a selector
-    helpers: { JUNK, chapterId, absolute, samePart, linksUnder }
+    helpers: { JUNK, chapterId, absolute, samePart, linksUnder, astroProps }
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.RawSources = api;

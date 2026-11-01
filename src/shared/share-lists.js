@@ -1,14 +1,10 @@
-// The lists of the novels a library shares with its readers (`sbook:<book id>` in the library: a novel's details, and [number, title, chapter
-// key, when it was saved] for each chapter its devices hold), made from what a device holds. The same code in the library site (its copy in
-// site/vendor, by sync-vendor.js) and in the extension (library-host.js), so the lists stay current with or without a page of the site open.
-// Uses Chapters (the site's chapters.js; the extension's build copies it).
+// What the library knows of a novel, put together from what a device holds: the novels (from the sync's index and the chapters held), a novel's
+// record in the library, the keys its terms are kept under. The same code in the library site (its copy in site/vendor, by sync-vendor.js) and in
+// the extension (the notifications). Uses Chapters (the site's chapters.js; the extension's build copies it).
 //
 //   ShareLists.novelsOf({ index, have, chapterIndex })       the novels, from the sync's index and the chapters held (Chapters.buildNovels)
 //   ShareLists.infoFor(novel, records, chapterIndex)         the library's record of a novel (its title, author, cover...), or null
-//   ShareLists.manifest(novel, records, chapterIndex)        what its readers get
-//   ShareLists.write({ novels, books, rule, records, chapterIndex, put })   the lists brought up to date: each written together with the one the
-//     library has (Chapters.mergeShareList: nothing taken away), and, with every novel shared, the novels with chapters not shared yet added;
-//     only what changed is written. put(id, list). Answers how many were written.
+//   ShareLists.termKeys(novel)                               the keys its terms are kept under
 (function (root) {
   const C = () => root.Chapters;
   const listAddr = (u) => String(u || "").replace(/^https:\/\/www\./, "https://").replace(/\/+$/, "");
@@ -63,50 +59,11 @@
     return [...keys];
   }
 
-  // What readers of a novel get: its details, and its whole list of chapters: those held as [number, title, key, when saved], the rest (known from
-  // the source's chapter list, nobody has translated them) with 0 for when saved, so a reader sees them and can translate them with its own extension.
-  function manifest(novel, records, chapterIndex) {
-    const info = infoFor(novel, records, chapterIndex) || {};
-    const chapters = novel.chapters.map((r) => {
-      const v = r.versions.find((x) => x.key === r.key && x.have) || r.versions.find((x) => x.have);
-      return v ? [r.num, r.title, v.key, v.savedAt || 0] : [r.num, r.title, r.versions[0].key, 0];
-    });
-    return {
-      title: info.title || novel.name, author: info.author || "", authorRaw: info.authorRaw || "", rawTitle: info.rawTitle || "", names: (info.names || []).slice(0, 10),
-      synopsis: String(info.synopsis || "").slice(0, 3000), cover: info.cover || "", genres: (info.genres || []).slice(0, 12), tags: (info.tags || []).slice(0, 20),
-      status: info.status || "", rawStatus: info.rawStatus || "", rating: info.rating || 0, views: info.views || 0, source: info.source || "", url: info.url || "",
-      sources: (novel.sources || []).slice(0, 10), keys: termKeys(novel), coverId: info.coverCopy ? info.id : "", chapters
-    };
-  }
-
   function novelsOf({ index, have, chapterIndex }) {
     return C().buildNovels({ index: index || {}, have: have || new Set(), chapterIndex: chapterIndex || {}, extraNovels: [] });
   }
 
-  async function write({ novels, books, rule, records, chapterIndex, put, stable }) {
-    const { all, off } = rule || {};
-    if (!all && !Object.keys(books || {}).length) return 0;
-    const same = stable || ((a, b) => JSON.stringify(a) === JSON.stringify(b));
-    const stopped = new Set(off || []);
-    let written = 0;
-    for (const n of novels.values()) {
-      const id = bookIdOf(n);
-      if (books[id] && books[id].layer) continue; // (your version of someone's novel is kept by its own page: shareVersion)
-      if (!books[id] && !(all && !stopped.has(id) && n.chapters.some((r) => r.have))) continue;
-      const m = C().mergeShareList(manifest(n, records, chapterIndex), books[id] || null);
-      if (!same(m, books[id] || null)) {
-        try {
-          await put(id, m);
-          written++;
-        } catch (e) {
-          // (not written now: with the next change)
-        }
-      }
-    }
-    return written;
-  }
-
-  const api = { listAddr, hostOfUrl, sameBookUrl, indexKeysForUrl, listUrlOf, bookIdOf, infoFor, termKeys, manifest, novelsOf, write };
+  const api = { listAddr, hostOfUrl, sameBookUrl, indexKeysForUrl, listUrlOf, bookIdOf, infoFor, termKeys, novelsOf };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.ShareLists = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

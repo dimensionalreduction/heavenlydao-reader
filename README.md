@@ -19,7 +19,7 @@
   <h3 align="center">heavenlydao.com Reader</h3>
 
   <p align="center">
-    Extension that fetches web novels from the sites that publish them, translates them with Gemini, and keeps them in your own library on all your devices.
+    Extension that fetches web novels from the sites that publish them, translates them with Gemini, and keeps them in your own library in your browser.
     <br />
     <br />
     <a href="https://addons.mozilla.org/en-US/firefox/addon/heavenlydao-com-reader/">Firefox Add-ons</a>
@@ -72,10 +72,10 @@
 ## About The Project
 
 A browser extension for Chrome and Firefox that works with your [heavenlydao.com](https://p2p-library.pages.dev/) library. It fetches
-web-novel chapters from the sites that publish them, translates them with Gemini, and keeps them in your library on all your devices.
+web-novel chapters from the sites that publish them, translates them with Gemini, and keeps them in your library.
 
-The extension is one more device of your library. Your chapters, glossaries and settings live on your own devices and pass between them
-peer-to-peer. There is no account and no central server that holds them.
+The extension keeps your library in your browser, beside the library site's tab, which reads it through the extension. Your chapters,
+glossaries and settings never leave your computer. There is no account and no server that holds them.
 
 ### Features
 
@@ -86,7 +86,7 @@ peer-to-peer. There is no account and no central server that holds them.
 - **Teach it a new site.** *Detect with AI* finds a page's title, chapter list and next-chapter links. You can also pick the parts with the
   element picker or write the site's rule by hand.
 - **Watch for new chapters** on a schedule and fetch them as they come out. You get notifications even with the library site closed.
-- **Sync between your own devices** over WebRTC, and keep the libraries you follow available for other readers.
+- **Comics:** a comic's pictures are kept with its chapters, and their text can be translated and lettered in place.
 
 ## Installation
 
@@ -153,10 +153,9 @@ Every push also builds both extensions in GitHub Actions. Each run has them as t
 The extension does nothing until it has joined your library.
 
 1. Open the [library site](https://p2p-library.pages.dev/). Your library is created on your first visit.
-2. On the site, go to **Settings › Library › Passphrase** and press **Copy**.
-3. Click the extension's toolbar icon, paste the passphrase and press **Join**.
-4. The site shows "… asks to join". Press **Allow**.
-5. For *Detect with AI*, add a key from [Google AI Studio](https://aistudio.google.com/apikey) on the site, in **Settings › Translation › Paid by › Gemini**. The site hands it to the extension in the same browser.
+2. Click the extension's toolbar icon and press **Detect library**. It finds the library of the site's tab in this browser.
+3. Press **Join**. The site's tab lets the extension in at once.
+4. For *Detect with AI*, add a key from [Google AI Studio](https://aistudio.google.com/apikey) on the site, in **Settings › Connect › Tickets › Keys**. The site hands it to the extension in the same browser.
    Without a key, everything except that still works.
 
 ## The popup
@@ -164,7 +163,7 @@ The extension does nothing until it has joined your library.
 | Tab | What it is for |
 |---|---|
 | **Novel** | What the extension found on this page (title, chapter list, cover, author, synopsis), with *Detect with AI*, the element picker and the site's rule. |
-| **Library** | Your library's devices, letting a new one in, and how much it holds. |
+| **Library** | How much your library holds, how much of the comics' pictures to keep, and leaving the library. |
 
 The extension's options page (**My site rules**) lists the rules you wrote for sites it does not know.
 
@@ -175,9 +174,10 @@ The extension's options page (**My site rules**) lists the rules you wrote for s
 | `storage`, `unlimitedStorage` | Chapters, glossaries and your library are kept in the browser. |
 | `tabs`, `activeTab`, `scripting` | To read the page in front of you, translate it in place, and run the element picker and *Detect with AI* on it. |
 | `cookies` | Sites behind a bot check (Cloudflare) refuse the extension until the browser's pass for that site is copied over. |
-| `offscreen` (Chrome) | WebRTC sync cannot run in a Manifest V3 service worker, so it runs in an offscreen page. |
-| `alarms` | A once-a-minute tick for scheduled checks of new chapters, and to keep the sync running. |
-| `notifications` | Join requests and new chapters while no page of the site is open. |
+| `declarativeNetRequestWithHostAccess` | Sets the page a comic's pictures are shown on as their `Referer` while the extension fetches them, as a browser does (some sites refuse a picture without it). Only for sites you have allowed, only for the extension's own requests. |
+| `offscreen` (Chrome) | Reading the novel sites' pages needs a DOM, which a Manifest V3 service worker does not have, so it is done in an offscreen page (with the library). |
+| `alarms` | A once-a-minute tick for scheduled checks of new chapters, and to keep the offscreen page running. |
+| `notifications` | New chapters while no page of the site is open. |
 | `background` (Chrome) | Lets the browser keep the extension running with every window closed, if you turn that on in the browser. |
 | `generativelanguage.googleapis.com` | Gemini, with your key. |
 | `translate.googleapis.com` | Google Translate, for titles and book details. |
@@ -193,9 +193,8 @@ The extension's options page (**My site rules**) lists the rules you wrote for s
 - **What reaches Google Translate:** titles and book details, when your library's title translation uses it (the default).
 - **What reaches novel sites:** requests for the pages you ask for or that your watches check, made with your browser's own cookies for
   that site.
-- **What reaches the trackers** (`tracker.heavenlydao.com`, `tracker.webtorrent.dev`): an id derived from your passphrase, so your devices
-  can find each other. Chapters go directly between devices over WebRTC. Only devices that have proved they belong to your library get them,
-  plus the readers of anything you choose to share.
+- **What reaches the library site:** your library, through the site's tab in your own browser (`site-bridge.js`). Nothing of it is sent over
+  the network.
 - **The public pool** (`pool.heavenlydao.com`): the extension downloads it once a day, with no cookies and no referrer. It sends terms to it only if you
   turn on *Add my terms to the public pool* in the library's settings, after it has shown you exactly what would be added.
 - There is no analytics or telemetry, and the extension makes no other requests. The full policy is in [PRIVACY.md](PRIVACY.md).
@@ -203,19 +202,23 @@ The extension's options page (**My site rules**) lists the rules you wrote for s
 ## Development
 
 ```sh
-npm run build:dev    # also lets a copy of the site on localhost:3000 talk to the extension and keeps every novel site in the manifest (for local work; never ship it)
+npm run build:dev    # also lets a copy of the site on localhost:3000 talk to the extension and keeps every novel site in the manifest (for local work and the e2e tests; never ship it)
 npm test             # every test in test/, one after the other
 node test/<name>.test.js
 ```
 
+The end-to-end tests that drive the real site and extension in Playwright are in the library site's repository (`e2e/`).
+
 ```
-  src/shared/         code used by both browsers: the popup, the library (library-host.js), sync (p2p-core.js, p2p-host.js),
+  src/shared/         code used by both browsers: the popup, the library (library-host.js), the link to the site's tab (p2p-core.js, p2p-host.js),
                       Gemini (gemini.js), the site engine (raw-sources.js) and the site rules (sources/)
   src/chrome/         Manifest V3: manifest, service worker, offscreen page
   src/firefox/        Manifest V2: manifest, background page
   tools/              gen-sources.js (makes site rules from WebToEpub's parsers), test.js
   test/               unit and integration tests (plain Node, no framework)
-  vendor/             chapters.js, shared with the library site (how chapters are put together into novels)
+  vendor/             chapters.js and translate.js, the library site's own (how chapters are put together into novels, how a translation profile
+                      translates); ort/, onnxruntime-web for a comic's pictures
+  models/, fonts/     PaddleOCR's text detector and Comic Neue, for a comic's pictures
   reference/          WebToEpub, a git submodule
   build.js            joins src/shared and src/<browser> into dist/<browser> and adds every site's permission
 ```
@@ -228,7 +231,8 @@ node test/<name>.test.js
 
 - Most built-in site rules are generated from the parsers of [WebToEpub](https://github.com/dteviot/WebToEpub) (GPL-3.0) by
   `tools/gen-sources.js`.
-- Sync finds peers through [WebTorrent](https://github.com/webtorrent/webtorrent) (MIT) trackers.
+- A comic's pictures are read with [onnxruntime-web](https://github.com/microsoft/onnxruntime) (MIT) and PaddleOCR's text detector (Apache-2.0), and lettered in
+  [Comic Neue](https://github.com/crozynski/comicneue) (OFL-1.1).
 - The element picker's interaction follows [uBlock Origin](https://github.com/gorhill/uBlock)'s, without its code.
 
 ## License

@@ -5,7 +5,7 @@
 //   --notes "text" | --notes-file file         what's new (Firefox's release notes)
 //   --no-submit                                Chrome: upload the draft only, don't submit it for review
 //   --dry-run                                  say what would be sent, send nothing
-//   --env path                                 the .env to read (default: the nearest one above this folder, else ../../p2p-read/.env)
+//   --env path                                 the .env to read (default: the nearest one above this folder)
 // Credentials, in .env or the environment (docs/EXTENSION-RELEASES.md, "Store APIs", says where each comes from):
 //   AMO-JWT-ISSUER, AMO-JWT-SECRET                                      addons.mozilla.org › Developer Hub › Manage API Keys
 //   CHROME-CLIENT-ID, CHROME-CLIENT-SECRET, CHROME-REFRESH-TOKEN,       Google Cloud OAuth client + chrome-auth
@@ -31,7 +31,6 @@ function readEnv() {
       if (fs.existsSync(path.join(d, ".env"))) { file = path.join(d, ".env"); break; }
       if (path.dirname(d) === d) break;
     }
-    file = file || path.join(root, "..", "..", "p2p-read", ".env");
   }
   const env = {};
   if (fs.existsSync(file)) {

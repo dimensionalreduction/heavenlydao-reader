@@ -38,6 +38,18 @@ assert.strictEqual(CI.composeTitle({ ...items[0], body: "" }, ""), "Chapter 1", 
 assert.strictEqual(CI.composeTitle(items[2], "Postscript"), "Postscript", "extras keep their own translated title");
 assert.strictEqual(CI.composeTitle(items[2], ""), "后记", "...or their raw title if translation failed");
 
+// the list is the one in div#catalog: the "continue reading" entry above it (a#bookcase, the chapter last read, data-num 7) is not chapter 7
+(() => {
+  const li = (num, href, id) => ({ getAttribute: () => String(num), querySelector: (sel) => (id && sel.includes(":not(#" + id + ")") ? null : { textContent: "第" + num + "章", getAttribute: () => href }) });
+  const bookcase = li(7, "/txt/53042/39600339", "bookcase");
+  const listed = [li(1, "/txt/53042/34489970"), li(7, "/txt/53042/34489976"), li(632, "/txt/53042/39600339")];
+  const doc = { querySelectorAll: (sel) => (sel === "#catalog li[data-num]" ? listed : sel === "li[data-num]" ? [bookcase, ...listed] : []) };
+  const got = CI.parseItems(CI.SITES[0].items(doc), "https://www.69shuba.com/book/53042/");
+  assert.deepStrictEqual(got.map((i) => [i.num, i.url.slice(-8)]), [[1, "34489970"], [7, "34489976"], [632, "39600339"]], "第632章 keeps its own place");
+  const noCatalog = { querySelectorAll: (sel) => (sel === "li[data-num]" ? [bookcase, ...listed] : []) };
+  assert.deepStrictEqual(CI.parseItems(CI.SITES[0].items(noCatalog), "https://www.69shuba.com/book/53042/").map((i) => i.num), [1, 7, 632], "a page without #catalog: a#bookcase is still left out");
+})();
+
 // ================= batch translation =================
 const gemini = fs.readFileSync(path.join(__dirname, "..", "src", "shared", "gemini.js"), "utf8");
 vm.runInThisContext(gemini + "\n;globalThis.googleTranslateMany = googleTranslateMany;");

@@ -71,6 +71,49 @@
   .stat b { font-weight: 500; overflow-wrap: anywhere; }
   .box > .subtitle { margin: 0; }
 
+  /* the Novel tab (docs/ADD-BOOK.md, the design's PopupScreen): a book's page read, importing, a chapter's page */
+  .label-row.head { margin: 14px 0 8px; }
+  .label-row.head .label { margin: 0; }
+  .label-row.head:first-child { margin-top: 2px; }
+  .pill { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+  .pill.ok { color: #2e9d4a; background: rgba(63,185,80,.13); }
+  .box.book { display: grid; grid-template-columns: 78px minmax(0, 1fr); }
+  .box.book > * { padding: 0; border-top: 0; }
+  .box.book > .bk-cover { padding: 9px; display: flex; flex-direction: column; align-items: center; gap: 6px; border-right: 1px solid var(--border); }
+  .bk-img { width: 56px; height: 80px; border-radius: 6px; background: var(--card) center / cover no-repeat; border: 1px dashed var(--border); flex: none; }
+  .bk-img.has { border-style: solid; }
+  .bk-img.sm { width: 34px; height: 48px; }
+  .part-k { display: block; font-size: 10.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .bk-parts > div { padding: 7px 10px; border-top: 1px solid var(--border); }
+  .bk-parts > div:first-child { border-top: 0; }
+  .bk-parts .v { display: block; overflow-wrap: anywhere; }
+  .bk-parts .v.no { color: var(--muted); }
+  .bk-parts .v.big { font-weight: 600; }
+  .mk { font-weight: 700; margin-right: 5px; }
+  .mk.ok { color: #3fb950; } .mk.no { color: #e5534b; }
+  .acts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+  .wide { width: 100%; margin-top: 10px; }
+  .mini { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+  .mini b { display: block; } .mini span { font-size: 12px; color: var(--muted); }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .row .k { flex: 1; min-width: 0; }
+  .row .k small { display: block; font-size: 11.5px; color: var(--muted); }
+  .row b.r { font-weight: 600; white-space: nowrap; }
+  .seg { display: inline-flex; padding: 3px; gap: 2px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
+  .seg button { padding: 3px 10px; border: 1px solid transparent; background: transparent; color: var(--muted); border-radius: 6px; font-size: 12.5px; }
+  .seg button[aria-pressed="true"] { background: var(--bg); border-color: var(--border); color: var(--fg); }
+  .bar { height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; flex: 1; }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 3px; }
+  .bar.done > i { background: #3fb950; }
+  .spin { display: inline-block; width: 11px; height: 11px; border: 2px solid var(--accent); border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; margin-right: 6px; vertical-align: -1px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .chcard .ch-top b { display: block; font-size: 15px; }
+  .chcard .ch-top span { font-size: 12px; color: var(--muted); }
+  .chcard a { text-decoration: none; font-weight: 600; display: flex; justify-content: space-between; }
+  .foot { margin-top: 12px; display: flex; gap: 12px; justify-content: flex-end; }
+  .linkish { background: none; border: 0; padding: 0; color: var(--muted); font-size: 12px; text-decoration: underline; }
+  .pane .label.warn { border-left-color: #c9871f; }
+
   /* the lock screen */
   #lock .lock-input { margin: 8px 0; }
   #lock .lock-text { color: var(--muted); line-height: 1.5; margin: 0 0 6px; }
@@ -105,13 +148,6 @@
     </div>
     <div id="lockFound" class="box" hidden></div>
     <a id="lockSite" target="_blank" rel="noopener" hidden></a>
-    <div id="lockPassRow">
-      <input class="lock-input" id="lockPass" type="password" autocomplete="off" spellcheck="false" placeholder="Your library's passphrase">
-      <div class="lock-row">
-        <button class="btn-secondary" id="lockJoin">Join</button>
-      </div>
-    </div>
-    <div class="lock-row"><button class="btn-secondary" id="lockStop" hidden>Stop asking</button></div>
     <p class="lock-text" id="lockNote" style="margin-top:8px;"></p>
   </div>
 
@@ -120,27 +156,10 @@
   <div class="section" id="accessBar" hidden></div>
   <!-- the page in front of you: which novel, which chapter (popup.js) -->
   <div class="section" id="header">
-    <div class="label-row">
-      <label class="switch" title="On: the novels you open are recorded in your library (their details, cover and chapter list). Off: this extension records nothing there."><input type="checkbox" id="libraryCopy"> Library copy</label>
-    </div>
-    <div class="label-row" style="margin:6px 0 0;">
-      <span class="label" style="margin:0;">NOVEL</span>
-      <div class="btn-group">
-        <button class="icon-btn" id="novelPickBtn" title="Pick the element that holds the novel name">⌖</button>
-        <button class="icon-btn" id="novelEditBtn" title="Type the novel name">✎</button>
-        <button class="icon-btn" id="novelDefaultBtn" title="Back to the one found on the page">↺</button>
-      </div>
-    </div>
+    <div class="label">NOVEL</div>
     <div class="title" id="novelName">—</div>
-    <div class="label-row" style="margin:6px 0 0;">
-      <span class="label" style="margin:0;">CHAPTER</span>
-      <div class="btn-group">
-        <button class="icon-btn" id="pickTitleBtn" title="Pick the element that holds the chapter title">⌖</button>
-        <button class="icon-btn" id="titleEditBtn" title="Type the chapter title">✎</button>
-        <button class="icon-btn" id="titleDefaultBtn" title="Back to the one found on the page">↺</button>
-      </div>
-    </div>
-    <div class="title" id="pageTitle">—</div>
+    <div class="label" style="margin-top:8px;">CHAPTER</div>
+    <div class="title" id="pageTitle" style="font-weight:500;">—</div>
   </div>
 
   <div class="card">
@@ -149,18 +168,41 @@
     <button role="tab" data-pane="library" aria-selected="false">Library</button>
   </div>
 
-  <!-- where this site keeps each part of a novel, and whether it is found on this page -->
+  <!-- the page in front of you (docs/ADD-BOOK.md): a book's page (Import to library) or a chapter's page (Translate, Listen: nothing kept) -->
   <div class="pane section" id="pane-novel">
-    <div class="label">Detection</div>
-    <div id="detList" class="box muted">Looking at the page…</div>
-    <div class="method" id="detInfo"></div>
-    <div class="btn-group" style="margin-top:8px;flex-wrap:wrap;">
-      <button class="icon-btn" id="detectBtn" title="Ask Gemini which parts of this page are what: on a book's page its title, author, synopsis, cover, genres and chapter list; on a chapter's page the next and previous chapter links. They are saved as a rule for this site">✦ Detect with AI</button>
-      <button class="icon-btn" id="siteRuleBtn" title="Write or change this site's rule by hand">Site rule…</button>
-      <button class="icon-btn" id="detailsBtn" title="Read this novel's page again for its title, author, cover, synopsis and genres, and keep them in your library" disabled>↻ Refresh details</button>
+    <div id="pageNote" class="box muted">Looking at the page…</div>
+    <div id="bookView" hidden>
+      <div class="label-row head"><div class="label">Read from this page</div><span class="pill ok" id="bkInLib" hidden>In your library</span></div>
+      <div class="box book">
+        <div class="bk-cover"><div class="bk-img" id="bkCover"></div><span class="part-k" id="bkCoverMark"></span></div>
+        <div class="bk-parts" id="bkParts"></div>
+      </div>
+      <div class="acts" id="bkNew">
+        <button id="importBtn">Import to library</button>
+        <button id="detectBtn">✦ Detect with AI</button>
+      </div>
+      <div id="bkHave" hidden>
+        <button class="btn-primary wide" id="openLibBtn">Open in library ↗</button>
+        <div class="acts"><button id="detailsBtn">Refresh details</button><button id="chaptersBtn">Refresh chapters</button></div>
+        <div class="acts"><button id="detectHaveBtn">✦ Detect with AI</button></div>
+      </div>
+      <div class="subtitle" id="detInfo"></div>
+      <div class="subtitle" id="geminiNote" hidden>No Gemini key: Detect finds the chapter list from the page alone (a key: Settings › Translation in your library)</div>
     </div>
-    <div class="subtitle" id="detailsNote"></div>
-    <div class="subtitle" id="geminiNote" hidden>Detect with AI needs your Gemini key: add it in the library's Settings › Translation › Paid by, then open the library once in this browser.</div>
+    <div id="importView" hidden>
+      <div class="label-row head"><div class="label" id="imHead">Importing</div><span class="pill ok" id="imInLib" hidden>In your library</span></div>
+      <div class="mini"><div class="bk-img sm" id="imCover"></div><div><b id="imTitle"></b><span id="imAuthor"></span></div></div>
+      <div class="box" id="imSteps"></div>
+      <button class="btn-primary wide" id="imOpen" hidden>Open in library ↗</button>
+    </div>
+    <div id="chapterView" hidden>
+      <div class="box chcard"><div class="ch-top"><b id="chTitle"></b><span id="chWhat"></span></div><a href="#" id="chBook" hidden></a></div>
+      <div class="label-row head"><div class="label" id="trHead">Translate</div><span id="trSide"></span></div>
+      <div id="trBody"></div>
+      <div class="label-row head" id="lsHead"><div class="label">Listen</div></div>
+      <div id="lsBody"></div>
+    </div>
+    <div class="foot"><button class="linkish" id="asOther" hidden></button><button class="linkish" id="siteRuleBtn">Site rule…</button></div>
   </div>
 
   <!-- your library -->
@@ -171,11 +213,6 @@
     </div>
     <div id="libStats" class="box muted" style="margin-top:6px;">Loading…</div>
     <div class="subtitle" id="myLibText" style="margin-top:8px;">Checking…</div>
-    <div id="myLibJoins"></div>
-    <div class="label">Passphrase</div>
-    <input type="password" class="edit-input" id="p2pPassphrase" placeholder="Your library's passphrase" autocomplete="off">
-    <div class="subtitle" id="p2pStatus" style="margin-top:6px;"></div>
-    <div class="subtitle" id="p2pBackground" style="margin-top:4px;" hidden></div>
     <div class="label">Leave</div>
     <div id="leaveBox" class="box">
       <div class="work">
@@ -188,6 +225,12 @@
         <button class="btn-secondary" id="leaveNo">Cancel</button>
       </div>
     </div>
+    <div class="label">Comic pictures</div>
+    <div class="work">
+      <div class="what"><b>Keep at most</b><span>GB of pictures in this browser</span></div>
+      <input type="number" id="picMax" min="1" max="500" value="10">
+      <button class="btn-secondary" id="picSave">Save</button>
+    </div>
   </div>
   </div>
   </div>
@@ -195,9 +238,12 @@
   <script src="popup-lock.js"></script>
   <script src="gemini.js"></script>
   <script src="raw-sources.js"></script>
+  <script src="image-chapter.js"></script>
   <script src="site-access.js"></script>
   <script src="user-rules.js"></script>
   <script src="popup.js"></script>
+  <script src="picture-limit.js"></script>
   <script src="popup-library.js"></script>
+  <script src="popup-pictures.js"></script>
 </body>
 </html>

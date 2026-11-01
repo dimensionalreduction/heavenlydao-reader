@@ -319,6 +319,11 @@ assert.deepStrictEqual(tools.dataFiles().map((f) => path.basename(f))[0], "_gene
   const doc = { querySelectorAll: (sel) => (sel === "li[data-num]" ? [li(770, "/txt/74649/40938079", "第770章 末"), li(2, "/txt/74649/38724947", "第2章 二"), li(1, "/txt/74649/38724946", "第1章 一"), li(0, "/txt/74649/x", "最新"), li(2, "/txt/74649/38724947", "第2章 二（重复）")] : []) };
   const listed = shu.toc.list(doc, "https://www.69shuba.com/book/74649/");
   assert.deepStrictEqual(Array.from(listed, (c) => c.url), ["https://www.69shuba.com/txt/74649/38724946", "https://www.69shuba.com/txt/74649/38724947", "https://www.69shuba.com/txt/74649/40938079"], "in the site's own order, a repeated chapter once, the unnumbered entry left out");
+  // the "continue reading" entry above div#catalog (a#bookcase: the chapter last read, data-num 7) is not chapter 7
+  const lo = (n, href, id) => ({ getAttribute: () => String(n), querySelector: (sel) => (id && sel.includes(":not(#" + id + ")") ? null : { getAttribute: () => href, textContent: "第" + n + "章" }) });
+  const inCatalog = [lo(632, "/txt/53042/39600339"), lo(7, "/txt/53042/34489976"), lo(1, "/txt/53042/34489970")];
+  const withBookcase = { querySelectorAll: (sel) => (sel === "#catalog li[data-num]" ? inCatalog : sel === "li[data-num]" ? [lo(7, "/txt/53042/39600339", "bookcase"), ...inCatalog] : []) };
+  assert.deepStrictEqual(Array.from(shu.toc.list(withBookcase, "https://www.69shuba.com/book/53042/"), (c) => c.title), ["第1章", "第7章", "第632章"], "第632章 in its own place");
 })();
 
 // tomatomtl.com: the text is encrypted in the page; the list is JSON; a fanqienovel chapter is mirrored there

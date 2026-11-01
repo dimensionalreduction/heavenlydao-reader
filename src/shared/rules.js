@@ -15,12 +15,17 @@
   const SECTIONS = [
     ["The site", [
       { id: "host", label: "Site", hint: "Just the name, like example.com", mono: true },
-      { id: "name", label: "Label", hint: "Anything that helps you tell rules apart (optional)" }
+      { id: "name", label: "Label", hint: "Anything that helps you tell rules apart (optional)" },
+      { id: "slugSuffix", label: "A book's address ends in a part the site changes", hint: "Like …/some-book-11fe7da3/: chapters are kept without it", check: true }
     ]],
     ["Chapter text", [
       { id: "selector", label: "The chapter's text", hint: "The element that holds it, like div.content or #chapter-body. For a built-in site, leave it empty to keep the built-in one", mono: true, wide: true },
+      { id: "illustrations", label: "Keep the pictures in the text", hint: "Pictures between the paragraphs are fetched with the chapter and shown where they are", check: true },
       { id: "junk", label: "Remove from the text", hint: "Elements inside it that are not story (ads, notices), like .ad, #share", mono: true, wide: true },
       { id: "charset", label: "Text encoding", hint: "Leave on automatic unless the text comes out as garbage", select: [["", "Automatic"], ...UR.CHARSETS.map((c) => [c, c])] }
+    ]],
+    ["Chapter pictures (a comic)", [
+      { id: "images", label: "The chapter's pictures", hint: "The <img> elements or the box that holds them, like #pages img or div.reader", mono: true, wide: true }
     ]],
     ["Moving between chapters (optional)", [
       { id: "nav.next", label: "The link to the next chapter", hint: "On a chapter's page, like a#next or .nav-next a. Leave empty to let the extension look for it", mono: true },
@@ -109,7 +114,7 @@
 
   // the form -> a spec (not yet checked)
   function specFromForm() {
-    const spec = { host: val("host"), name: val("name"), selector: val("selector"), junk: val("junk"), charset: val("charset") };
+    const spec = { host: val("host"), name: val("name"), selector: val("selector"), images: val("images"), slugSuffix: val("slugSuffix"), illustrations: val("illustrations"), junk: val("junk"), charset: val("charset") };
     const toc = {
       list: val("toc.list"), boxes: val("toc.boxes"), pick: val("toc.pick"), reverse: val("toc.reverse"), gap: val("toc.gap"), titleDrop: val("toc.titleDrop"),
       pages: { kind: val("toc.pagesKind"), selector: val("toc.pagesSelector"), attr: val("toc.pagesAttr") },
@@ -133,6 +138,9 @@
     setVal("host", s.host);
     setVal("name", s.name);
     setVal("selector", s.selector);
+    setVal("images", s.images);
+    setVal("slugSuffix", s.slugSuffix);
+    setVal("illustrations", s.illustrations);
     setVal("junk", s.junk);
     setVal("charset", s.charset);
     setVal("toc.list", t.list);
@@ -327,6 +335,11 @@
         say(read.text.split("\n").length + " paragraphs, " + read.text.length + " characters.\nThe chapter's data: " + page.url + "\nThe next chapter's address: " + (read.next || "not found") + "\n\n" + clip(read.text, 900));
       } else if (kind === "chapter") {
         const page = await fetchForTrial(rule, v.spec.host, address);
+        if (rule.images) {
+          const urls = ImageChapter.urlsOf(page.doc, rule.images, page.url);
+          if (!urls.length) return say("Nothing found: the page has no pictures matching " + v.spec.images + ".\nCheck the selector, or whether the site needs you to be logged in.");
+          return say(urls.length + " pictures.\n\n" + [...urls.slice(0, 3), urls.length > 6 ? "…" : "", ...urls.slice(3).slice(-3)].filter((u) => u !== "").join("\n"));
+        }
         const text = RawSources.textOf(page.doc, rule);
         if (!text) return say("Nothing found: the page has no element matching " + v.spec.selector + ".\nCheck the selector, or whether the site needs you to be logged in.");
         const lines = text.split("\n");

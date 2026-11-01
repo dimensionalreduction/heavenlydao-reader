@@ -99,7 +99,9 @@
   // A title like "Chapter 3: Name" reads better than a translated page title ("... - 69 Book Bar").
   const titleScore = (t) => (/^Chapter\s*\d+\s*[:：.\-–]/i.test(t) ? 1 : 0);
 
-  function makeRow(num, versions, pref, originals) {
+  // pictures: Map(original key -> saved at) of the chapters whose pictures are here (their "#original" entry is the stand-in, model "images"): a comic's chapter is downloaded
+  // when its pictures are, there is nothing to translate
+  function makeRow(num, versions, pref, originals, pictures) {
     const vs = versions.slice().sort((a, b) => sourceRank(a.source, pref) - sourceRank(b.source, pref) || a.source.localeCompare(b.source) || b.savedAt - a.savedAt);
     const pick = vs.find((v) => v.have) || vs.find((v) => !v.indexedOnly) || vs[0];
     const titled = vs.slice().sort((a, b) => titleScore(b.title) - titleScore(a.title))[0];
@@ -113,8 +115,9 @@
       key: pick.key, // what opens when the row is clicked: the preferred source's copy, or any copy you have
       source: pick.source,
       haveRaw: !!originals && vs.every((v) => v.indexedOnly) && originals.has(vs[0].key + ORIGINAL),
+      pictures: !!pictures && vs.every((v) => v.indexedOnly) && pictures.has(vs[0].key + ORIGINAL), // the chapter is pictures and they are here
       rawKey: vs.every((v) => v.indexedOnly) ? vs[0].key + ORIGINAL : null, // where this chapter's original text lives, if nobody translated it
-      savedAt: Math.max(0, ...vs.map((v) => v.savedAt))
+      savedAt: Math.max(0, ...vs.map((v) => v.savedAt), (pictures && vs.every((v) => v.indexedOnly) && pictures.get(vs[0].key + ORIGINAL)) || 0)
     };
   }
 
@@ -132,31 +135,6 @@
     return wtrIdOf(key) || bindingKeyOfChapter(key) || "name:" + novelName + "@" + hostOf(key);
   }
   // A number for a book: 10 digits, from a 53-bit hash of it (cyrb53).
-  // A shared novel's list (what its readers get: its details, and [number, title, chapter key, when saved] for each chapter), as this device
-  // makes it, put together with the one the library has: a device adds what it knows and never takes away what only the stored list has.
-  // Each chapter is the newer of the two (by when it was saved; as new: the stored one), the stored list's chapters this device does not have stay, and a detail
-  // this device does not know (a device that never read the novels' details: an empty author, no cover) keeps the stored one.
-  function mergeShareList(mine, stored) {
-    if (!stored) return mine;
-    const out = Object.assign({}, stored, mine);
-    for (const [k, v] of Object.entries(mine)) {
-      if (k === "chapters") continue;
-      const empty = v == null || v === "" || v === 0 || (Array.isArray(v) && !v.length);
-      if (empty && stored[k] != null) out[k] = stored[k];
-    }
-    const byKey = new Map();
-    for (const c of stored.chapters || []) byKey.set(c[2], c);
-    for (const c of mine.chapters || []) { const was = byKey.get(c[2]); if (!was || (c[3] || 0) > (was[3] || 0)) byKey.set(c[2], c); }
-    const mineKeys = new Set((mine.chapters || []).map((c) => c[2]));
-    const extra = (stored.chapters || []).some((c) => !mineKeys.has(c[2]));
-    const chapters = [...byKey.values()];
-    // (in this device's order when it has every chapter; else by number, those with none last, as they came)
-    if (extra) chapters.sort((a, b) => (a[0] == null) - (b[0] == null) || (a[0] || 0) - (b[0] || 0));
-    else chapters.sort((a, b) => (mine.chapters || []).findIndex((c) => c[2] === a[2]) - (mine.chapters || []).findIndex((c) => c[2] === b[2]));
-    out.chapters = chapters;
-    return out;
-  }
-
   function numIdOf(book) {
     let h1 = 0xdeadbeef;
     let h2 = 0x41c6ce57;
@@ -174,11 +152,21 @@
     const books = new Map(); // book -> { book, names: Map<name, count>, versions, wtrIds, listKeys }
     const langs = new Map(); // chapter key -> Map<language, { key, savedAt, model, have }>: its versions in other languages
     const originals = new Set(); // chapters whose original text is saved ("<chapter key>#original"); not translations, so no row of their own
+    const pictures = new Map(); // ...of which these are a chapter of pictures (model "images"): key -> saved at
     const bookOf = (book) => books.get(book) || books.set(book, { book, names: new Map(), versions: [], wtrIds: new Set(), listKeys: new Set() }).get(book);
     for (const key of new Set([...Object.keys(index), ...have])) {
       if (!key.startsWith("translation:")) continue; // glossaries and bindings may share the store
       if (key.endsWith(ORIGINAL)) {
         if (have.has(key)) originals.add(key);
+        if (have.has(key) && (index[key] || {}).model === "images") pictures.set(key, (index[key] || {}).savedAt || 0);
+        // an uploaded comic's chapter (its EPUB's pictures): its stand-in is all there is of it until it is translated, so it makes the chapter's row, as a site's list would
+        const base = key.slice(0, -ORIGINAL.length), up = uploadOf(base), om = index[key] || {};
+        if (up && om.model === "images" && !index[base] && !have.has(base)) {
+          const name = cleanName(om.novelName);
+          const b = bookOf(bookOfChapter(base, name));
+          b.versions.push({ key: base, source: sourceLabel(base), host: hostOf(base), title: tidyTitle(cleanTitle(om.pageTitle, base), om.novelName), savedAt: 0, model: "", have: false, num: up.n, indexedOnly: true });
+          b.names.set(name, (b.names.get(name) || 0) + 1);
+        }
         continue;
       }
       const lang = langOf(key);
@@ -274,7 +262,7 @@
         if (v.num == null) loose.push([v]);
         else (byNum.get(v.num) || byNum.set(v.num, []).get(v.num)).push(v);
       }
-      const rows = [...byNum.entries()].map(([num, group]) => makeRow(num, group, "auto", originals)).concat(loose.map((group) => makeRow(null, group, "auto", originals)));
+      const rows = [...byNum.entries()].map(([num, group]) => makeRow(num, group, "auto", originals, pictures)).concat(loose.map((group) => makeRow(null, group, "auto", originals, pictures)));
       rows.sort((a, b2) => (a.num != null && b2.num != null ? a.num - b2.num : a.num != null ? -1 : b2.num != null ? 1 : a.savedAt - b2.savedAt));
       const listId = "book:" + b.book;
       for (const r of rows) r.list = listId;
@@ -342,7 +330,7 @@
   const keyForSource = (row, source) => (row.versions.find((v) => v.source === source && v.have) || {}).key || row.key;
 
   const isUploadNovel = (novel) => !!novel && String(novel.book || "").startsWith("record:up-");
-  const api = { ORIGINAL, langOf, baseKeyOf, UPLOAD_LABEL, uploadOf, uploadKey, isUploadNovel, cleanName, cleanTitle, tidyTitle, chapterNumber, hostOf, sourceLabel, isWtr, wtrIdOf, bindingKeyOfChapter, buildNovels, mergeShareList, numIdOf, bookOfChapter, listView, allRows, allVersions, rowKeys, rowHasKey, findByKey, keyForSource };
+  const api = { ORIGINAL, langOf, baseKeyOf, UPLOAD_LABEL, uploadOf, uploadKey, isUploadNovel, cleanName, cleanTitle, tidyTitle, chapterNumber, hostOf, sourceLabel, isWtr, wtrIdOf, bindingKeyOfChapter, buildNovels, numIdOf, bookOfChapter, listView, allRows, allVersions, rowKeys, rowHasKey, findByKey, keyForSource };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.Chapters = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

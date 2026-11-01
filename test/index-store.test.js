@@ -2,7 +2,6 @@
 // adapter to save only the entries that changed (putIndex) instead of the whole index each time. Run: node test/index-store.test.js
 const assert = require("assert");
 const path = require("path");
-const WebTorrent = require("webtorrent");
 require(path.join(__dirname, "..", "src", "shared", "p2p-core.js"));
 const { createP2P, bucketedIndex, INDEX_BUCKETS } = globalThis.P2PCore;
 
@@ -46,7 +45,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   let wholeSaves = 0;
   const chapters = new Map();
   const adapter = {
-    getConfig: async () => ({ enabled: true, passphrase: "index store test", trackers: ["ws://127.0.0.1:1"] }),
+    getConfig: async () => ({}),
     getIndex: async () => ({}),
     setIndex: async () => { wholeSaves++; },
     putIndex: async (c) => { saved.push(c); },
@@ -54,7 +53,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     setTranslation: async (k, e) => { chapters.set(k, e); },
     listTranslations: async () => [...chapters].map(([k, e]) => [k, { savedAt: e.savedAt, translated: true }])
   };
-  const core = createP2P({ WebTorrent, adapter, makeSeedInput: (bytes, name) => Object.assign(Buffer.from(bytes), { name }), log: () => {} });
+  const core = createP2P({ adapter, log: () => {} });
   await core.start();
   for (let i = 0; i < 5; i++) {
     const e = { translated: "Text " + i, savedAt: 1000 + i, pageTitle: "Chapter " + i };

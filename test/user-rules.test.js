@@ -84,7 +84,7 @@ assert.strictEqual(RS.ruleFor("https://example.com/book/1").selector, "div.conte
 assert.strictEqual(RS.ruleFor("https://www.69shuba.com/txt/1/2").selector, "div.mine", "the person's rule wins over the built-in one for the same site");
 assert.ok(RS.tocFor("https://example.com/x") === null && typeof RS.ruleFor("https://example.com/x").toc === "undefined", "(this one has no chapter list rule)");
 assert.deepStrictEqual(RS.userHosts().sort(), ["69shuba.com", "example.com"]);
-assert.strictEqual(RS.hostForSlug("example.com"), "example.com", "wtr-lab's raw source names a site of theirs too");
+assert.strictEqual(RS.hostForSlug("example.com"), "example.com", "the translation site's raw source names a site of theirs too");
 UR.apply({});
 assert.strictEqual(RS.ruleFor("https://example.com/a"), null, "removed: gone");
 assert.strictEqual(RS.ruleFor("https://www.69shuba.com/txt/1/2").selector, "div.txtnav", "and the built-in rule is back");
@@ -103,6 +103,36 @@ assert.deepStrictEqual(UR.bookTable({ "example.com": { spec: { ...good, book: { 
   const listRule = UR.toRule(UR.validate(listOnly).spec);
   assert.ok(listRule.toc && !listRule.selector, "it has the list and no text selector");
   assert.strictEqual(RS.textOf({ querySelector: () => { throw new Error("must not be asked"); } }, listRule), "", "and reads no text rather than failing");
+  // a site whose chapters are pictures (a comic): the pictures' selector stands in for the text selector
+  const comic = { host: "asurascans.com", images: "#pages img", toc: { list: "a.chapter" } };
+  assert.ok(UR.validate({ host: "asurascans.com", images: "#pages img" }).ok, "the pictures' selector is enough for a rule");
+  assert.strictEqual(UR.toRule(UR.validate(comic).spec).images, "#pages img", "the rule carries it");
+  assert.strictEqual(UR.validate({ host: "asurascans.com", images: "  " }).errors[0].field, "selector", "(without either, the text selector is asked for)");
+  // a changing end of a book's address (asurascans.com: /comics/some-book-11fe7da3/chapter/1) is left out of the chapter addresses
+  assert.strictEqual(UR.dropSlugSuffix("https://asurascans.com/comics/genius-prismatic-mage-11fe7da3/chapter/1?x=1#y"), "https://asurascans.com/comics/genius-prismatic-mage/chapter/1?x=1#y");
+  assert.strictEqual(UR.dropSlugSuffix("https://x.example/comics/champions-league/chapter/2"), "https://x.example/comics/champions-league/chapter/2", "a word of 8 letters is not a suffix (it needs a digit)");
+  assert.strictEqual(UR.dropSlugSuffix("not an address"), "not an address");
+  const slugRule = UR.toRule(UR.validate({ host: "asurascans.com", images: "#pages img", slugSuffix: true }).spec);
+  assert.strictEqual(slugRule.canonical("https://asurascans.com/comics/a-book-0a1b2c3d/chapter/9"), "https://asurascans.com/comics/a-book/chapter/9", "the rule has it");
+  assert.ok(!UR.toRule(UR.validate({ host: "asurascans.com", images: "#pages img" }).spec).canonical, "and only when asked for");
+  assert.strictEqual(UR.validate({ host: "asurascans.com", images: "#pages img", slugSuffix: "yes" }).spec.slugSuffix, undefined, "(only true counts)");
+  // and the engine keeps chapters under that short address: the list, and the link to the next chapter
+  {
+    const spec = UR.validate({ host: "asurascans.com", images: "#pages img", slugSuffix: true, nav: { next: "a.next" }, toc: { list: "a.chapter" } }).spec;
+    RS.setUserRules({ "asurascans.com": UR.toRule(spec) });
+    const link = (href, text) => ({ getAttribute: (n) => (n === "href" ? href : null), textContent: text || "" });
+    const chapterPage = "https://asurascans.com/comics/a-book-0a1b2c3d/chapter/1";
+    const doc = { querySelector: (sel) => (sel === "a.next" ? link("/comics/a-book-0a1b2c3d/chapter/2") : null), querySelectorAll: (sel) => (sel === "a.chapter" ? [link("/comics/a-book-0a1b2c3d/chapter/1", "One"), link("/comics/a-book-0a1b2c3d/chapter/2", "Two")] : []) };
+    assert.strictEqual(RS.nextChapter(doc, chapterPage), "https://asurascans.com/comics/a-book/chapter/2", "the next chapter's link is kept without the changing end");
+    const samePage = { querySelector: (sel) => (sel === "a.next" ? link("/comics/a-book-0a1b2c3d/chapter/1") : null), querySelectorAll: () => [] };
+    assert.strictEqual(RS.nextChapter(samePage, "https://asurascans.com/comics/a-book/chapter/1"), null, "a link to the page itself, with or without the end, is not the next chapter");
+    const toc = RS.tocFor(chapterPage);
+    assert.ok(toc, "(the rule has a list)");
+    assert.deepStrictEqual(RS.tocChapters(doc, { rule: toc.rule, url: chapterPage }, "").map((c) => c.url), ["https://asurascans.com/comics/a-book/chapter/1", "https://asurascans.com/comics/a-book/chapter/2"], "the list's chapters too");
+    assert.strictEqual(RS.canonicalUrl(chapterPage), "https://asurascans.com/comics/a-book/chapter/1");
+    assert.strictEqual(RS.canonicalUrl("https://69shuba.tw/x-0a1b2c3d/1"), "https://69shuba.tw/x-0a1b2c3d/1", "a site without the setting keeps its addresses");
+    RS.setUserRules({});
+  }
   const v2 = UR.validate({ host: "69shuba.tw", book: { cover: "td > img" } }, base);
   assert.ok(v2.ok, JSON.stringify(v2.errors));
   const rule2 = UR.toRule(v2.spec, base);

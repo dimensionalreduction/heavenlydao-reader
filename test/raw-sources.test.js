@@ -6,6 +6,41 @@ const RS = require(path.join(__dirname, "..", "src", "shared", "raw-sources.js")
 globalThis.RawSources = RS;
 for (const f of require("../tools/sources").dataFiles()) require(f);
 
+// ---- a text chapter's pictures (rule.illustrations): lines of the text, numbered, their addresses on the side ----
+{
+  globalThis.ImageChapter = require(path.join(__dirname, "..", "src", "shared", "image-chapter.js"));
+  const IC = globalThis.ImageChapter;
+  // the box holds, in order: a paragraph, a picture, a paragraph, an icon, the same picture again, a picture that is not https, a last picture, a last paragraph
+  const node = (t) => ({ t });
+  const nodes = [node("First paragraph."), node(null), node("Second paragraph."), node(null), node(null), node(null), node(null), node("The end.")];
+  const img = (n, attrs) => ({ getAttribute: (k) => (k in attrs ? attrs[k] : null), replaceWith: (line) => { n.t = line.textContent; } });
+  const imgs = [img(nodes[1], { src: "/a/1.webp" }), img(nodes[3], { src: "/a/icon.png", width: "20", height: "20" }), img(nodes[4], { src: "/a/1.webp" }), img(nodes[5], { src: "http://x.example/plain.jpg" }), img(nodes[6], { "data-src": "/a/2.webp" })];
+  const box = {
+    querySelectorAll: (sel) => (sel === "img" ? imgs : []),
+    get textContent() { return nodes.filter((n) => n.t != null).map((n) => n.t).join("\n"); }
+  };
+  const doc = { querySelector: () => box, createElement: () => ({ textContent: "" }) };
+  const rule = { selector: ".story", illustrations: true };
+  const read = RS.readText(doc, rule, "https://x.example/book/chapter/1", 0);
+  assert.deepStrictEqual(read.urls, ["https://x.example/a/1.webp", "https://x.example/a/2.webp"], "two pictures, each once; an icon and a plain-http picture are not kept");
+  assert.strictEqual(read.text, ["First paragraph.", IC.mark(1), "Second paragraph.", IC.mark(1), IC.mark(2), "The end."].join("\n"), "the pictures are lines of the text, the same picture the same number");
+}
+{
+  // (the same page again: the second picture's number is 2, and a chapter in parts carries on from the number before)
+  const IC = globalThis.ImageChapter;
+  const mk = () => {
+    const nodes = [{ t: "Words." }, { t: null }];
+    const img = { getAttribute: (k) => (k === "src" ? "/a/9.webp" : null), replaceWith: (line) => { nodes[1].t = line.textContent; } };
+    return { box: { querySelectorAll: (sel) => (sel === "img" ? [img] : []), get textContent() { return nodes.filter((n) => n.t != null).map((n) => n.t).join("\n"); } } };
+  };
+  const doc = (m) => ({ querySelector: () => m.box, createElement: () => ({ textContent: "" }) });
+  const m1 = mk();
+  assert.strictEqual(RS.readText(doc(m1), { selector: "x", illustrations: true }, "https://x.example/c/2", 4).text, "Words.\n" + IC.mark(5), "numbered from the number before");
+  const m2 = mk();
+  assert.deepStrictEqual(RS.readText(doc(m2), { selector: "x" }, "https://x.example/c/2", 0), { text: "Words.", urls: [] }, "a rule without illustrations: the pictures are not there, as before");
+  assert.strictEqual(RS.textOf(doc(mk()), { selector: "x", illustrations: true }), "Words.", "textOf has no address to find pictures with");
+}
+
 // ---- which sites are supported ----
 const supported = {
   "https://www.69shuba.com/txt/77582/38804612": "69shuba.com",
@@ -264,5 +299,44 @@ assert.strictEqual(n5[0].url, "https://www.novel543.com/0123456789/8096_1.html",
 
 // ---- page scripts never reach the parser ----
 assert.strictEqual(RS.stripScripts('<a onclick="x()" href=1>t</a><script>var a=1;</script><div class="txtnav" onload=\'y\'>hi</div>'), '<a href=1>t</a><div class="txtnav">hi</div>');
+
+// ---- a pagination bar that shows a window of the pages (wfwf528.com: 22 pages; page 1 shows 2..10, page 10 shows 1, 5..9, 11..14, page 22 shows 1, 13..21) ----
+(async () => {
+  const TOTAL = 22, base = "https://site.test/list?toon=4132&s=n";
+  const at = (n) => (n === 1 ? base : base + "&pg=" + n);
+  // what the bar of page n names: the nine pages before and four after, but never fewer than the ten nearest (the real site's windows, as measured), and page 1 as pg=1
+  const barOf = (n) => { const out = []; for (let k = Math.max(1, n - 5); k <= Math.min(TOTAL, Math.max(n + 4, 10)); k++) if (k !== n) out.push(k === 1 ? base + "&pg=1" : at(k)); return n === 1 ? out.filter((u) => !/pg=1$/.test(u)) : out; };
+  const reads = [];
+  const read = async (u) => { reads.push(u); const n = Number((/pg=(\d+)/.exec(u) || [])[1] || 1); return barOf(n); };
+  const more = barOf(1);
+  assert.strictEqual(more.length, 9, "the first page names 2..10");
+  await RS.tocMorePages({ first: base, more, read, max: 150 });
+  assert.deepStrictEqual(more.map((u) => Number((/pg=(\d+)/.exec(u) || [])[1])), Array.from({ length: 21 }, (_, i) => i + 2), "every page 2..22 once, in order, page 1 not named again");
+  assert.ok(reads.length <= 6, "a few reads of the last page named: " + reads.length);
+  // a bar that shows every page: one read of the last page, nothing new
+  const all = Array.from({ length: 20 }, (_, i) => at(i + 2));
+  const mine = all.slice();
+  let n2 = 0;
+  await RS.tocMorePages({ first: base, more: mine, read: async () => { n2++; return all; }, max: 150 });
+  assert.strictEqual(mine.length, 20);
+  assert.strictEqual(n2, 1, "read once, to find that it names nothing new");
+  // a page that cannot be read: the pages named so far stay
+  const few = Array.from({ length: 9 }, (_, i) => at(i + 2));
+  await RS.tocMorePages({ first: base, more: few, read: async () => null, max: 150 });
+  assert.strictEqual(few.length, 9);
+  // a short list is not looked at again
+  const three = [at(2), at(3)];
+  await RS.tocMorePages({ first: base, more: three, read: async () => { throw new Error("not read"); }, max: 150 });
+  assert.strictEqual(three.length, 2);
+  console.log("OK — a window of pages is followed to the end");
+})().catch((e) => { console.error(e); process.exit(1); });
+
+// ---- an address rule that cannot carry the query (the book is named in it: ?toon=4132) is not made ----
+{
+  const UR = require(path.join(__dirname, "..", "src", "shared", "user-rules.js"));
+  assert.strictEqual(UR.listUrlRule("https://wfwf528.com/list?toon=4132&s=n", "/view?toon=4132&num=2128"), null, "a book named in the query has no path rule");
+  assert.strictEqual(UR.listUrlRule("https://wfwf528.com/list?toon=4132&s=n", "/list?toon=4132&s=n"), null, "even where the chapter's path is the list's");
+  assert.ok(UR.listUrlRule("https://example.com/book/390935", "/book/390935/12.html"), "a book in the path still has one");
+}
 
 console.log("OK — raw-sources checks passed");

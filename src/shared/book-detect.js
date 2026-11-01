@@ -305,6 +305,35 @@
   // list is a list of links; next and previous are links.
   const KINDS = { title: ["text"], author: ["text"], description: ["text"], cover: ["img", "meta"], genre: ["group", "text"], chapterList: ["list"], pager: ["pager"], next: ["link"], prev: ["link"] };
 
+  // What the page says on its own when Gemini cannot be asked (no key, no answer) or is not wanted (Import to library): the chapter list is the list of links with the most
+  // entries whose texts have numbers in them, not cut short ("latest chapters"), and the pagination bar that gives the most pages. The book's own parts are not guessed
+  // (the popup reads them without help). -> picks as Gemini's: { chapterList: id, pager: id }
+  function guessPicks(candidates, selectors, doc) {
+    const score = (c) => c.count + (c.first && c.first.some((t) => /\d/.test(t)) ? 100000 : 0) + (c.hrefs && /\d/.test(c.hrefs[0] || "") ? 50000 : 0);
+    const lists = candidates.filter((c) => c.kind === "list" && c.count >= 5 && !c.partial).sort((a, b) => score(b) - score(a));
+    const pagers = candidates.filter((c) => c.kind === "pager").sort((a, b) => b.pages - a.pages);
+    const picks = {};
+    if (lists[0]) picks.chapterList = lists[0].id;
+    if (lists[0] && pagers[0]) picks.pager = pagers[0].id;
+    // the links in the list's box include others (a sort tab, "first episode"): when most of them share a class, only those are the chapters (div.list-sec a -> a.ep-item)
+    if (lists[0] && selectors && doc && selectors[lists[0].id]) {
+      try {
+        const base = selectors[lists[0].id];
+        const els = [...doc.querySelectorAll(base)];
+        const tally = new Map();
+        for (const a of els) { const k = stableClasses(a).join("."); tally.set(k, (tally.get(k) || 0) + 1); }
+        const [cls, n] = [...tally.entries()].sort((x, y) => y[1] - x[1])[0] || ["", 0];
+        if (cls && n >= 8 && n < els.length && n >= els.length * 0.7) {
+          const refined = base + "." + cls.split(".").map(escapeCss).join(".");
+          if (present("chapterList", refined, doc)) selectors[lists[0].id] = refined;
+        }
+      } catch (e) {
+        // the list as it was
+      }
+    }
+    return picks;
+  }
+
   // Gemini's { title: "c3", ... } -> { found: { title: selector, ... }, skipped: { field: why } }: only an id that is a candidate of a kind the part can be.
   function interpret(picks, candidates, selectors) {
     const byId = new Map(candidates.map((c) => [c.id, c]));
@@ -369,7 +398,7 @@
     if (Object.keys(book).length) parts.book = book;
     if (found.chapterList) {
       parts.toc = { list: found.chapterList, ...(order === "desc" ? { reverse: true } : order === "asc" ? { reverse: false } : {}), pages: found.pager ? { kind: "numbered", selector: found.pager } : null, titleDrop: (extras && extras.titleDrop) || null };
-      if (extras && extras.listUrl) parts.toc.listUrl = extras.listUrl;
+      if (extras && "listUrl" in extras) parts.toc.listUrl = extras.listUrl || null; // (tried and none: an older one is dropped)
     }
     const nav = {};
     if (found.next) nav.next = found.next;
@@ -380,6 +409,8 @@
     if (extras && extras.dataText) parts.json = extras.dataText;
     // where a chapter's text is (a site that sends its pages whole)
     if (extras && extras.textSelector) parts.selector = extras.textSelector;
+    // where a comic's pictures are (a site whose chapters are pictures)
+    if (extras && extras.images) parts.images = extras.images;
     return parts;
   }
 
@@ -676,6 +707,55 @@
     return box === body ? null : box;
   }
 
+  // A comic's chapter: the pictures one under another in a box (wfwf528.com: div#vimg-area, each <img data-src=...> with a placeholder in src). On each of two chapters' pages as the
+  // site sends them: the pictures (the real address in a lazy-loading attribute, else src) that share a host and a folder, the most of them (a page's banners come from elsewhere),
+  // at least 3; the box that holds them is selectorFor's, and the selector is kept when it finds those pictures on both pages. { selector, counts: [pictures on each] } or null.
+  // The pictures of a page that share a host and a folder, the most of them (the chapter's own: a page's banners come from elsewhere). [<img>]
+  function pictureGroup(doc, baseUrl, keep) {
+    const groups = new Map();
+    for (const img of doc.querySelectorAll("img")) {
+      if (keep && !keep(img)) continue;
+      const raw = img.getAttribute("data-src") || img.getAttribute("data-lazy-src") || img.getAttribute("data-original") || img.getAttribute("src") || "";
+      let u;
+      try { u = new URL(raw, baseUrl); } catch (e) { continue; }
+      if (!/^https?:$/.test(u.protocol)) continue;
+      const key = u.host + u.pathname.replace(/[^/]*$/, "");
+      (groups.get(key) || groups.set(key, []).get(key)).push(img);
+    }
+    return [...groups.values()].sort((x, y) => y.length - x.length)[0] || [];
+  }
+  function imagesSelectorFor(docA, docB, baseUrl) {
+    const groupOf = (doc) => {
+      const groups = new Map();
+      for (const img of doc.querySelectorAll("img")) {
+        const raw = img.getAttribute("data-src") || img.getAttribute("data-lazy-src") || img.getAttribute("data-original") || img.getAttribute("src") || "";
+        let u;
+        try { u = new URL(raw, baseUrl); } catch (e) { continue; }
+        if (!/^https?:$/.test(u.protocol)) continue;
+        const key = u.host + u.pathname.replace(/[^/]*$/, "");
+        (groups.get(key) || groups.set(key, []).get(key)).push(img);
+      }
+      return [...groups.values()].sort((x, y) => y.length - x.length)[0] || [];
+    };
+    const boxOf = (imgs) => {
+      let box = imgs[0].parentElement;
+      while (box && !imgs.every((i) => box.contains(i))) box = box.parentElement;
+      return box;
+    };
+    const first = groupOf(docA);
+    if (first.length < 3) return null;
+    const box = boxOf(first);
+    if (!box || box === docA.body || box === docA.documentElement) return null;
+    for (const base of [selectorFor(box, docA), selectorFor(box, docA, true)]) {
+      if (!base || base === "body") continue;
+      const sel = base + " img";
+      const on = (doc) => { try { return [...doc.querySelectorAll(sel)].length; } catch (e) { return 0; } };
+      const a = on(docA), b = docB ? on(docB) : 0;
+      if (a >= 3 && a <= first.length * 1.3 && (!docB || (b >= 3))) return { selector: sel, counts: [a, b] };
+    }
+    return null;
+  }
+
   // A selector for a chapter's text that finds it on two chapters' pages as the site sends them (docA, docB: documents of two chapters): made from the box
   // textBoxOf finds on the first (with its id first; without, when the id is the chapter's own and not on the other page), and kept only if it finds one
   // element with a chapter's worth of text (300 characters) on both. A page where the selector finds something is taken for a chapter by the book-recording
@@ -701,7 +781,7 @@
     return null;
   }
 
-  if (isNode) module.exports = { collect, selectorFor, interpret, asRuleParts, orderOf, titleDropFor, stableClasses, KINDS, MAX_CANDIDATES, listFromData, textInData, dataUrlRule, nextFromData, textBoxOf, textSelectorFor };
+  if (isNode) module.exports = { collect, selectorFor, interpret, asRuleParts, orderOf, titleDropFor, stableClasses, KINDS, MAX_CANDIDATES, listFromData, textInData, dataUrlRule, nextFromData, textBoxOf, textSelectorFor, imagesSelectorFor, pictureGroup };
   if (typeof document === "undefined" || typeof location === "undefined") return; // loaded by a test, not injected into a page
   if (!/^https?:$/.test(location.protocol)) return;
   // A bar still on the page: a run in progress is left alone; one that has finished (its answer is only showing) is replaced by this run.
@@ -947,7 +1027,7 @@
   // Where a chapter's text is, for a site that sends its pages whole (what the add-on downloads chapters with): on a chapter's page, from this page as sent
   // (`sent`) and the chapter next to it (`neighbour`); on a book's page, from the first two chapters of its list. { selector, summary } or null; nothing when
   // the site's saved rule already finds the text (a selector the person set is kept).
-  async function chapterTextRule(sent, found, neighbour) {
+  async function chapterTextRule(sent, found, neighbour, thisOnly) {
     const fetchDoc = async (url) => {
       const res = await fetch(url, { credentials: "include" }).catch(() => null);
       if (!res || !res.ok) return null;
@@ -956,18 +1036,23 @@
     let docA = null;
     let docB = null;
     let where = "";
-    if (found.next || found.prev) {
+    if (thisOnly) {
+      docA = sent;
+      where = "this chapter";
+    } else if (found.next || found.prev) {
       docA = sent;
       docB = neighbour ? await fetchDoc(neighbour) : null;
       where = "this chapter and the " + (found.next ? "next" : "previous") + " one";
     } else if (found.chapterList) {
       const links = [...new Set([...document.querySelectorAll(found.chapterList)].map((a) => a.href).filter((u) => /^https?:/.test(u)))];
       if (links.length < 2) return null;
-      docA = await fetchDoc(links[0]);
-      docB = await fetchDoc(links[1]);
-      where = "its first two chapters";
+      // (two from the middle of the list: the newest chapters may be the odd ones, with their pictures put in by a script and only the banners in the page as sent)
+      const at = links.length >= 6 ? Math.floor(links.length / 2) : 0;
+      docA = await fetchDoc(links[at]);
+      docB = await fetchDoc(links[at + 1]);
+      where = at ? "two chapters from the middle of its list" : "its first two chapters";
     }
-    if (!docA || !docB) return null;
+    if (!docA || (!docB && !thisOnly)) return null;
     const mine = ((((await ext.storage.local.get(UserRules.KEY))[UserRules.KEY] || {})[host] || {}).spec || {}).selector;
     if (mine) {
       try {
@@ -979,16 +1064,38 @@
     }
     // (on a book's page, the selector must find nothing here: the book-recording script takes a page where it finds something for a chapter)
     const got = textSelectorFor(docA, docB, found.next || found.prev ? null : document);
-    return got ? { selector: got.selector, summary: got.selector + ", " + got.sizes[0] + " and " + got.sizes[1] + " characters on " + where } : null;
+    if (got) return { selector: got.selector, summary: got.selector + ", " + got.sizes[0] + " and " + got.sizes[1] + " characters on " + where };
+    // (no chapter text: a comic, whose chapters are pictures)
+    const pics = imagesSelectorFor(docA, docB, location.href);
+    return pics ? { images: pics.selector, summary: pics.selector + ", " + pics.counts[0] + " and " + pics.counts[1] + " pictures on " + where } : null;
   }
 
   (async () => {
     say("Looking at the page…");
     const { candidates, selectors } = collect(document, location.href);
     if (!candidates.length) return say("Nothing on this page looks like a book's details or a chapter. Open the book's page or a chapter and try again.", "#ff9d8f");
-    say("Asking Gemini which parts of this page are the book's details, its chapter list and the chapter links (" + candidates.length + " elements)…");
-    const reply = await ext.runtime.sendMessage({ type: "book:detect", candidates, page: { host, title: document.title } }).catch((e) => ({ error: e.message }));
-    if (!reply || reply.error) return say("Gemini could not tell: " + ((reply && reply.error) || "no answer") + ".", "#ff9d8f");
+    let reply;
+    let chapterPage = false;
+    if (window.__P2PREAD_DETECT_LOCAL) { // (no Gemini: Import to library, or no key)
+      // a comic's chapter page (many pictures one under another): its strip of neighbouring episodes is not the book's chapter list, so none is guessed from it; only where its
+      // pictures are is found (from this page as sent)
+      // (pictures that are big, loaded or waiting to be by a lazy loader: a list page's banners are small and not lazy)
+      const lazy = (im) => ["data-src", "data-lazy-src", "data-original"].some((n) => im.hasAttribute(n));
+      const big = (im) => (im.naturalWidth >= 300 && im.naturalHeight >= 300) || (lazy(im) && im.naturalWidth < 300 && im.getBoundingClientRect().width >= 200);
+      chapterPage = pictureGroup(document, location.href, big).length >= 6;
+      say(chapterPage ? "This is a comic's chapter: looking for where its pictures are…" : "Looking for the chapter list on the page (" + candidates.length + " elements)…");
+      reply = { picks: chapterPage ? {} : guessPicks(candidates, selectors, document) };
+    } else {
+      say("Asking Gemini which parts of this page are the book's details, its chapter list and the chapter links (" + candidates.length + " elements)…");
+      reply = await ext.runtime.sendMessage({ type: "book:detect", candidates, page: { host, title: document.title } }).catch((e) => ({ error: e.message }));
+      if (!reply || reply.error) {
+        const why = (reply && reply.error) || "no answer";
+        reply = { picks: guessPicks(candidates, selectors, document) };
+        if (!reply.picks.chapterList) return say("Gemini could not tell: " + why + ", and no list of chapters could be found on this page.", "#ff9d8f");
+        say("Gemini could not tell (" + why + "): the chapter list was found by looking at the page.");
+      }
+    }
+    if (!reply.picks.chapterList && window.__P2PREAD_DETECT_LOCAL && !chapterPage) return say("No list of chapters could be found on this page. Detect with AI may do better.", "#ff9d8f");
     const { found, skipped } = interpret(reply.picks, candidates, selectors);
     // each selector is checked on the page once more, as the extension will use it
     for (const field of Object.keys(found)) if (!present(field, found[field])) delete found[field];
@@ -1005,7 +1112,7 @@
     let fromData = null;
     let textData = null;
     let dataNote = "";
-    const sent = (found.chapterList && !fromListPage) || found.next || found.prev ? await pageAsSent().catch(() => null) : null;
+    const sent = (found.chapterList && !fromListPage) || found.next || found.prev || chapterPage ? await pageAsSent().catch(() => null) : null;
     if (sent && found.chapterList && !fromListPage && !present("chapterList", found.chapterList, sent)) {
       say("The chapter list is filled in by the page's script. Looking for it in the data the page loaded…");
       const got = await listFromLoaded(found.chapterList).catch(() => null);
@@ -1026,25 +1133,26 @@
     if (sent && (found.next || found.prev)) textData = await textFromLoaded(sent, linkOf(found.next), linkOf(found.prev)).catch(() => null);
     // where a chapter's text is, for a site that sends its pages whole (one whose text comes from its data has it above)
     let textSel = null;
-    if (!textData && !fromData && (found.next || found.prev || (found.chapterList && !fromListPage))) {
+    if (!textData && !fromData && (found.next || found.prev || chapterPage || (found.chapterList && !fromListPage))) {
       say("Looking for where a chapter's text is…");
-      textSel = await chapterTextRule(sent, found, linkOf(found.next) || linkOf(found.prev)).catch(() => null);
+      textSel = await chapterTextRule(sent, found, linkOf(found.next) || linkOf(found.prev), chapterPage).catch(() => null);
     }
     const names = Object.keys(found);
     if (!names.length && !fromData && !textData && !textSel) return say("Gemini found none of the details, the chapter list or the chapter links on this page." + dataNote, "#ff9d8f");
-    // the list's order is read from its own numbers when they say; Gemini's guess is only for lists whose entries carry none
+    // the list's order is read from its own numbers when they say; Gemini's guess is only for lists whose entries carry none. Read on the page as the site
+    // sends it (what Refresh chapters reads): a page's script may turn the list round on screen (69shuba sends it newest first and shows it oldest first)
     let order = fromListPage ? fromListPage.order : reply.picks && reply.picks.listOrder;
-    if (found.chapterList && !fromListPage) order = orderOf([...document.querySelectorAll(found.chapterList)].map((a) => ({ text: clean(a.textContent), href: a.getAttribute("href") }))) || order;
+    if (found.chapterList && !fromListPage) order = orderOf([...(sent || document).querySelectorAll(found.chapterList)].map((a) => ({ text: clean(a.textContent), href: a.getAttribute("href") }))) || order;
     if (!found.chapterList) delete found.pager; // (a pagination bar is only the list's pages)
     const tried = fromListPage ? fromListPage.tried : found.chapterList ? tryListRule(found, order) : null;
     if (tried) {
       if (!tried.pagesOk) delete found.pager;
     }
-    const before = await save(asRuleParts(found, order, { ...(tried ? { listUrl: tried.listUrl, titleDrop: tried.titleDrop } : {}), dataList: fromData && fromData.dataList, dataText: textData && textData.dataText, textSelector: textSel && textSel.selector }));
+    const before = await save(asRuleParts(found, order, { ...(tried ? { listUrl: tried.listUrl, titleDrop: tried.titleDrop } : {}), dataList: fromData && fromData.dataList, dataText: textData && textData.dataText, textSelector: textSel && textSel.selector, images: textSel && textSel.images }));
     const missing = Object.keys(KINDS).filter((f) => !found[f] && !((fromData || dataNote) && (f === "chapterList" || f === "pager"))).map((f) => LABEL[f]);
     const partial = !fromListPage && skipped.chapterList && /^only the latest/.test(skipped.chapterList) ? " The chapter list was left out: " + skipped.chapterList + "." : "";
-    const saved = Object.keys(found).map((f) => LABEL[f]).concat(fromData ? ["chapter list (from the site's data)"] : [], textData ? ["chapter text (from the site's data)"] : [], textSel ? ["chapter text"] : []);
-    say("Found and saved for " + host + ": " + saved.join(", ") + "." + (tried ? " Chapter list tried on " + (fromListPage ? "its own page" : "this page") + ": " + tried.summary + "." : "") + (fromData ? " Chapter list tried on the site's data: " + fromData.summary + "." : "") + (textData ? " Chapter text: " + textData.summary + "." : "") + (textSel ? " Chapter text: " + textSel.summary + "." : "") + dataNote + (missing.length ? " Not on this page: " + missing.join(", ") + ". (The details and the chapter list are on a book's page; the next and previous links are on a chapter's page: run it there too.)" : "") + partial + " The book is being recorded again.", "#7ed17e");
+    const saved = Object.keys(found).map((f) => LABEL[f]).concat(fromData ? ["chapter list (from the site's data)"] : [], textData ? ["chapter text (from the site's data)"] : [], textSel ? [textSel.images ? "chapter pictures" : "chapter text"] : []);
+    say("Found and saved for " + host + ": " + saved.join(", ") + "." + (tried ? " Chapter list tried on " + (fromListPage ? "its own page" : "this page") + ": " + tried.summary + "." : "") + (fromData ? " Chapter list tried on the site's data: " + fromData.summary + "." : "") + (textData ? " Chapter text: " + textData.summary + "." : "") + (textSel ? (textSel.images ? " Chapter pictures: " : " Chapter text: ") + textSel.summary + "." : "") + dataNote + (missing.length ? " Not on this page: " + missing.join(", ") + ". (The details and the chapter list are on a book's page; the next and previous links are on a chapter's page: run it there too.)" : "") + partial + " The book is being recorded again.", "#7ed17e");
     action.textContent = "Undo";
     action.hidden = false;
     action.onclick = async () => {

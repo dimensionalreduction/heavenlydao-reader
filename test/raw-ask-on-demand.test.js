@@ -3,7 +3,6 @@
 // Run: node test/raw-ask-on-demand.test.js
 const assert = require("assert");
 const path = require("path");
-const WebTorrent = require("webtorrent");
 require(path.join(__dirname, "..", "src", "shared", "p2p-core.js"));
 const { createP2P } = globalThis.P2PCore;
 const testLibrary = require("./test-library.js");
@@ -22,7 +21,7 @@ function memAdapter(fetch) {
   const store = new Map();
   return {
     store,
-    getConfig: async () => ({ enabled: true, passphrase: "raw ask test", trackers: ["ws://127.0.0.1:1"], fetch }),
+    getConfig: async () => ({ fetch }),
     getIndex: async () => index,
     setIndex: async (i) => { index = i; },
     getTranslation: async (k) => store.get(k),
@@ -35,7 +34,7 @@ const other = "translation:https://wtr-lab.com/en/novel/1/slug/chapter-8";
 
 (async () => {
   const clone = (m) => JSON.parse(JSON.stringify(m));
-  const common = { WebTorrent, makeSeedInput: (bytes, name) => Object.assign(Buffer.from(bytes), { name }), log: () => {}, library: testLibrary() };
+  const common = { log: () => {}, library: testLibrary() };
   const extA = memAdapter("all");
   let ext;
   ext = createP2P({ ...common, adapter: extA, role: "extension",
@@ -52,8 +51,8 @@ const other = "translation:https://wtr-lab.com/en/novel/1/slug/chapter-8";
   await ext.start();
   await phone.start();
   const h = {};
-  h.x = ext.addLocalPeer({ send: (m) => setImmediate(() => h.y && h.y.receive(clone(m))) });
-  h.y = phone.addLocalPeer({ send: (m) => setImmediate(() => h.x && h.x.receive(clone(m))) });
+  h.x = ext.addLocalPeer({ send: (m) => setImmediate(() => h.y && h.y.receive(clone(m))) }, { trusted: true });
+  h.y = phone.addLocalPeer({ send: (m) => setImmediate(() => h.x && h.x.receive(clone(m))) }, { trusted: true });
   await sleep(300);
 
   assert.strictEqual(phone.requestRaw(own + "#original", { novelName: "Novel", translate: true, source: "wtr-lab.com" }), 1, "one device asked");

@@ -154,7 +154,7 @@ const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 
   assert.deepStrictEqual(yg.terms.map((t) => [t[0], t[1]]), [["八臂族", "Eight Armed Race"], ["道", "Way"]], "votes change a shared term, not one of yours");
   await A.api("POST", `/api/glossaries/${Y}/import`, { name: "y", terms: [["道", "Dao", { o: "shared:Cultivation" }]], keepYours: true });
   yg = await A.api("GET", `/api/glossaries/${Y}`);
-  assert.ok(yg.terms.some((t) => t[0] === "八臂族"), "wtr-lab could not be asked for the person's terms: the ones the library has stay");
+  assert.ok(yg.terms.some((t) => t[0] === "八臂族"), "the translation site could not be asked for the person's terms: the ones the library has stay");
   await A.api("POST", `/api/glossaries/${Y}/import`, { name: "y", terms: [["道", "Dao", { o: "shared:Cultivation" }]] });
   yg = await A.api("GET", `/api/glossaries/${Y}`);
   assert.ok(!yg.terms.some((t) => t[0] === "八臂族"), "asked, and no longer there: removed");
@@ -365,7 +365,7 @@ const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 
   assert.deepStrictEqual(gE.terms.map((t) => t.slice(0, 3)), [["科雷", "Kory", "user"]], "the deleted term stays deleted");
   await E.api("POST", `/api/glossaries/${enc}/import`, { terms: [["科雷", "Corey"], ["希恩", "Sheen"]] });
   gE = await E.api("GET", "/api/glossaries/" + enc);
-  assert.deepStrictEqual(gE.terms.map((t) => t.slice(0, 2)), [["科雷", "Kory"]], "a wtr-lab import neither overwrites your term nor brings back the one you deleted");
+  assert.deepStrictEqual(gE.terms.map((t) => t.slice(0, 2)), [["科雷", "Kory"]], "a translation-site import neither overwrites your term nor brings back the one you deleted");
   assert.deepStrictEqual((await E.api("GET", "/api/novels")).novels.map((n) => [n.id, n.coverCopy]), [[G, true]], "covers whose picture came are kept");
   await assert.rejects(E.api("GET", "/api/covers/gone"), /no copy/);
   // importing again replaces the library's content: what is no longer there is deleted

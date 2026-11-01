@@ -37,6 +37,7 @@ vm.runInContext(fs.readFileSync(path.join(shared, "term-match.js"), "utf8"), ctx
 vm.runInContext(require("../tools/sources").bundleText(), ctx, { filename: "raw-sources.js" }); // the engine and every site's rules, as shipped
 vm.runInContext(fs.readFileSync(path.join(shared, "term-notes.js"), "utf8"), ctx, { filename: "term-notes.js" }); // (notes on terms: off here, the server stand-in has no settings)
 vm.runInContext(fs.readFileSync(path.join(shared, "lang-detect.js"), "utf8"), ctx, { filename: "lang-detect.js" });
+vm.runInContext(fs.readFileSync(path.join(shared, "image-chapter.js"), "utf8"), ctx, { filename: "image-chapter.js" }); // (a text chapter's pictures: lines of its text)
 vm.runInContext(fs.readFileSync(path.join(shared, "original-translate.js"), "utf8"), ctx, { filename: "original-translate.js" });
 const OT = vm.runInContext("OriginalTranslate", ctx);
 
@@ -191,11 +192,35 @@ const OT = vm.runInContext("OriginalTranslate", ctx);
   asked = null;
   const viaSource = await OT.run({ url: "https://www.69shuba.com/txt/1/117", saveUrl: wtrUrl, text: "原文", pageTitle: "Chapter 117", novelName: "N", lang: "si" });
   assert.strictEqual(viaSource.lang, "si");
-  assert.strictEqual(storage["translation:" + wtrUrl + "#lang=si"].translated, "Hola", "under the wtr-lab chapter's own key");
+  assert.strictEqual(storage["translation:" + wtrUrl + "#lang=si"].translated, "Hola", "under the translation-site chapter's own key");
   assert.ok(!storage["translation:https://www.69shuba.com/txt/1/117#lang=si"] && !storage["translation:https://www.69shuba.com/txt/1/117"], "and not under the source's");
   asked = null;
   assert.strictEqual((await OT.run({ url: "https://www.69shuba.com/txt/1/117", saveUrl: wtrUrl, text: "原文", lang: "si" })).skipped, true, "a version there is not made again");
   assert.strictEqual(asked, null);
+
+  // ---- a text chapter with pictures between its paragraphs: the lines for them are not words ----
+  {
+    const mark = (n) => "\u27e6image:" + n + "\u27e7";
+    const sent = [];
+    ctx.translateText = async (text) => { sent.push(text); return { translated: text.split("\n").map((l) => "T:" + l.slice(0, 4)).join("\n"), suggestions: [], model: "gemini" }; };
+    Object.keys(storage).forEach((k) => delete storage[k]);
+    // English prose is still English with the lines in it (they would otherwise make it look like another script); it is kept as it is
+    const paras = ["He was in the garden with his friend and they said that it was all good for the day.", "She had a book in her hand and it was one of the best that they had seen in all of the years.", "There was no more to say about it, and the two of them went home."];
+    const prose = [...paras, ...paras, ...paras].join("\n"); // (long enough for isEnglish to judge)
+    const withPictures = prose.split("\n").slice(0, 2).concat([mark(1)], prose.split("\n").slice(2)).join("\n");
+    storage["translation:https://novgo.net/book/chapter-300.html#original"] = { translated: withPictures, model: "original" };
+    await OT.run({ url: "https://novgo.net/book/chapter-300.html", text: withPictures, novelName: "Sword God", pageTitle: "Chapter 300" });
+    assert.deepStrictEqual(sent, [], "English text with picture lines never reaches the translator");
+    const kept = storage["translation:https://novgo.net/book/chapter-300.html"];
+    assert.deepStrictEqual([kept.translated === withPictures, kept.model], [true, "english source"], "kept as it is, the lines in place");
+    // a Chinese chapter: the translator is given the words only, and the line is back in place in the answer
+    const zh = "傅心汉说天道无情\n" + mark(1) + "\n他走了出去\n他又回来了";
+    await OT.run({ url: "https://example.com/ch/2", text: zh, novelName: "N", pageTitle: "T2" });
+    assert.ok(sent.length === 1 && !sent[0].includes("\u27e6"), "the picture line is not sent: " + JSON.stringify(sent));
+    const answered = storage["translation:https://example.com/ch/2"].translated.split("\n");
+    assert.strictEqual(answered.indexOf(mark(1)), 1, "and is back after the first line: " + JSON.stringify(answered));
+    assert.strictEqual(answered.length, 4, "nothing else added or lost");
+  }
 
   console.log("OK — original-translate checks passed");
 })().catch((e) => {

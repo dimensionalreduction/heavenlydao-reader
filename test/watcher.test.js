@@ -153,7 +153,7 @@ const watch = (over = {}) => ({ id: "wtr-lab:1|wtr-lab.com", novel: "wtr-lab:1",
   saved.length = 0;
   let pass = await W.tick({ ...allDeps, listWatches: async () => [wAll, uAll, watch({ id: "t|wtr-lab.com", novel: "t", lastCheck: T - HOUR })] }, T);
   assert.deepStrictEqual(asksAll, [["wtr-lab:5045|wtr-lab.com", 644, { missing: true, batch: 5, paced: true }], ["u|uuread.tw", 2, { missing: true, batch: 3, paced: false }]],
-    "each watch set to every chapter hands its whole list over (the page leaves out what is here), wtr-lab 5 at a time, a translated source 3");
+    "each watch set to every chapter hands its whole list over (the page leaves out what is here), the translation site 5 at a time, a translated source 3");
   assert.deepStrictEqual([pass.checked.length, saved.length], [0, 0], "not due: nothing looked at, and the watch is not written (no record a minute)");
   assert.strictEqual(W.listKey(allDeps, uAll), "key:chapter/9", "a source's list is kept under its chapters' site and folder");
   reply = { asked: 0, complete: true };

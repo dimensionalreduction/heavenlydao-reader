@@ -1,4 +1,4 @@
-importScripts("p2p-core.js", "term-match.js", "gemini.js", "site-matches.js", "site-access.js", "access-offer.js", "fish-speech.js", "glossary-server.js", "wtr-terms.js", "base-glossary.js", "term-pool.js", "pool-hints.js", "pool-share.js", "raw-sources.js", "user-rules.js", "term-notes.js", "profile-model.js", "profile-translate.js", "lang-detect.js", "original-translate.js", "watcher.js", "book-visit.js", "notice-bg.js");
+importScripts("p2p-core.js", "term-match.js", "gemini.js", "site-matches.js", "site-access.js", "referer.js", "image-chapter.js", "picture-limit.js", "access-offer.js", "fish-speech.js", "glossary-server.js", "wtr-terms.js", "base-glossary.js", "term-pool.js", "pool-hints.js", "pool-share.js", "raw-sources.js", "user-rules.js", "term-notes.js", "profile-model.js", "profile-translate.js", "lang-detect.js", "original-translate.js", "watcher.js", "book-visit.js", "notice-bg.js");
 UserRules.start(chrome); // the rules the person added: read from storage here, handed to the offscreen document below
 
 const RAW_TEXT_VAR_CANDIDATES = ["txt_content"];
@@ -8,8 +8,8 @@ function hostnameOf(url) {
 }
 
 // Note: with a default_popup set, action.onClicked never fires — the popup owns the click.
-// The popup's "Translate this page" button sends {type:"translateTab", tabId} instead.
-async function translateTab(tabId) {
+// The popup's "Translate this page" button sends {type:"translateTab", tabId} instead. opts: { keepNothing, pay } (a chapter's page: docs/ADD-BOOK.md)
+async function translateTab(tabId, opts = {}) {
   const tab = await chrome.tabs.get(tabId);
   const hostname = hostnameOf(tab.url);
   const { contentSelectors, novelSelectors, novelOverrides } = await chrome.storage.local.get([
@@ -38,14 +38,16 @@ async function translateTab(tabId) {
 
   await chrome.scripting.executeScript({
     target: { tabId },
-    func: (text, contentSel, novelSel, novelName, rules) => {
+    func: (text, contentSel, novelSel, novelName, rules, keepNothing, pay) => {
+      window.__P2PREAD_KEEP_NOTHING__ = keepNothing;
+      window.__P2PREAD_PAY__ = pay;
       window.__USER_RULES__ = rules;
       window.__GEMINI_PRECOLLECTED_TEXT__ = text;
       window.__GEMINI_CONTENT_SELECTOR_OVERRIDE__ = contentSel;
       window.__GEMINI_NOVEL_SELECTOR_OVERRIDE__ = novelSel;
       window.__GEMINI_NOVEL_NAME_OVERRIDE__ = novelName;
     },
-    args: [rawText, contentSelector, novelSelector, novelNameOverride, userRules || {}]
+    args: [rawText, contentSelector, novelSelector, novelNameOverride, userRules || {}, !!opts.keepNothing, opts.pay === "tickets" ? "tickets" : "key"]
   });
 
   await chrome.scripting.executeScript({
@@ -54,11 +56,14 @@ async function translateTab(tabId) {
   });
 }
 
-// Until this extension is a device of a library it does nothing for anyone: its popup shows only the passphrase and Join, and every request
+// Until this extension is a device of a library it does nothing for anyone: its popup shows only Detect library, and every request
 // here is refused (the library's own calls, with a target, and the popup's status questions pass). libraryOn: set by library-host.js.
-const LOCKED = "this extension is not in a library yet: open its popup, enter your library's passphrase and press Join";
+const LOCKED = "this extension is not in a library yet: open the library site in this browser, then the extension's popup, and press Detect library";
 const LOCK_EXEMPT = new Set(["p2p:status", "lib:wake", "bookcapture:done", "access:has", "access:note", "access:muted", "access:check"]);
 let unlocked = null;
+const bookAdds = new Map(); // tab -> the answer to the popup's Import to library, when the page says it has recorded the book
+// a page of this extension (the popup, also when it is opened in a tab of its own), never a site's page
+const ownPage = (sender) => !sender || !sender.tab || String(sender.url || "").startsWith(chrome.runtime.getURL(""));
 const lockRead = chrome.storage.local.get("libraryOn").then((r) => { unlocked = !!r.libraryOn; }, () => { unlocked = false; });
 chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes.libraryOn) unlocked = !!changes.libraryOn.newValue; });
 const isUnlocked = () => lockRead.then(() => unlocked);
@@ -76,6 +81,17 @@ function handleMessage(message, sender, sendResponse) {
   const access = SiteAccess.answerMessage(message);
   if (access) {
     access.then(sendResponse, () => sendResponse(null));
+    return true;
+  }
+  // the offscreen page has no storage of its own: it asks here how much of the pictures to keep (picture-limit.js)
+  if (message.type === "pictures:settings") {
+    chrome.storage.local.get([PictureLimit.MAX_KEY]).then((s) => sendResponse({ maxGB: s[PictureLimit.MAX_KEY] }), () => sendResponse(null));
+    return true;
+  }
+  // the offscreen page cannot set a request header: it asks here for the Referer a chapter's pictures are fetched with (referer.js)
+  const referer = Referer.answerMessage(message);
+  if (referer) {
+    referer.then(sendResponse);
     return true;
   }
   // the Allow card in the library site's tab (access-offer.js)
@@ -96,9 +112,45 @@ function handleMessage(message, sender, sendResponse) {
     chrome.scripting.executeScript({ target: { tabId: sender.tab.id }, files: ["book-capture.js"] }).then(() => sendResponse({ ok: true }), (e) => sendResponse({ error: e.message }));
     return true;
   }
+  // A comic's chapter translated in its page (comic-host.js in the offscreen page, which has no tabs): its progress and pictures passed on to the tab; the pill's Stop back
+  if (message.type === "comic:toTab" && !(sender && sender.tab) && Number.isInteger(message.tabId)) {
+    chrome.tabs.sendMessage(message.tabId, message.msg).then(() => sendResponse({ ok: true }), () => sendResponse({ ok: false }));
+    return true;
+  }
+  // a line to read aloud with an AI voice (comic-page.js asks; the offscreen page makes the call with the key or sign-in the popup gave it)
+  if (message.type === "listen:speech" && sender && sender.tab) {
+    chrome.runtime.sendMessage({ target: "comic", op: "speech", tabId: sender.tab.id, text: String(message.text || ""), voice: message.voice }).then(sendResponse, (e) => sendResponse({ error: e.message }));
+    return true;
+  }
+  if (message.type === "comic:stop" && sender && sender.tab) {
+    chrome.runtime.sendMessage({ target: "comic", op: "stop", tabId: sender.tab.id }).catch(() => {});
+    return;
+  }
+  // Import to library (the popup, docs/ADD-BOOK.md): the book on that tab is recorded now -> { saved, reason?, info? }
+  if (message.type === "bookcapture:add" && ownPage(sender)) {
+    const tabId = Number(message.tabId);
+    bookAdds.get(tabId)?.({ saved: false, reason: "asked again" });
+    new Promise((resolve) => {
+      bookAdds.set(tabId, resolve);
+      setTimeout(() => resolve({ saved: false, reason: "the page did not answer" }), 120000);
+      chrome.scripting.executeScript({ target: { tabId }, func: () => { window.__p2preadAdd = true; } })
+        .then(() => chrome.scripting.executeScript({ target: { tabId }, files: ["book-rules.js", "user-rules.js", "book-capture.js"] }))
+        .catch((e) => resolve({ saved: false, reason: e.message }));
+    }).then((r) => { bookAdds.delete(tabId); sendResponse(r); });
+    return true;
+  }
+  if (message.type === "bookcapture:done" && message.added && sender && sender.tab && bookAdds.has(sender.tab.id)) {
+    bookAdds.get(sender.tab.id)(message);
+    return;
+  }
   if (message.type === "translate") {
+    // (keepNothing, pay: the popup's Translate on a chapter's page: nothing kept, paid with the Gemini key or tickets as picked there)
+    if (message.pay === "tickets") {
+      GlossaryServer.targetLanguage().catch(() => "en").then((lang) => ProfileTranslate.pageWithTickets(message.text, message.glossary, lang)).then(sendResponse, (e) => sendResponse({ error: e.message }));
+      return true;
+    }
     chrome.storage.local.get("selectedModel").then(({ selectedModel }) =>
-      TermNotes.translate({ text: message.text, glossary: message.glossary, model: selectedModel, url: message.url, title: message.title, novelName: message.novelName }).then(sendResponse)
+      TermNotes.translate({ text: message.text, glossary: message.glossary, model: selectedModel, url: message.url, title: message.title, novelName: message.novelName, keepNothing: !!message.keepNothing }).then(sendResponse)
     );
     return true;
   }
@@ -160,7 +212,9 @@ function handleMessage(message, sender, sendResponse) {
   }
   if (message.type === "startDetect") {
     // the popup's "Detect with AI": the script that asks Gemini is injected into the tab
-    chrome.scripting.executeScript({ target: { tabId: message.tabId }, files: ["user-rules.js", "book-detect.js"] }).then(() => sendResponse({ ok: true }), (e) => sendResponse({ error: e.message }));
+    // (message.local: no Gemini, the page itself says where the chapter list is)
+    chrome.scripting.executeScript({ target: { tabId: message.tabId }, func: (local) => { window.__P2PREAD_DETECT_LOCAL = !!local; }, args: [!!message.local] })
+      .then(() => chrome.scripting.executeScript({ target: { tabId: message.tabId }, files: ["user-rules.js", "book-detect.js"] })).then(() => sendResponse({ ok: true }), (e) => sendResponse({ error: e.message }));
     return true;
   }
   if (message.type === "book:detect") {
@@ -215,7 +269,7 @@ function handleMessage(message, sender, sendResponse) {
     return true;
   }
   if (message.type === "translateTab") {
-    translateTab(message.tabId).then(() => sendResponse({ ok: true }));
+    translateTab(message.tabId, { keepNothing: !!message.keepNothing, pay: message.pay }).then(() => sendResponse({ ok: true }), (e) => sendResponse({ error: e.message }));
     return true;
   }
   if (message.type === "listModels") {
@@ -244,13 +298,8 @@ async function syncSiteScripts(stored) {
     const matches = g.matches.filter((m) => SiteAccess.covered(granted, m));
     if (matches.length) groups.push({ id: g.id, matches, js: g.js, runAt: g.runAt, persistAcrossSessions: true });
   }
-  const mine = [];
-  for (const [host, entry] of Object.entries(stored || {})) {
-    if (!entry || entry.enabled === false || !entry.spec || !entry.spec.book || RawSources.SOURCES[host]) continue;
-    const match = "https://*." + host + "/*";
-    if (SiteAccess.covered(granted, match)) mine.push(match);
-  }
-  if (mine.length) groups.push({ id: "user-book-capture", matches: mine, js: ["book-rules.js", "user-rules.js", "book-capture.js"], runAt: "document_idle", persistAcrossSessions: true });
+  // (the book recorder is not among them any more: Import to library runs it in the tab, docs/ADD-BOOK.md; "user-book-capture" stays in the ids, so one an older
+  // version registered is taken away)
   const have = (await chrome.scripting.getRegisteredContentScripts().catch(() => [])).filter((s) => SITE_SCRIPT_IDS.has(s.id)).map((s) => s.id);
   if (have.length) await chrome.scripting.unregisterContentScripts({ ids: have }).catch(() => {});
   if (groups.length) await chrome.scripting.registerContentScripts(groups).catch((e) => console.warn("site scripts not added:", e && e.message));
@@ -271,32 +320,24 @@ chrome.permissions.onAdded.addListener(showAccessBadge);
 chrome.tabs.onActivated.addListener(() => AccessOffer.offer()); // (a tab of the library site comes to the front while a site waits to be allowed)
 chrome.permissions.onRemoved.addListener(showAccessBadge);
 
-// ---------- P2P sync (WebRTC lives in an offscreen document; see p2p-host.js) ----------
+// ---------- the sync with the library site's tab, and the fetching (in an offscreen document, which has a DOM; see p2p-host.js) ----------
 const P2P_PREFIX = "translation:";
-const P2P_CONFIG_KEYS = ["p2pEnabled", "p2pPassphrase", "p2pTrackers"];
 const P2P_INDEX_KEY = "p2pIndex";
 // (in parts: a change saves its part, not the whole index; the offscreen page's sync asks for it here)
 const p2pIndex = P2PCore.bucketedIndex({ get: (k) => chrome.storage.local.get(k), set: (o) => chrome.storage.local.set(o), remove: (k) => chrome.storage.local.remove(k), base: P2P_INDEX_KEY });
 
-// The offscreen page runs the sync room and keeps your library (library-host.js), so it is there even with P2P sync off (the room then does
-// not start; the library still answers the glossary calls).
+// The offscreen page reads the novel sites' pages (DOMParser), runs the sync with the library site's tab and keeps your library (library-host.js).
 async function ensureOffscreen() {
   if (await chrome.offscreen.hasDocument()) return;
   await chrome.offscreen.createDocument({
     url: "offscreen.html",
-    reasons: ["WEB_RTC"],
-    justification: "Peer-to-peer sync of translated chapters over WebRTC"
+    reasons: ["DOM_PARSER"],
+    justification: "Reads the chapters of the novel sites the person allowed, and keeps their library"
   });
 }
 
 function p2pStorageOp(op, args) {
   switch (op) {
-    case "getConfig":
-      return chrome.storage.local.get(P2P_CONFIG_KEYS).then((c) => ({
-        enabled: c.p2pEnabled !== false,
-        passphrase: c.p2pPassphrase || "",
-        trackers: c.p2pTrackers
-      }));
     case "getUserRules":
       return chrome.storage.local.get(UserRules.KEY).then((r) => r[UserRules.KEY] || {});
     case "getIndex":
@@ -312,22 +353,15 @@ function p2pStorageOp(op, args) {
     // the library (library-host.js, in the offscreen page): whether this extension is in it
     case "setLibraryOn":
       return chrome.storage.local.set({ libraryOn: args[0] || null });
-    // joining a library through its site's tab: its passphrase; leaving one: the chapters and the glossaries' copy go (library-host.js forgetStored)
-    case "setPassphrase":
-      return chrome.storage.local.set({ p2pPassphrase: String(args[0] || "").slice(0, 500), p2pEnabled: true });
+    // leaving a library: the chapters and the glossaries' copy go (library-host.js forgetStored)
     case "forgetLibrary":
       return chrome.storage.local.get(null).then((all) => chrome.storage.local.remove(Object.keys(all).filter((k) =>
         k.startsWith(P2P_PREFIX) || k.startsWith(P2P_INDEX_KEY) || ["glossaryLibrary", "glossaryBindings", "glossaryRev", "myTerms"].includes(k))));
-    // what this extension does for your other devices (p2p-host.js helpDevices)
-    case "getHelp":
-      return chrome.storage.local.get("helpDevices").then((r) => r.helpDevices || null);
-    case "setHelp":
-      return chrome.storage.local.set({ helpDevices: args[0] || null });
     case "listTranslations":
       return chrome.storage.local.get(null).then((all) =>
         Object.keys(all)
           .filter((k) => k.startsWith(P2P_PREFIX))
-          .map((k) => [k, { savedAt: all[k].savedAt || 0, translated: !!all[k].translated }])
+          .map((k) => [k, { savedAt: all[k].savedAt || 0, translated: !!all[k].translated, ...(all[k].model === "images" ? { images: true } : {}) }])
       );
     default:
       return Promise.reject(new Error("unknown p2p op " + op));
@@ -352,12 +386,6 @@ chrome.storage.onChanged.addListener((changes, area) => {
     syncSiteScripts(changes[UserRules.KEY].newValue || {});
   }
   if (SiteAccess.KEY in changes) { showAccessBadge(); AccessOffer.offer(); }
-  if (P2P_CONFIG_KEYS.some((k) => k in changes)) {
-    ensureOffscreen()
-      .then(() => chrome.runtime.sendMessage({ target: "p2p-host", type: "reconfigure" }))
-      .catch(() => {});
-    return;
-  }
   for (const key of Object.keys(changes)) {
     if (key.startsWith(P2P_PREFIX) && changes[key].newValue) {
       chrome.runtime
@@ -368,7 +396,6 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 GlossaryServer.wake = ensureOffscreen; // the glossary calls go to the library in the offscreen page once there is one
-NoticeBg.wake = ensureOffscreen; // (a request to join answered from a notification: the library is in the offscreen page)
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || message.type !== "lib:wake") return;
   ensureOffscreen().then(() => sendResponse({ ok: true }), (e) => sendResponse({ error: e.message })); // (the popup, before it asks the library)

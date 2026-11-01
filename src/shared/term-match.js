@@ -51,6 +51,19 @@ var TermMatch = (function () {
     const o = String((e.origin && e.origin.o) || e.origin || "");
     return !o.startsWith("shared") && /^[A-Z]/.test(e.translation || "");
   }
+  // A term of one character that is a word with a meaning, not a name: its English is more than one word (甲 = Grade A), it is not a name's kind, and it does not come from
+  // the genre glossaries the site shares (道 = Dao). It is sent wherever its character is free, marked to be used only where it means that (甲 is in 盔甲 too, armor), so a
+  // grade reads the same in every chapter; a name of one character only where it is used as a name.
+  function wordLike(e) {
+    const o = String((e.origin && e.origin.o) || e.origin || "");
+    return !o.startsWith("shared") && /\s/.test(String(e.translation || "").trim()) && !(e.kind && NAMELIKE.has(String(e.kind).toLowerCase()));
+  }
+  // An entry as a line of the glossary a chapter is sent with (gemini.js and the profiles' translate.js both write them so): its sources, its English, a person's gender and
+  // the parts of the name used alone, and a word of one character marked to be used where it means that.
+  function line(e) {
+    return (e.terms || [e.term]).join(" / ") + " = " + e.translation + (e.gender ? " (" + e.gender + ")" : "") +
+      (e.forms && e.forms.length ? " (the same person, when written alone: " + e.forms.join("; ") + ")" : "") + (e.where ? " (only where it means this)" : "");
+  }
 
   function occurrences(text, term) {
     const out = [];
@@ -101,21 +114,23 @@ var TermMatch = (function () {
     const wholeNames = new Map(); // surname / given -> the entry of the full name it belongs to
     for (const e of list) {
       const sources = (e.terms || [e.term]).filter(Boolean);
-      let used = false;
+      let used = false, where = false;
       for (const t of sources) {
         const n = chars(t);
         const free = freeAt.get(t) || [];
         if (!free.length) continue;
         if (n === 1) {
           if (singles === "off") continue;
-          const okName = nameLike(e) && free.some((i) => nameContext(text, i, t.length));
-          if (!(okName || e.match === "always")) continue;
+          const word = wordLike(e);
+          const okName = !word && nameLike(e) && free.some((i) => nameContext(text, i, t.length));
+          if (!(okName || word || e.match === "always")) continue;
+          if (word && e.match !== "always") where = true;
         }
         used = true;
         found.add(t);
       }
       if (!used) continue;
-      out.push(e);
+      out.push(where ? Object.assign({}, e, { where: true }) : e);
       // a person: the parts of the name that stand alone in this text
       const s0 = sources[0];
       const parts = e.translation && sources.length === 1 ? splitName(s0, e.translation) : null;
@@ -199,7 +214,7 @@ var TermMatch = (function () {
     return out;
   }
 
-  return { select, segment, splitName, nameContext, record, chaptersOf, countOf, firstOf, termsInChapters, parseRanges, formatRanges, emptyIndex, isPerson };
+  return { select, line, segment, splitName, nameContext, record, chaptersOf, countOf, firstOf, termsInChapters, parseRanges, formatRanges, emptyIndex, isPerson };
 })();
 
 if (typeof module !== "undefined" && module.exports) module.exports = TermMatch;

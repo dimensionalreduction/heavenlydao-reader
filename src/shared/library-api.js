@@ -48,7 +48,7 @@
     for (const k of ["glossaries", "bindings", "novels", "covers", "chapterIndex", "watches", "myRatings", "myTerms", "termNotes", "commentLinks"]) s[k] = s[k] || {};
     s.notices = s.notices || [];
     // (every switch is always in the answer, so a page can tell a server that knows it from one that does not)
-    s.settings = Object.assign({ copyCovers: true, termNotesAi: false, poolHints: true, keepTerms: true, sharePool: false, titleTranslate: "google" }, s.settings);
+    s.settings = Object.assign({ copyCovers: true, termNotesAi: true, poolHints: true, keepTerms: true, sharePool: false, titleTranslate: "google" }, s.settings);
     return s;
   }
 
@@ -83,7 +83,7 @@
         .filter((p) => p && /^[A-Za-z0-9_-]{3,24}$/.test(String(p.id)) && typeof p.model === "string" && /^[A-Za-z0-9][\w.:/@+-]{0,119}$/.test(p.model.trim()) && pays.includes(p.pay) && !seen.has(String(p.id)) && seen.add(String(p.id)))
         .map((p) => ({ id: String(p.id), name: clean(p.name, 60) || "Profile", model: p.model.trim(), prompt: typeof p.prompt === "string" ? p.prompt.slice(0, 20000) : "", pay: p.pay, base: p.pay === "key" && typeof p.base === "string" && /^https?:\/\/[^\s"'<>]{3,200}$/.test(p.base.trim()) ? p.base.trim().replace(/\/+$/, "") : "", ...(["fish", "gemini", "openai"].includes(p.voice) ? { voice: p.voice } : {}) }))
         .filter((p) => p.pay !== "key" || p.base)
-        .slice(0, 20);
+        .slice(0, 60);
     };
     if (Array.isArray(body.translateProfiles)) {
       const list = cleanProfiles(body.translateProfiles, ["tickets", "key", "extension"]);

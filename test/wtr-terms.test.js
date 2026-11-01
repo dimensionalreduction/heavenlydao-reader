@@ -50,7 +50,7 @@ assert.deepStrictEqual(W.personalPairs({ success: false }, 8053), []);
 assert.deepStrictEqual(W.personalPairs(null, 8053), []);
 const mine = W.toLibraryEntry(response, 8053, "synthesis-wizard", W.personalPairs(config, 8053));
 assert.deepStrictEqual(mine.terms.slice(0, 4), [["八臂族", "Eight Armed Race", { o: "yours" }], ["八臂部落", "Eight Armed Race", { o: "yours" }], ["科雷", "Corey Prime", { o: "yours" }], ["出手", "taken action", { o: "yours" }]], "yours first");
-assert.ok(mine.terms.some((t) => t[0] === "希恩" && t[1] === "Sheen" && t[2].o === "novel") && !mine.terms.some((t) => t[0] === "科雷" && t[1] === "Corey"), "the novel's own list follows, a term of yours replaces wtr-lab's rendering of it");
+assert.ok(mine.terms.some((t) => t[0] === "希恩" && t[1] === "Sheen" && t[2].o === "novel") && !mine.terms.some((t) => t[0] === "科雷" && t[1] === "Corey"), "the novel's own list follows, a term of yours replaces the translation site's rendering of it");
 assert.strictEqual(mine.counts.mine, 4);
 assert.ok(W.toLibraryEntry({ success: true, glossaries: [] }, 1, "x", [["道", "Dao"]]), "terms of yours alone are a glossary too");
 
@@ -118,7 +118,7 @@ assert.strictEqual(W.cleanDescription("plain text"), "plain text");
 assert.strictEqual(W.cleanDescription(undefined), "");
 // details: status, genres, titles
 const detailed = W.toNovelInfo({ pageProps: { serie: { serie_data: { slug: "s", status: 3, raw_status: 1, genres: [1, 16, 24, 8, 999], tags: [], data: { title: "Main Title", raw_title_b64: Buffer.from("咒术转盘", "utf8").toString("base64").replace(/\+/g, "-").replace(/\//g, "_"), raw: { title: "" } } }, names: [{ title: "Main Title" }, { title: "Other Name" }, { title: "Other Name" }], raws: [] }, tags: [] } }, 1, "s");
-assert.deepStrictEqual([detailed.status, detailed.rawStatus], ["Dropped", "Completed"], "status words, from wtr-lab's own numbering");
+assert.deepStrictEqual([detailed.status, detailed.rawStatus], ["Dropped", "Completed"], "status words, from the translation site's own numbering");
 assert.deepStrictEqual(detailed.genres, ["Action", "Martial Arts", "Sci-Fi", "Fan-Fiction"], "genre names (an unknown number is skipped)");
 assert.strictEqual(detailed.rawTitle, "咒术转盘", "the original-language title, decoded");
 assert.deepStrictEqual(detailed.names, ["Other Name"], "other titles, without the main one or repeats");
@@ -126,7 +126,7 @@ assert.deepStrictEqual(detailed.names, ["Other Name"], "other titles, without th
 const counted = (sd) => W.toNovelInfo({ pageProps: { serie: { serie_data: Object.assign({ slug: "s", data: { title: "T" }, tags: [] }, sd) }, tags: [] } }, 1, "s");
 const full = counted({ raw_status: 0, char_count: 399315, raw_char_count: 400000, total_rate: 6, in_library: 109, vote: 9 });
 assert.deepStrictEqual([full.chars, full.ratingCount, full.readers, full.votes, full.release], [399315, 6, 109, 9, "released"], "its length, reviews, readers, votes, and that it is released");
-assert.deepStrictEqual([counted({ raw_status: -1, raw_char_count: 268546 }).release, counted({ raw_status: -1, raw_char_count: 268546 }).chars], ["voting", 268546], "a novel still on voting; the raw text's length when wtr-lab has no other");
+assert.deepStrictEqual([counted({ raw_status: -1, raw_char_count: 268546 }).release, counted({ raw_status: -1, raw_char_count: 268546 }).chars], ["voting", 268546], "a novel still on voting; the raw text's length when the translation site has no other");
 assert.strictEqual(counted({}).chars, undefined, "a length that is not known is not a length of 0");
 
 // ---- your terms from the library's reader (/api/my-terms) ----

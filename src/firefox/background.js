@@ -3,8 +3,8 @@ function hostnameOf(url) {
 }
 
 // Note: with a default_popup set, browserAction.onClicked never fires — the popup owns the click.
-// The popup's "Translate this page" button sends {type:"translateTab", tabId} instead.
-async function translateTab(tabId) {
+// The popup's "Translate this page" button sends {type:"translateTab", tabId} instead. opts: { keepNothing, pay } (a chapter's page: docs/ADD-BOOK.md)
+async function translateTab(tabId, opts = {}) {
   const tab = await browser.tabs.get(tabId);
   const hostname = hostnameOf(tab.url);
   const { contentSelectors, novelSelectors, novelOverrides } = await browser.storage.local.get([
@@ -22,7 +22,9 @@ async function translateTab(tabId) {
       "window.__GEMINI_CONTENT_SELECTOR_OVERRIDE__ = " + JSON.stringify(contentSelector) + ";" +
       "window.__GEMINI_NOVEL_SELECTOR_OVERRIDE__ = " + JSON.stringify(novelSelector) + ";" +
       "window.__GEMINI_NOVEL_NAME_OVERRIDE__ = " + JSON.stringify(novelNameOverride) + ";" +
-      "window.__USER_RULES__ = " + JSON.stringify(userRules || {}) + ";"
+      "window.__USER_RULES__ = " + JSON.stringify(userRules || {}) + ";" +
+      "window.__P2PREAD_KEEP_NOTHING__ = " + JSON.stringify(!!opts.keepNothing) + ";" +
+      "window.__P2PREAD_PAY__ = " + JSON.stringify(opts.pay === "tickets" ? "tickets" : "key") + ";"
   });
 
   await browser.tabs.executeScript(tabId, { file: "site-selectors.js" });
@@ -33,11 +35,14 @@ async function translateTab(tabId) {
   await browser.tabs.executeScript(tabId, { file: "content.js" });
 }
 
-// Until this extension is a device of a library it does nothing for anyone: its popup shows only the passphrase and Join, and every request
+// Until this extension is a device of a library it does nothing for anyone: its popup shows only Detect library, and every request
 // here is refused (the library's own calls, with a target, and the popup's status questions pass). libraryOn: set by library-host.js.
-const LOCKED = "this extension is not in a library yet: open its popup, enter your library's passphrase and press Join";
+const LOCKED = "this extension is not in a library yet: open the library site in this browser, then the extension's popup, and press Detect library";
 const LOCK_EXEMPT = new Set(["p2p:status", "bookcapture:done", "access:muted", "access:check"]);
 let unlocked = null;
+const bookAdds = new Map(); // tab -> the answer to the popup's Import to library, when the page says it has recorded the book
+// a page of this extension (the popup, also when it is opened in a tab of its own), never a site's page
+const ownPage = (sender) => !sender || !sender.tab || String(sender.url || "").startsWith(browser.runtime.getURL(""));
 const lockRead = browser.storage.local.get("libraryOn").then((r) => { unlocked = !!r.libraryOn; }, () => { unlocked = false; });
 browser.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes.libraryOn) unlocked = !!changes.libraryOn.newValue; });
 browser.runtime.onMessage.addListener((message, sender) => {
@@ -59,10 +64,39 @@ function handleMessage(message, sender) {
     if (!sender || !sender.tab) return;
     return browser.tabs.executeScript(sender.tab.id, { file: "book-capture.js" }).then(() => ({ ok: true }), (e) => ({ error: e.message }));
   }
+  // the pill's Stop on a comic's chapter being translated in its page (comic-host.js, in this page)
+  // a line to read aloud with an AI voice (comic-page.js asks; comic-host.js, in this page, makes the call)
+  if (message.type === "listen:speech" && sender && sender.tab && typeof ComicHost !== "undefined") {
+    return ComicHost.speech(sender.tab.id, String(message.text || ""), message.voice);
+  }
+  if (message.type === "comic:stop" && sender && sender.tab) {
+    if (typeof ComicHost !== "undefined") ComicHost.stop(sender.tab.id);
+    return;
+  }
+  // Import to library (the popup, docs/ADD-BOOK.md): the book on that tab is recorded now -> { saved, reason?, info? }
+  if (message.type === "bookcapture:add" && ownPage(sender)) {
+    const tabId = Number(message.tabId);
+    if (bookAdds.has(tabId)) bookAdds.get(tabId)({ saved: false, reason: "asked again" });
+    return new Promise((resolve) => {
+      bookAdds.set(tabId, resolve);
+      setTimeout(() => resolve({ saved: false, reason: "the page did not answer" }), 120000);
+      browser.tabs.executeScript(tabId, { code: "window.__p2preadAdd = true;" })
+        .then(() => browser.tabs.executeScript(tabId, { file: "book-rules.js" }))
+        .then(() => browser.tabs.executeScript(tabId, { file: "user-rules.js" }))
+        .then(() => browser.tabs.executeScript(tabId, { file: "book-capture.js" }))
+        .catch((e) => resolve({ saved: false, reason: e.message }));
+    }).then((r) => { bookAdds.delete(tabId); return r; });
+  }
+  if (message.type === "bookcapture:done" && message.added && sender && sender.tab && bookAdds.has(sender.tab.id)) {
+    bookAdds.get(sender.tab.id)(message);
+    return;
+  }
   if (message.type === "translate") {
+    // (keepNothing, pay: the popup's Translate on a chapter's page: nothing kept, paid with the Gemini key or tickets as picked there)
+    if (message.pay === "tickets") return GlossaryServer.targetLanguage().catch(() => "en").then((lang) => ProfileTranslate.pageWithTickets(message.text, message.glossary, lang)).catch((e) => ({ error: e.message }));
     return browser.storage.local
       .get("selectedModel")
-      .then(({ selectedModel }) => TermNotes.translate({ text: message.text, glossary: message.glossary, model: selectedModel, url: message.url, title: message.title, novelName: message.novelName }));
+      .then(({ selectedModel }) => TermNotes.translate({ text: message.text, glossary: message.glossary, model: selectedModel, url: message.url, title: message.title, novelName: message.novelName, keepNothing: !!message.keepNothing }));
   }
   if (message.type === "original:translate") return OriginalTranslate.run(message.job).catch((e) => ({ error: e.message }));
   if (message.type === "original:notes") return TermNotes.notesOnly(message.job).catch((e) => ({ error: e.message }));
@@ -78,7 +112,7 @@ function handleMessage(message, sender) {
   if (message.type === "translateTitles") return translateByMode(message.texts, "titles").then((texts) => ({ texts }));
   if (message.type === "chapterindex:save") return GlossaryServer.saveChapterIndex(message.record);
   if (message.type === "novel:save") return GlossaryServer.saveNovel(message.info);
-  if (message.type === "startDetect") return browser.tabs.executeScript(message.tabId, { file: "user-rules.js" }).then(() => browser.tabs.executeScript(message.tabId, { file: "book-detect.js" })).then(() => ({ ok: true }), (e) => ({ error: e.message }));
+  if (message.type === "startDetect") return browser.tabs.executeScript(message.tabId, { code: "window.__P2PREAD_DETECT_LOCAL = " + (message.local ? "true" : "false") + ";" }).then(() => browser.tabs.executeScript(message.tabId, { file: "user-rules.js" })).then(() => browser.tabs.executeScript(message.tabId, { file: "book-detect.js" })).then(() => ({ ok: true }), (e) => ({ error: e.message }));
   if (message.type === "book:detect") return geminiDetectBook(message.candidates, message.page);
   if (message.type === "site:pass") return BookVisit.bringPass(message.url);
   if (message.type === "site:fetch") return BookVisit.fetchIn(message.url);
@@ -93,7 +127,7 @@ function handleMessage(message, sender) {
     return translateByMode([message.text], "titles").then(([text]) => ({ text: text || message.text }));
   }
   if (message.type === "translateTab") {
-    return translateTab(message.tabId).then(() => ({ ok: true }));
+    return translateTab(message.tabId, { keepNothing: !!message.keepNothing, pay: message.pay }).then(() => ({ ok: true }), (e) => ({ error: e.message }));
   }
   if (message.type === "listModels") {
     return listGeminiModels().then((models) => ({ models }));
@@ -119,13 +153,7 @@ async function syncSiteScripts(stored) {
     const matches = g.matches.filter((m) => SiteAccess.covered(granted, m));
     if (matches.length) groups.push({ matches, js: g.js, runAt: g.runAt });
   }
-  const mine = [];
-  for (const [host, entry] of Object.entries(stored || {})) {
-    if (!entry || entry.enabled === false || !entry.spec || !entry.spec.book || RawSources.SOURCES[host]) continue;
-    const match = "https://*." + host + "/*";
-    if (SiteAccess.covered(granted, match)) mine.push(match);
-  }
-  if (mine.length) groups.push({ matches: mine, js: [{ file: "book-rules.js" }, { file: "user-rules.js" }, { file: "book-capture.js" }], runAt: "document_idle" });
+  // (the book recorder is not among them any more: Import to library runs it in the tab: docs/ADD-BOOK.md)
   for (const old of siteScripts) await old.unregister().catch(() => {});
   siteScripts = [];
   for (const g of groups) {

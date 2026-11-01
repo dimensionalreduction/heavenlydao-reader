@@ -14,7 +14,7 @@
 //     shared        only the glossaries the site shares between novels ("Cultivation"...), then what Gemini finds
 //     novel         the site's glossary of the novel + the shared ones, then what Gemini finds
 //     full          also the site's AI-built list
-//     none          nothing from wtr-lab: Gemini alone, building its own as it goes
+//     none          nothing from the translation site: Gemini alone, building its own as it goes
 //     (and any more `opts.bases` gives: bench-run-node.js --pool makes "pool", what the other novels of a library agree on, for a novel with no glossary of its own)
 // and each is run with the terms chosen the old way (`always`: text.includes, every one-character term sent wherever its character is) and the new way
 // (`context`: TermMatch: longest first, one-character terms only as names, the parts of a name with the full name).

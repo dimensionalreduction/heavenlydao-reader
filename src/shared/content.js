@@ -7,6 +7,9 @@
   let pageLang = "en";
   const langReady = Promise.resolve(ext.runtime.sendMessage({ type: "target:language" })).then((r) => { pageLang = (r && r.lang) || "en"; }, () => {});
   const GLOSSARY_KEY = "glossary";
+  // Translate from the popup on a chapter's page (docs/ADD-BOOK.md): nothing is kept (no saved translation, no chapters ahead, no terms offered), paid as picked there
+  const KEEP_NOTHING = window.__P2PREAD_KEEP_NOTHING__ === true;
+  const PAY = window.__P2PREAD_PAY__ === "tickets" ? "tickets" : "key";
 
   if (document.getElementById("gemini-translate-toolbar")) {
     return; // already active on this page — use its buttons
@@ -1046,7 +1049,7 @@
   async function renderSuggestions(suggestions) {
     suggestionsSection.textContent = "";
     glossaryBtn.textContent = "📖";
-    if (!suggestions || suggestions.length === 0) return;
+    if (!suggestions || suggestions.length === 0 || KEEP_NOTHING) return;
 
     const glossary = await loadGlossary();
     const existingTerms = new Set(glossary.flatMap((e) => e.terms));
@@ -1176,7 +1179,8 @@
         statusEl.textContent = "Cached · " + new Date(entry.savedAt).toLocaleTimeString();
         retranslateBtn.disabled = false;
         renderSuggestions(entry.suggestions);
-        prefetchAhead().catch(() => {});
+        window.__P2PREAD_TRANSLATED__ = entry.translated;
+        if (!KEEP_NOTHING) prefetchAhead().catch(() => {});
         return;
       }
     }
@@ -1188,15 +1192,17 @@
     // "replace" entries are output-side corrections (old AI wording -> fixed wording), not source-language
     // translation hints, so they're applied locally in displayTranslation rather than sent to Gemini.
     const glossaryForPrompt = glossary.filter((e) => e.source !== "replace");
-    const response = await ext.runtime.sendMessage({ type: "translate", text, glossary: glossaryForPrompt, url: location.href, title: document.title });
+    const response = await ext.runtime.sendMessage({ type: "translate", text, glossary: glossaryForPrompt, url: location.href, title: document.title, keepNothing: KEEP_NOTHING, pay: PAY });
     retranslateBtn.disabled = false;
     if (response.error) {
       statusEl.textContent = "Error: " + response.error;
       return;
     }
     await displayTranslation(response.translated, response.suggestions);
-    statusEl.textContent = "Translated";
+    statusEl.textContent = "Translated" + (response.tickets ? " · " + Math.round(response.tickets) + " tickets" : "");
     renderSuggestions(response.suggestions);
+    window.__P2PREAD_TRANSLATED__ = response.translated; // (the popup's Listen reads it)
+    if (KEEP_NOTHING) return;
     const [pageTitle, novelName] = await Promise.all([englishLabel(document.title), englishLabel(resolveNovelName())]);
     await ext.storage.local.set({
       [keyIn(cacheKey, response.language || pageLang)]: {

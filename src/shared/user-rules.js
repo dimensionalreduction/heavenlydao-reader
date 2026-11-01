@@ -3,7 +3,7 @@
 //
 // A rule is DATA, never code: selectors, an encoding, how a list is laid out. Nothing the person (or a file they import) writes is ever run, and a rule can
 // only make the extension fetch pages of its own site. Saved rules live in the extension's storage under "userRules" and can be changed only from the
-// extension's own pages (rules.html), never by a website or another device.
+// extension's own pages (rules.html), never by a website.
 //
 //   userRules = { "example.com": { spec, enabled, updatedAt } }
 //   A rule for a site the extension already knows (a built-in one) sits on top of it: whatever the rule leaves out is the built-in rule's, and the book's
@@ -12,6 +12,11 @@
 //     host      "example.com"                    one site, no "www.", no path
 //     name      a label (optional)
 //     selector  the element that holds a chapter's text (needed unless the site is a built-in one)
+//     slugSuffix  true when a book's address ends in a part the site changes (…/comics/some-book-11fe7da3/…): chapter addresses are kept without it
+//               (the site sends the short form on to the right page), so a chapter keeps its key when the site changes it
+//     illustrations  true to keep the pictures between a text chapter's paragraphs (they are fetched with the chapter and shown where they are)
+//     images    for a site whose chapters are pictures (a comic): the pictures' <img> elements, or the box that holds them. A chapter is then kept as
+//               its pictures (image-chapter.js) and `selector` is not needed
 //     junk      elements inside it to drop (optional; script, style, ins and iframe always go)
 //     charset   only when the site does not say its encoding ("gbk", "big5"...)
 //     toc       { list: "ul.chapters a" | boxes: "div.lists", pick: "first"|"last"|"2", reverse: true,
@@ -38,6 +43,17 @@
   const CHARSETS = ["utf-8", "gbk", "gb18030", "big5", "shift_jis", "euc-jp", "euc-kr", "windows-1251", "windows-1252", "iso-8859-1"];
   const HOST = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/;
   const MAX_SELECTOR = 500;
+  // "some-book-11fe7da3" -> "some-book": a last part of 8 letters and digits with a digit in it, in any part of the path
+  const SLUG_TAIL = /-(?=[a-z]*\d)[a-z0-9]{8}$/;
+  function dropSlugSuffix(url) {
+    try {
+      const u = new URL(String(url));
+      u.pathname = u.pathname.split("/").map((part) => part.replace(SLUG_TAIL, "")).join("/");
+      return u.href;
+    } catch (e) {
+      return url;
+    }
+  }
 
   const str = (v) => (typeof v === "string" ? v.trim() : "");
 
@@ -141,6 +157,8 @@
     }
     const bare = (h) => h.replace(/^www\./, "");
     if (page.protocol !== "https:" || (bare(chapter.hostname) !== bare(page.hostname) && !(withQuery && sameSite(page.href, bare(chapter.hostname))))) return null;
+    // a site that names the book in the query (/list?toon=4132, /view?toon=4132&num=7) has no address rule: it cannot say the query, and the first path part is not the book
+    if (!withQuery && [...page.searchParams].some(([k, v]) => v.length >= 2 && chapter.searchParams.get(k) === v)) return null;
     const pageParts = page.pathname.split("/").filter(Boolean);
     const chapterParts = chapter.pathname.split("/").filter(Boolean);
     const esc = (t) => t.replace(/[.*+?^$(){}|[\]\\/]/g, "\\$&");
@@ -228,8 +246,12 @@
     // (the chapter text selector is needed for a site with nothing built in, unless the spec is for the chapter list: "Detect with AI" on a book's page saves the
     // list before any chapter's page has been looked at, and the list must work without waiting for the text selector; or the text is read from the site's data)
     const hasJson = raw.json && typeof raw.json === "object" && !!(str(raw.json.match) || str(raw.json.to) || str(raw.json.text));
-    const selector = selectorField("selector", raw.selector, !base && !(raw.toc && typeof raw.toc === "object") && !hasJson);
+    const selector = selectorField("selector", raw.selector, !base && !(raw.toc && typeof raw.toc === "object") && !hasJson && !str(raw.images));
     if (selector) spec.selector = selector;
+    const images = selectorField("images", raw.images, false);
+    if (images) spec.images = images;
+    if (raw.slugSuffix === true) spec.slugSuffix = true;
+    if (raw.illustrations === true) spec.illustrations = true;
     const junk = selectorField("junk", raw.junk, false);
     if (junk) spec.junk = junk;
 
@@ -496,6 +518,9 @@
     const host = spec.host;
     const own = {};
     if (spec.selector) own.selector = spec.selector;
+    if (spec.images) own.images = spec.images;
+    if (spec.slugSuffix) own.canonical = dropSlugSuffix;
+    if (spec.illustrations) own.illustrations = true;
     if (spec.junk || !base) own.junk = (base && base.junk ? base.junk : JUNK) + (spec.junk ? ", " + spec.junk : "");
     if (spec.charset) own.charset = spec.charset;
     if (spec.toc) {
@@ -544,6 +569,7 @@
       if (t.gap) toc.gap = t.gap;
       if (t.pages && !t.json) {
         const { kind, selector, attr } = t.pages;
+        toc.windowed = kind === "numbered"; // (a bar of page links may show a window of the pages: the list's reader follows it to the end, p2p-host.js)
         toc.pages = (doc, base2) => {
           let els = [];
           try {
@@ -712,12 +738,15 @@
       }
       // how to reach the list page from a chapter's address
       if (f.toc.listUrl && f.toc.listUrl.match && f.toc.listUrl.to) toc.listUrl = { match: f.toc.listUrl.match, to: f.toc.listUrl.to };
+      else if ("listUrl" in f.toc) delete toc.listUrl; // (the list was tried and no address rule holds up: one saved by an earlier run, that does not, goes)
       spec.toc = toc;
     }
     // the chapter's text from the site's data
     if (f.json && f.json.match && f.json.to && f.json.text) spec.json = { match: f.json.match, to: f.json.to, text: f.json.text, ...(f.json.next ? { next: f.json.next } : {}) };
     // where a chapter's text is on its page (found on two chapters as the site sends them)
     if (typeof f.selector === "string" && f.selector.trim()) spec.selector = f.selector.trim();
+    // where a comic's pictures are: a site whose chapters are pictures has them kept, not their text
+    if (typeof f.images === "string" && f.images.trim()) spec.images = f.images.trim();
     next[host] = { ...entry, spec };
     return next;
   }
@@ -757,7 +786,7 @@
     return ready;
   }
 
-  const api = { KEY, JUNK, BOOK_FIELDS, CHARSETS, cleanHost, baseFor, pagerOf, listUrlRule, validate, toRule, compile, bookTable, withBookSelectors, withDetected, apply, current: () => lastStored, start, sameSite, expand, jsonAt, groupsOf, fillLink, linesOf, ready: Promise.resolve() };
+  const api = { KEY, JUNK, dropSlugSuffix, BOOK_FIELDS, CHARSETS, cleanHost, baseFor, pagerOf, listUrlRule, validate, toRule, compile, bookTable, withBookSelectors, withDetected, apply, current: () => lastStored, start, sameSite, expand, jsonAt, groupsOf, fillLink, linesOf, ready: Promise.resolve() };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.UserRules = api;
   if (root.__USER_RULES__) apply(root.__USER_RULES__); // a script injected into a tab is handed the rules before it runs

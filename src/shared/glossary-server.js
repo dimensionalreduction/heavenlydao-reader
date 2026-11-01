@@ -307,7 +307,11 @@ var GlossaryServer = (function () {
       if (!force && !(await copyCoversOn())) return { ok: false, skipped: "off" };
       if (!blob) {
         if (!/^https:\/\//.test(coverUrl || "")) return { ok: false, error: "no cover address" };
-        const res = await fetch(coverUrl, { credentials: "include" });
+        // a cover often lives on a picture host the extension has no access to: with cookies the browser then refuses it unless the host
+        // allows every site, so it is asked again without them before giving up
+        const res = await fetch(coverUrl, { credentials: "include" }).catch(() => fetch(coverUrl, { credentials: "omit" })).catch(() => {
+          throw new Error("the browser would not let the extension download it from " + new URL(coverUrl).hostname);
+        });
         if (!res.ok) throw new Error("the site answered HTTP " + res.status);
         blob = await res.blob();
       }

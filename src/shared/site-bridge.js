@@ -2,18 +2,19 @@
 // directly when they are in the same browser: no trackers, no WebRTC, nothing leaves the computer, and it works offline.
 //
 // The page cannot reach the extension by itself, so this script relays: page <-> window.postMessage <-> this script <-> runtime port <-> the
-// extension page that runs the sync (p2p-host.js). What crosses is the ordinary sync protocol (chapters, requests, progress), which the
-// sync code already validates, so the page gets no more power over the extension than a device on the network would have.
+// extension page that runs the sync (p2p-host.js). What crosses is the sync protocol (chapters, requests, progress), which the
+// sync code validates.
 //
-// Page -> this script: { source: "p2pread-page", type: "connect" | "msg" | "close" | "lib", data }
-// This script -> page: { source: "p2pread-ext",  type: "hello" | "connected" | "msg" | "close" | "lib", data }
+// Page -> this script: { source: "p2pread-page", type: "connect" | "msg" | "close" | "lib" | "img", data }
+// This script -> page: { source: "p2pread-ext",  type: "hello" | "connected" | "msg" | "close" | "lib" | "img", data }
+// "img" is a call for a chapter's pictures ({ id, op, args } -> { id, result | error }, one picture a message).
 // "lib" is a call to your library ({ id, op, args } -> { id, result | error }): the library tab in the same browser reads and changes the
-// library the extension keeps, and lets new devices in, the way the popup does.
+// library the extension keeps, the way the popup does.
 // "fish" ({ id, op: "speak" | "credit", text, voice, model, key } -> { id, audio, type | credit | error, needsAccess }): Listen with a Fish Audio key (fish-speech.js).
 // "access" (page -> extension only): { keys, token }, the keys this page keeps for translation profiles and the playground's sign-in for this extension, so
 // that the chapters a watch fetches are translated with the novel's profile while no page is open (profile-translate.js).
 // "ask" (extension -> page) and "answer" (page -> extension): the popup asks this page about its library ({ id, op, args } -> { id, result |
-// error }): "library" (which one it is, with its passphrase), "letIn" (this extension's request to join: the keys, when this page is its main
+// error }): "library" (which one it is), "letIn" (this extension's request to join: the keys, when this page is its main
 // device), "leaving" (this extension's proof as it leaves: taken off the list there). Sent here as { type: "site:ask", op, args }.
 (function () {
   const ext = typeof browser !== "undefined" ? browser : chrome;
@@ -125,6 +126,17 @@
       );
     } else if (d.type === "access" && d.data && typeof d.data === "object") {
       Promise.resolve(ext.runtime.sendMessage({ type: "profile:access", keys: d.data.keys, token: d.data.token })).catch(() => {});
+    } else if (d.type === "img" && d.data && typeof d.data.op === "string") {
+      // A chapter's pictures, kept by the extension (p2p-host.js): { id, op: "info" | "page", args: [chapter key, page] } -> { id, result | error }.
+      const { id, op, args } = d.data;
+      const ask = async () => {
+        await Promise.resolve(ext.runtime.sendMessage({ type: "lib:wake" })).catch(() => {}); // (Chrome: the offscreen page that keeps them)
+        return ext.runtime.sendMessage({ target: "img", op, args: Array.isArray(args) ? args : [] });
+      };
+      ask().then(
+        (r) => post("img", { id, result: r && r.result, error: r ? r.error : "the extension did not answer" }),
+        (e) => post("img", { id, error: String((e && e.message) || e) })
+      );
     }
   });
 

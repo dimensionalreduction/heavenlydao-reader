@@ -184,7 +184,7 @@ const job = { text: "齐原在神光宗 morning bell", glossary, model: "m", url
   geminiSays = { suggestions: [{ term: "Qi Yuan", translation: "Qi Yuan" }, { term: "Divine Radiance Sect", translation: "Secta del Resplandor" }, { term: "Other Place", translation: "Otro lugar" }] };
   await Fresh.translate({ text: "Qi Yuan went to the Divine Radiance Sect.", glossary: [], model: "m", url: "https://wtr-lab.com/en/novel/5045/golden/chapter-9", title: "x", novelName: "n", english: true });
   assert.deepStrictEqual(languageGot.glossary.map((e) => [e.terms[0], e.translation]), [["Divine Radiance Sect", ""], ["Qi Yuan", ""]], "the glossary's English found in the text, asked for; the one not in it is not");
-  assert.strictEqual(added[0][0], "wtr-lab:5045@es", "a wtr-lab chapter's own glossary needs no binding");
+  assert.strictEqual(added[0][0], "wtr-lab:5045@es", "a translation-site chapter's own glossary needs no binding");
   assert.deepStrictEqual(added[0][1].terms, [["齐原", "Qi Yuan"], ["神光宗", "Secta del Resplandor"], ["Other Place", "Otro lugar"]], "kept under the source terms; a term the glossary has no source for, under its own words");
   made.set("wtr-lab:5045@es", [["神光宗", "Secta del Resplandor"]]);
   made.clear();

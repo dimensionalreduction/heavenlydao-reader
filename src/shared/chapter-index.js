@@ -14,12 +14,15 @@
       source: "69shuba",
       page: /^\/book\/(\d+)\/?$/, // /book/77582/ is the full list; /book/77582.htm is the info page (only the latest few)
       key: (m) => "69shuba.com/txt/" + m[1],
-      // <li data-num="3"><a href="/txt/77582/38804614">第3章 次级龙血药剂</a></li>   (the first <li> repeats the latest chapter)
-      items: (doc) =>
-        [...doc.querySelectorAll("li[data-num]")].map((li) => {
-          const a = li.querySelector("a[href*='/txt/']");
+      // <li data-num="3"><a href="/txt/77582/38804614">第3章 次级龙血药剂</a></li> in div#catalog. Above it, outside #catalog, an <li> repeats the latest chapter,
+      // or (a#bookcase) the chapter this browser last read there, with a data-num that is not its number: 第632章 came out as chapter 7
+      items: (doc) => {
+        const inList = doc.querySelectorAll("#catalog li[data-num]");
+        return [...(inList.length ? inList : doc.querySelectorAll("li[data-num]"))].map((li) => {
+          const a = li.querySelector("a[href*='/txt/']:not(#bookcase)");
           return a ? { num: Number(li.getAttribute("data-num")), text: (a.textContent || "").trim(), href: a.getAttribute("href") } : null;
-        })
+        });
+      }
     }
   ];
 

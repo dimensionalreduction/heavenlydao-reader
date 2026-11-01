@@ -59,4 +59,17 @@ ix = TermMatch.record(ix, 3, ["傅心汉"], ["天道"]);
 assert.strictEqual(ix.terms["天道"], "5");
 assert.strictEqual(TermMatch.record(ix, NaN, ["x"]).terms.x, undefined, "a chapter with no number is not recorded");
 
+// ----- a word of one character (a grade: 甲 = Grade A) is sent wherever it is, marked to be used where it means that -----
+{
+  const grades = [{ terms: ["甲"], translation: "Grade A" }, { terms: ["乙"], translation: "Grade B", kind: "rank" }, { terms: ["林"], translation: "Lin" }, { terms: ["道"], translation: "Great Dao", origin: "shared:cultivation" }];
+  const picked = (text) => TermMatch.select(text, grades).entries.map((e) => (e.terms[0]) + (e.where ? "*" : ""));
+  assert.deepStrictEqual(picked("考核分为甲、乙两等，他得了甲等。"), ["甲*", "乙*"], "a grade by its meaning (more than one word) goes with the chapter, marked");
+  assert.deepStrictEqual(picked("他穿着金甲，走进树林。"), ["甲*"], "in 金甲 too, marked: the line says to use it only where it means that; 林 (a name) only as a name");
+  assert.deepStrictEqual(picked("林师兄说道。"), ["林"], "a name of one character where it is used as one, not marked");
+  assert.deepStrictEqual(picked("天道无情，他说道。"), [], "one from the shared genre glossaries is not sent so");
+  assert.deepStrictEqual(picked("考核分为甲等。").length, 1);
+  assert.strictEqual(TermMatch.line(TermMatch.select("他得了甲。", grades).entries[0]), "甲 = Grade A (only where it means this)", "its line says so");
+  assert.strictEqual(TermMatch.line({ terms: ["傅心汉"], translation: "Fu Xinhan", gender: "male", forms: ["傅 = Fu"] }), "傅心汉 = Fu Xinhan (male) (the same person, when written alone: 傅 = Fu)", "a person's line as before");
+}
+
 console.log("term-match: all passed");

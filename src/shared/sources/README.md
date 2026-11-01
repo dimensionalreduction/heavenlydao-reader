@@ -2,13 +2,13 @@
 
 One small description per site, like WebToEpub's one parser per site. A site listed here can be read by the extension: its chapter text
 fetched and translated, its next chapter followed, its chapter list read, and new chapters looked for ("New chapters" tab). It is also a
-site a "Raw" link in the library can lead to.
+site the translation site's "Raw" link can lead to.
 
 | File | What it is |
 |---|---|
 | `_generated.js` | every site WebToEpub has a parser for (526 of them), **made by `node tools/gen-sources.js`** from `reference/WebToEpub/plugin/js/parsers/`. Do not edit it by hand. |
 | `families.js` | the chapter lists of **families of sites that share a layout** (NovelFull's 36 domains, Readwn's 22, LightNovelWorld's 14, 88xiaoshuo, Fictioneer, FreeWebNovel/Novellive, NovelOnlineFree, Novelbin, Ranobes). Their parsers count pages up, build an address or read a list from a script, which the generator does not guess at, so each is written out once here and added (`RawSources.extend`) to every site the generator found for that parser (`RawSources.hostsOf("NovelfullParser")`), keeping the text selector and book details it read. |
-| `<site>.js` | a site that needed more than the generator could read, or that was checked by hand. Loaded after `_generated.js`, so it replaces that site's entry. |
+| `<site>.js` | a site that needed more than the generator could read, or that was checked by hand. Loaded after `_generated.js`, so it replaces that site's entry. `asurascans.com.js` is a comics site: its pages are Astro, the chapter list, the pictures and the next / previous links are read from the page's own data (`RawSources.helpers.astroProps`), and `pictures: true` says its chapters are pictures. |
 
 The engine (`../raw-sources.js`) holds only the logic. The build joins it with every file here into the one `raw-sources.js` the extension
 loads, and adds each listed site to the manifests' permissions, so adding a site is adding a file, nothing else.

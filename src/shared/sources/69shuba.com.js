@@ -1,8 +1,10 @@
 // 69shuba.com. WebToEpub: 69shuParser.js. The site serves GBK without saying so.
 (function (R) {
   const { JUNK } = R.helpers;
-  // The list is the book's /book/<id>/ page: <li data-num="3"><a href="/txt/<id>/<chapter>">...</a></li>, which can also repeat the latest chapter.
+  // The list is the book's /book/<id>/ page: <li data-num="3"><a href="/txt/<id>/<chapter>">...</a></li> in div#catalog, newest first as sent (the page's
+  // script turns it round). Above it, outside #catalog, an entry repeats the latest chapter or (a#bookcase) the one last read, with a data-num that is not its number.
   const bookId = (address) => (/^https:\/\/(?:www\.)?69shuba\.com\/(?:book|txt)\/(\d+)/.exec(address) || [])[1];
+  const entries = (doc) => (doc.querySelectorAll("#catalog li[data-num]").length ? doc.querySelectorAll("#catalog li[data-num]") : doc.querySelectorAll("li[data-num]"));
   R.register("69shuba.com", {
     wait: 1000, // (between two chapters fetched one after another: 69shuParser.js's minimumThrottle)
     selector: "div.txtnav",
@@ -11,8 +13,8 @@
     toc: {
       url: (address) => (bookId(address) ? "https://www.69shuba.com/book/" + bookId(address) + "/" : null),
       list: (doc, base) => {
-        const rows = [...doc.querySelectorAll("li[data-num]")]
-          .map((li) => ({ n: Number(li.getAttribute("data-num")), a: li.querySelector("a[href*='/txt/']") }))
+        const rows = [...entries(doc)]
+          .map((li) => ({ n: Number(li.getAttribute("data-num")), a: li.querySelector("a[href*='/txt/']:not(#bookcase)") }))
           .filter((x) => x.a && x.n >= 1)
           .sort((a, b) => a.n - b.n);
         const seen = new Set();

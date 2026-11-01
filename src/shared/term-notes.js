@@ -1,5 +1,5 @@
 // Notes on a novel's glossary terms ("sect members: - Qi Yuan (ch1)"), kept up to date by Gemini while it translates the novel's chapters, when the
-// library's Settings switch it on (settings.termNotesAi in the library; off by default). The notes live in the library
+// library's Settings switch it on (settings.termNotesAi in the library; on by default). The notes live in the library
 // (/api/term-notes), one per term of a novel; the library shows them on a term's page.
 //
 // With it on, a chapter goes to Gemini with the notes of the glossary terms that are in it (Gemini's own, and yours as context), and Gemini answers,
@@ -215,10 +215,12 @@ var TermNotes = (function () {
   // job: { text, glossary, model, url, title, novelName, notes, lang, custom }. Into the language `lang` says, else the one the library says (Translate into; English when none).
   // custom (the reader's Custom prompt, for this one request): { prompt, notes, glossary }: the prompt in place of the one in use, and what goes with it as
   // the person chose (notes: sent even with the switch off; glossary: false leaves it out).
+  // job.keepNothing: a chapter's page the popup translates (docs/ADD-BOOK.md): its glossaries are read, and nothing goes back (no notes, no terms kept, no pool)
   async function translate(job) {
     const custom = job.custom || null;
-    if (typeof PoolShare !== "undefined") PoolShare.maybeRun().catch(() => {}); // (the public pool: once a day, not waited for)
-    const want = custom ? !!custom.notes : await wanted(job.notes).catch(() => false);
+    const keeps = !job.keepNothing;
+    if (keeps && typeof PoolShare !== "undefined") PoolShare.maybeRun().catch(() => {}); // (the public pool: once a day, not waited for)
+    const want = !keeps ? false : custom ? !!custom.notes : await wanted(job.notes).catch(() => false);
     const ctx = want ? await context(custom ? Object.assign({}, job, { manual: true }) : job).catch(() => null) : null;
     const lang = job.lang || (typeof GlossaryServer !== "undefined" && GlossaryServer.targetLanguage ? await GlossaryServer.targetLanguage().catch(() => "en") : "en");
     const other = lang !== "en" ? await languageGlossary(lang, job) : null;
@@ -232,10 +234,10 @@ var TermNotes = (function () {
       if (pooled.length) glossary = (glossary || []).concat(pooled);
     }
     const response = await translateText(job.text, glossary, job.model, ctx, lang, extra);
-    if (pooled.length && response && !response.error && job.url) await PoolHints.adopt(job.url, pooled, job.novelName);
+    if (keeps && pooled.length && response && !response.error && job.url) await PoolHints.adopt(job.url, pooled, job.novelName);
     // and the terms Gemini suggested from the chapter (English, from its original: a rendering of a source term), kept in the novel for the chapters after
-    if (!other && !job.english && !noGlossary && response && !response.error && job.url && typeof PoolHints !== "undefined") await PoolHints.keepSuggestions(job.url, String(job.text), response.suggestions, glossary, job.novelName);
-    if (other && response && !response.error) { await other.keep(response.suggestions); await other.keepPool(); }
+    if (keeps && !other && !job.english && !noGlossary && response && !response.error && job.url && typeof PoolHints !== "undefined") await PoolHints.keepSuggestions(job.url, String(job.text), response.suggestions, glossary, job.novelName);
+    if (keeps && other && response && !response.error) { await other.keep(response.suggestions); await other.keepPool(); }
     if (ctx && response && !response.error && response.notes) await save(ctx, response.notes, job.novelName);
     if (response) delete response.notes;
     if (response && !response.error) response.language = lang; // (which version of the chapter this is: its key says it, see P2PCore.langKey)

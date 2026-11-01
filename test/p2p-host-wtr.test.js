@@ -92,7 +92,7 @@ const ctx = {
     if (/^https:\/\/(check|pass|tabonly)\.example\//.test(url)) return ctx.unblocked ? { ok: true, status: 200, url: String(url), arrayBuffer: async () => new TextEncoder().encode(CHECK_LIST).buffer } : { ok: false, status: 403, url: String(url), arrayBuffer: async () => new ArrayBuffer(0) };
     if (url === "https://details.example/book/8") throw new TypeError("Failed to fetch"); // (the site does not even answer the extension)
     if (url === "https://details.example/book/6") return { ok: false, status: 503, url: String(url), arrayBuffer: async () => new ArrayBuffer(0) };
-    // wtr-lab: the novel's page names the build, and the build names the data file
+    // The translation site: the novel's page names the build, and the build names the data file
     if (url === "https://wtr-lab.com/en/novel/8053/synthesis-wizard") return { ok: true, status: 200, text: async () => '<script id="__NEXT_DATA__">{"buildId":"b123","page":"x"}</script>' };
     if (String(url).startsWith("https://wtr-lab.com/_next/data/b123/en/novel/8053/synthesis-wizard.json")) return { ok: true, status: 200, json: async () => ({ pageProps: { serie: { serie_data: { slug: "synthesis-wizard", status: 0, genres: [], tags: [], data: { title: "Synthesis Wizard", author: "Someone", image: "https://img.wtr/8053.jpg", description: "A wizard." } }, raws: [{ slug: "69shu", default: true }], names: [] }, tags: [] } }) };
     throw new Error("unexpected fetch " + url);
@@ -114,31 +114,25 @@ ctx.chrome = {
         if (m.type === "site:fetch") return Promise.resolve(ctx.tabReply || { ok: true, status: 200, url: m.url, type: "text/html; charset=utf-8", body: Buffer.from(CHECK_LIST, "utf8").toString("base64") });
         return Promise.resolve(m.type === "book:visit" && ctx.visitReply ? ctx.visitReply : { ok: true });
       }
-      // (what this extension does for your other devices: ctx.help, as the service worker keeps it)
-      if (m.op === "getHelp") return Promise.resolve({ result: ctx.help || null });
-      if (m.op === "setHelp") { ctx.help = m.args[0]; return Promise.resolve({ result: null }); }
-      return Promise.resolve({ result: m.op === "getConfig" ? { enabled: false } : m.op === "getTranslation" ? store.get(m.args[0]) : m.op === "setTranslation" ? void store.set(m.args[0], m.args[1]) : null });
+      return Promise.resolve({ result: m.op === "getTranslation" ? store.get(m.args[0]) : m.op === "setTranslation" ? void store.set(m.args[0], m.args[1]) : null });
     },
     onMessage: { addListener: () => {} },
     onConnect: { addListener: (fn) => (onConnect = fn) }
   }
 };
-ctx.WebTorrent = class {};
 ctx.BookCapture = require("../src/shared/book-capture.js"); // (the extension page gets these from book-capture.js)
 ctx.WtrTerms = require("../src/shared/wtr-terms.js");
 ctx.UserRules = require("../src/shared/user-rules.js");
 vm.createContext(ctx);
 for (const f of ["p2p-core.js"]) vm.runInContext(fs.readFileSync(path.join(shared, f), "utf8"), ctx, { filename: f });
-// the host hands the core a function to call when another device asks for a chapter: keep hold of it
+// the host hands the core a function to call when the site's tab asks for a chapter: keep hold of it
 let onRawRequest = null;
-let onRawStop = null; // and one for when that device says to stop
-let answerApi = null; // and one for a read of the library
+let onRawStop = null; // and one for when the tab says to stop
 const realCreate = ctx.P2PCore.createP2P;
-const announced = []; // what the host tells the devices that asked: [key, state, info]
+const announced = []; // what the host tells the tab that asked: [key, state, info]
 ctx.P2PCore.createP2P = (opts) => {
   onRawRequest = opts.onRawRequest;
   onRawStop = opts.onRawStop;
-  answerApi = opts.answerApi;
   const core = realCreate(opts);
   const realAnnounce = core.announceRaw;
   core.announceRaw = (key, state, info) => { announced.push([key, state, info]); return realAnnounce(key, state, info); };
@@ -163,12 +157,12 @@ const SOURCE = "https://www.69shuba.com/txt/77582/38804612";
   assert.ok(raw, "the original text is kept under the SOURCE chapter's key (what is sent to Gemini)");
   assert.deepStrictEqual([raw.model, raw.pageTitle, raw.novelName], ["original", "Chapter 1: Synthesis Cube", "Synthesis Wizard"]);
   assert.ok(raw.translated.includes("第一章"), "the text came from the source page, decoded as GB18030");
-  assert.ok(!store.has(wtrKey), "nothing is stored under the wtr-lab key: wtr-lab has no original text");
+  assert.ok(!store.has(wtrKey), "nothing is stored under the translation-site key: the translation site has no original text");
   await sleep(100);
   const bind = sent.find((m) => m.type === "wtr:bindsource");
-  assert.deepStrictEqual([bind.url, bind.rawId], [SOURCE, "8053"], "the novel's wtr-lab glossary is bound to the new source");
+  assert.deepStrictEqual([bind.url, bind.rawId], [SOURCE, "8053"], "the novel's translation-site glossary is bound to the new source");
   const job = sent.find((m) => m.type === "original:translate").job;
-  assert.deepStrictEqual([job.url, job.pageTitle, job.novelName], [SOURCE, "Chapter 1: Synthesis Cube", "Synthesis Wizard"], "translated under the source's URL, titled like the wtr-lab chapter so the two line up");
+  assert.deepStrictEqual([job.url, job.pageTitle, job.novelName], [SOURCE, "Chapter 1: Synthesis Cube", "Synthesis Wizard"], "translated under the source's URL, titled like the translation-site chapter so the two line up");
   assert.ok(job.text.includes("第一章"));
   assert.strictEqual(raw.next, "https://www.69shuba.com/txt/77582/38804613", "the page's own next-chapter link is kept with the text");
   assert.strictEqual(job.next, raw.next, "and goes on to the translation");
@@ -190,7 +184,7 @@ const SOURCE = "https://www.69shuba.com/txt/77582/38804612";
   assert.ok(ctx.cancelled, "a page that is not needed is not downloaded");
   await sleep(3000); // let the translations that step queued finish, so the next step starts clean
 
-  // ---- already translated from that source (say by another device): nothing is translated again ----
+  // ---- already translated from that source: nothing is translated again ----
   store.set("translation:" + SOURCE, { translated: "English text", model: "gemini", savedAt: 1 });
   sent.length = 0;
   await onRawRequest(wtrKey, meta);
@@ -559,7 +553,7 @@ const SOURCE = "https://www.69shuba.com/txt/77582/38804612";
   assert.strictEqual(found.kind, "list");
   assert.deepStrictEqual(found.chapters.map((c) => c[0]), [1, 2, 3], "sorted by number; the entry without a number is dropped");
   assert.deepStrictEqual(Array.from(found.chapters[1]), [2, "Chapter 2 Beta", "https://wtr-lab.com/en/novel/8053/synthesis-wizard/chapter-2", "第2章"], "number, title, the chapter's own address, original title");
-  await assert.rejects(ctx.__checkWatch({ source: "wtr-lab.com", url: "" }), /not known yet/, "wtr-lab needs the novel's address");
+  await assert.rejects(ctx.__checkWatch({ source: "wtr-lab.com", url: "" }), /not known yet/, "the translation site needs the novel's address");
 
   // ---- a site with a chapter-list page (uuread): one request gives every chapter ----
   calls = [];
@@ -639,8 +633,8 @@ const SOURCE = "https://www.69shuba.com/txt/77582/38804612";
   assert.deepStrictEqual(await ff(wlist, ww, { missing: true, batch: 2 }), { asked: 2, complete: false }, "the first two not here");
   assert.deepStrictEqual(await ff(wlist, ww, { missing: true, batch: 2 }), { asked: 0, busy: true }, "nothing more while that batch is being fetched");
   await waitSaved([21, 22]);
-  assert.ok(ctx.readerAt.length === 2 && ctx.readerAt[1] - ctx.readerAt[0] >= 100, "a batch's chapters are asked for apart, as WebToEpub spaces wtr-lab's: " + JSON.stringify(ctx.readerAt));
-  assert.deepStrictEqual([savedWl(21).novelName, savedWl(21).model.startsWith("wtr-lab")], ["Synthesis Wizard", true], "wtr-lab's English, under the novel's name in the library");
+  assert.ok(ctx.readerAt.length === 2 && ctx.readerAt[1] - ctx.readerAt[0] >= 100, "a batch's chapters are asked for apart, as WebToEpub spaces the translation site's: " + JSON.stringify(ctx.readerAt));
+  assert.deepStrictEqual([savedWl(21).novelName, savedWl(21).model.startsWith("wtr-lab")], ["Synthesis Wizard", true], "the translation site's English, under the novel's name in the library");
   assert.deepStrictEqual(await ff(wlist, ww, { missing: true, batch: 2 }), { asked: 1, complete: false }, "then the rest");
   await waitSaved([23]);
   assert.deepStrictEqual(await ff(wlist, ww, { missing: true, batch: 2 }), { asked: 0, complete: true }, "every chapter is here");
@@ -681,7 +675,7 @@ const SOURCE = "https://www.69shuba.com/txt/77582/38804612";
   assert.ok(announced.some(([k, st, info]) => /chapter-50#original$/.test(k) && st === "failed" && /not AI-translated on the site/.test(info.error || "")), "and the locked one says why");
   await waitSaved([51]);
   // the wait between chapters: the novel's own for the source (the watch's `wait`), else the person's for the site (settings.siteWaits), else
-  // The site's own (wtr-lab: 12 seconds); a paced batch is as many as that wait fits in a minute
+  // The site's own (the translation site: 12 seconds); a paced batch is as many as that wait fits in a minute
   const pl = Array.from({ length: 55 }, (_, i) => wl(60 + i));
   ctx.settingsNow = {};
   assert.strictEqual((await ff(pl, { ...ww, id: "pace1|wtr-lab.com" }, { missing: true, batch: 5, paced: true })).asked, 5, "the site's own, 12 seconds: 5 a minute");
@@ -689,7 +683,7 @@ const SOURCE = "https://www.69shuba.com/txt/77582/38804612";
   assert.strictEqual((await ff(pl.slice(40), { ...ww, id: "pace0|wtr-lab.com", wait: 6 }, { missing: true, batch: 5, paced: true })).asked, 10, "the novel's own (6 seconds) before the site's default: 10");
   for (let i = 0; i < 300 && (await ff([], { ...ww, id: "pace0|wtr-lab.com" }, { missing: true, batch: 5, paced: true })).busy; i++) await sleep(100);
   ctx.readerAt = [];
-  assert.strictEqual((await ff(pl.slice(5, 40), { ...ww, id: "pace2|wtr-lab.com" }, { missing: true, batch: 5, paced: true })).asked, 30, "the person's default for wtr-lab, 2 seconds: 30 in a minute");
+  assert.strictEqual((await ff(pl.slice(5, 40), { ...ww, id: "pace2|wtr-lab.com" }, { missing: true, batch: 5, paced: true })).asked, 30, "the person's default for the translation site, 2 seconds: 30 in a minute");
   for (let i = 0; i < 450 && !pl.slice(5, 35).every((c) => savedWl(c.num)); i++) await sleep(100); // (the 30, a second each: the extension's own turn between requests)
   assert.ok(pl.slice(5, 35).every((c) => savedWl(c.num)), "the 30 came");
   const steps = ctx.readerAt.slice(1).map((t, i) => t - ctx.readerAt[i]);
@@ -748,14 +742,14 @@ const SOURCE = "https://www.69shuba.com/txt/77582/38804612";
   finalUrl = SOURCE; // (the raw link leads to the novel's source again)
   sent.length = 0;
   calls = [];
-  store.set("translation:" + OWN_URL, { translated: "wtr-lab's English text of the chapter, long enough.", model: "wtr-lab", savedAt: 1, pageTitle: "Chapter 1: Synthesis Cube", novelName: "Synthesis Wizard" });
+  store.set("translation:" + OWN_URL, { translated: "the translation site's English text of the chapter, long enough.", model: "wtr-lab", savedAt: 1, pageTitle: "Chapter 1: Synthesis Cube", novelName: "Synthesis Wizard" });
   await onRawRequest(wtrKey, { ...meta, ahead: 0, lang: "si" });
   await sleep(200);
   const si = sent.find((m) => m.type === "original:translate");
   assert.ok(si, "asked for Sinhala: the chapter is handed to the translator");
-  assert.deepStrictEqual([si.job.url, si.job.saveUrl, si.job.lang], [SOURCE, OWN_URL, "si"], "its text is the source's original; the result is kept under the wtr-lab chapter's own address, in that language");
+  assert.deepStrictEqual([si.job.url, si.job.saveUrl, si.job.lang], [SOURCE, OWN_URL, "si"], "its text is the source's original; the result is kept under the translation-site chapter's own address, in that language");
   assert.ok(si.job.text.includes("第一章"));
-  assert.ok(announced.some((a) => a[0] === wtrKey && a[1] === "done" && !a[2].url), "done is told without the source's address: the chapter stays the wtr-lab one");
+  assert.ok(announced.some((a) => a[0] === wtrKey && a[1] === "done" && !a[2].url), "done is told without the source's address: the chapter stays the translation-site one");
   // a version that is there is not made again, and the source is not asked
   sent.length = 0;
   calls = [];
@@ -778,7 +772,7 @@ const SOURCE = "https://www.69shuba.com/txt/77582/38804612";
   await sleep(200);
   const viaEnglish = sent.find((m) => m.type === "original:translate");
   assert.ok(viaEnglish, "the source could not be read: still translated");
-  assert.deepStrictEqual([viaEnglish.job.url, viaEnglish.job.saveUrl, viaEnglish.job.lang, viaEnglish.job.text], [OWN_URL, OWN_URL, "si", "wtr-lab's English text of the chapter, long enough."], "from wtr-lab's English, kept under the chapter's own address");
+  assert.deepStrictEqual([viaEnglish.job.url, viaEnglish.job.saveUrl, viaEnglish.job.lang, viaEnglish.job.text], [OWN_URL, OWN_URL, "si", "the translation site's English text of the chapter, long enough."], "from the translation site's English, kept under the chapter's own address");
   store.delete("translation:" + OWN_URL);
 
   // ---- the Raw link cannot be followed: a source site the extension may not read yet is named (and noted for the popup's Allow), not blamed on a bot check ----
@@ -805,58 +799,6 @@ const SOURCE = "https://www.69shuba.com/txt/77582/38804612";
   ctx.rawThrows = false;
   delete ctx.SiteAccess;
 
-  // ---- another device of the library asks (remote): nothing is fetched or translated for it unless switched on in this browser (helpDevices) ----
-  await sleep(3000); // (what the steps before queued is done)
-  const OTHER = (n) => "translation:https://www.69shuba.com/txt/77582/388046" + n + "#original";
-  for (const n of [14, 15]) { store.delete(OTHER(n)); store.delete(OTHER(n).replace(/#original$/, "")); }
-  const told = [];
-  const from = { decline: (why) => told.push(why) };
-  const remoteMeta = { remote: true, novelName: "Martial Universe", pageTitle: "Chapter 14", translate: true, ahead: 0 };
-  const ask = (key, m) => onRawRequest(key, m, from).then(() => "done", (e) => (e && e.declined ? "declined: " + e.message : "failed: " + (e && e.message)));
-  ctx.help = null;
-  calls = [];
-  sent.length = 0;
-  announced.length = 0;
-  let got = await ask(OTHER(14), remoteMeta);
-  assert.ok(/^declined: The extension on your computer doesn't fetch chapters for your other devices/.test(got), "off by default: declined, saying why: " + got);
-  assert.ok(!calls.some((u) => /69shuba/.test(u)) && !store.has(OTHER(14)), "nothing fetched");
-  assert.ok(!announced.some(([k]) => k === OTHER(14)), "and nothing told to the other devices (another extension may be doing it)");
-  for (const k of ["translation:https://www.69shuba.com/txt/77582/38804614#list", "translation:https://www.69shuba.com/txt/77582/38804614#details"]) {
-    assert.ok(/^declined: .*doesn't fetch/.test(await ask(k, { remote: true })), "nor a chapter list or a book's details: " + k);
-  }
-  assert.ok(/^declined: .*doesn't fetch/.test(await ask(wtrKey, { ...meta, remote: true })), "nor a site chapter from its source");
-  assert.ok(/^declined: .*doesn't fetch/.test(await ask(OTHER(14), { ...remoteMeta, findNext: true })), "nor the next chapter's link");
-  // fetching on, translating off: the text is fetched, the asker is told it is not translated
-  ctx.help = { fetch: true, translate: false };
-  got = await ask(OTHER(14), remoteMeta);
-  assert.strictEqual(got, "done");
-  assert.ok(store.get(OTHER(14)) && store.get(OTHER(14)).translated, "the chapter's text is fetched");
-  assert.ok(told.length === 1 && /doesn't translate for your other devices/.test(told[0]), "the asker is told it is not translated: " + JSON.stringify(told));
-  await sleep(200);
-  assert.ok(!sent.some((m) => m.type === "original:translate"), "and it is not");
-  assert.ok(/^declined: .*doesn't translate/.test(await ask(OTHER(14), { ...remoteMeta, retranslate: true })), "a re-translate of a chapter whose text is here: declined");
-  assert.ok(/^declined: .*doesn't translate/.test(await ask(wtrKey, { ...meta, remote: true })), "a site chapter from its source (translated as it comes): declined");
-  assert.ok(/^declined: .*doesn't translate/.test(await ask("translation:https://www.69shuba.com/txt/77582/38804614#notes", { remote: true })), "Gemini's notes: declined");
-  assert.strictEqual(await ask(OTHER(14), { ...remoteMeta, translate: false }), "done", "only its text (a device that translates itself, with a profile): done");
-  // both on: as before
-  ctx.help = { fetch: true, translate: true };
-  told.length = 0;
-  sent.length = 0;
-  got = await ask(OTHER(15), { ...remoteMeta, pageTitle: "Chapter 15" });
-  assert.strictEqual(got, "done");
-  await sleep(200);
-  assert.ok(sent.some((m) => m.type === "original:translate" && m.job.url === OTHER(15).replace(/^translation:|#original$/g, "")) && !told.length, "fetched and translated, nothing declined");
-  // this browser's own tab (a local link) and this extension's own work are never held to it
-  ctx.help = null;
-  sent.length = 0;
-  store.delete(OTHER(15).replace(/#original$/, ""));
-  assert.strictEqual(await ask(OTHER(15), { ...remoteMeta, remote: false, retranslate: true }), "done", "the tab in this browser asks for anything");
-  await sleep(200);
-  assert.ok(sent.some((m) => m.type === "original:translate"), "and it is translated");
-  // a read of the library: never for another device, as before for this browser's tab
-  assert.strictEqual(await answerApi("/api/novels", { remote: true }), null, "another device's read of the library is not answered");
-  // the switches are kept in this extension (the service worker's storage, in Chrome)
-  ctx.help = null;
 
   console.log("OK — chapter fetching checks passed");
   process.exit(0);

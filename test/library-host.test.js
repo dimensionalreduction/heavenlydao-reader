@@ -59,7 +59,8 @@ const shared = path.join(__dirname, "..", "src", "shared");
   assert.strictEqual((await ask("status")).result.state, "none");
   await assert.rejects(GlossaryServer.api("GET", "/api/novels"), /not in a library yet/, "nothing is answered before the extension is in a library");
   assert.ok(!store.libraryOn);
-  assert.match((await ask("room", "versions")).error, /not in a library yet/, "the site's tab answers for no library of this extension's before");
+  assert.match((await ask("schedule")).error, /not in a library yet/, "nor the site's tab's questions");
+  assert.match((await ask("room", "versions")).error, /not in a library yet/);
 
   // ---- an empty library, with this device as its main device ----
   const made = await ask("create");
@@ -110,13 +111,13 @@ const shared = path.join(__dirname, "..", "src", "shared");
   assert.strictEqual(JSON.stringify(mineNow.map((t) => [t.id, t.keys.join(), t.novel]).sort()), JSON.stringify([["mine1", "", ""], ["wtr-111", "wtr-lab:8053", "Synthesis Wizard"], ["wtr-222", "", ""]]), "one for the novel, one for every novel, the person's own untouched");
   syncedTerms = await GlossaryServer.syncPersonalReplacements("8053", "Synthesis Wizard", [fix("wtr-222", "Sphere Lord", "Planet Lord", true)]);
   mineNow = (await GlossaryServer.api("GET", "/api/my-terms")).terms;
-  assert.strictEqual(JSON.stringify(mineNow.map((t) => t.id).sort()), JSON.stringify(["mine1", "wtr-222"]), "the one wtr-lab dropped is gone");
+  assert.strictEqual(JSON.stringify(mineNow.map((t) => t.id).sort()), JSON.stringify(["mine1", "wtr-222"]), "the one the translation site dropped is gone");
   // changed on the site (saved without src): the person's own from then on, the site's next read leaves it alone; deleted on the site: stays deleted
   await GlossaryServer.api("PUT", "/api/my-terms/wtr-222", { from: ["Sphere Lord"], to: "My Planet Lord", cs: false, keys: [] });
   await GlossaryServer.syncPersonalReplacements("8053", "Synthesis Wizard", [fix("wtr-222", "Sphere Lord", "Planet Lord", true), fix("wtr-333", "Ring", "Band", true)]);
   let after = await GlossaryServer.api("GET", "/api/my-terms");
-  assert.strictEqual(after.terms.find((x) => x.id === "wtr-222").to, "My Planet Lord", "a term the person changed is not overwritten by wtr-lab's");
-  assert.strictEqual(after.terms.find((x) => x.id === "wtr-333").src, "wtr", "a new one from wtr-lab is added, marked as wtr-lab's");
+  assert.strictEqual(after.terms.find((x) => x.id === "wtr-222").to, "My Planet Lord", "a term the person changed is not overwritten by the translation site's");
+  assert.strictEqual(after.terms.find((x) => x.id === "wtr-333").src, "wtr", "a new one from the translation site is added, marked as the translation site's");
   await GlossaryServer.api("DELETE", "/api/my-terms/wtr-333");
   await GlossaryServer.syncPersonalReplacements("8053", "Synthesis Wizard", [fix("wtr-222", "Sphere Lord", "Planet Lord", true), fix("wtr-333", "Ring", "Band", true)]);
   after = await GlossaryServer.api("GET", "/api/my-terms");
@@ -126,7 +127,7 @@ const shared = path.join(__dirname, "..", "src", "shared");
   await GlossaryServer.api("DELETE", "/api/my-terms/mine1");
   const imported = await GlossaryServer.importSnapshot({ id: G, name: "wizard", terms: [["科雷", "Corey"], ["希恩", "Sheen"]] });
   assert.ok(imported.ok, imported.error);
-  assert.strictEqual(store.glossaryLibrary[G].terms.length, 2, "a wtr-lab import goes into the library");
+  assert.strictEqual(store.glossaryLibrary[G].terms.length, 2, "a translation-site import goes into the library");
   const cover = await GlossaryServer.copyCover("wtr-lab:1", "", new Blob([Uint8Array.from([0xff, 0xd8, 0xff, 1, 2, 3])], { type: "image/jpeg" }));
   assert.ok(cover.ok && cover.changed, JSON.stringify(cover));
   const got = await ask("api", "GET", "/api/covers/" + encodeURIComponent("wtr-lab:1"));
@@ -134,28 +135,17 @@ const shared = path.join(__dirname, "..", "src", "shared");
   // an error says what the library said
   const missing = await ask("api", "GET", "/api/glossaries/nope");
   assert.strictEqual(missing.error, "no such glossary");
-  // when it does what it does on its own (the site's Triggers tab and Activity › Upcoming): nothing published yet, so no editions job
+  // when it does what it does on its own (the site's Triggers tab and Activity › Upcoming): how often the watches are looked at
   const sch = (await ask("schedule")).result;
-  assert.deepStrictEqual([sch.editions, sch.follows, sch.watches.every, typeof sch.now], [null, null, 60000, "number"], "the schedule, before publishing starts");
+  assert.deepStrictEqual([sch.watches.every, typeof sch.now], [60000, "number"], "the schedule");
+  // what the network had is not asked any more
+  for (const op of ["room", "join", "allow", "share", "put", "follows", "helpDevices"]) assert.match((await ask(op)).error, /unknown library call/, op + " is no call any more");
 
-  // ---- the site's tab answering for this library in its own room ("room"): what the room asks of the library, call by call ----
-  const libId = made.result.libId;
-  assert.strictEqual((await ask("room", "lib")).result, libId);
-  const vers = (await ask("room", "versions")).result;
-  assert.ok(vers.some(([k]) => k === "devices") && vers.some(([k]) => k === "novel:" + G), "what this library holds");
-  const devVer = vers.find(([k]) => k === "devices")[1];
-  assert.deepStrictEqual((await ask("room", "wantsMany", [["devices", devVer], ["novel:wtr-lab:1", [1, 0, "x"]]])).result, [["novel:wtr-lab:1", [1, 0, "x"]]], "only what it does not have");
-  assert.strictEqual((await ask("room", "get", "devices")).result.by, "root");
-  const proof = (await ask("room", "peerProof", "p2p-read peer v1|" + libId + "|mine|theirs")).result;
-  assert.ok(proof && proof.d === made.result.device.id && typeof proof.s === "string", "a proof for a connection of this library's room");
-  assert.strictEqual((await ask("room", "peerProof", "anything at all")).result, null, "nothing else is signed with this extension's key");
-  assert.strictEqual((await ask("room", "peerProof", "p2p-read peer v1|another library|mine|theirs")).result, null, "nor a proof for another library");
-  assert.match((await ask("room", "api", "GET", "/api/novels")).error, /not something the room asks/, "only the room's calls");
 
   // ---- leaving (the popup only), and joining another library at once (the popup's Detect: the keys from the library's tab) ----
   assert.strictEqual((await askFrom("https://heavenlydao.com/#/", "leave")).error, "only the extension's popup does that", "the site's tab can't make it leave");
   Object.assign(store, { "translation:https://x.example/1": { text: "a chapter", savedAt: 1, translated: true }, "p2pIndex:3": { "translation:https://x.example/1": { savedAt: 1 } },
-    myTerms: [{ id: "t" }], geminiApiKey: "the key", p2pPassphrase: "library one" });
+    myTerms: [{ id: "t" }], geminiApiKey: "the key" });
   const left = await ask("leave");
   assert.ok(!left.error, left.error);
   assert.strictEqual(left.result.state, "none", "in no library");
@@ -171,13 +161,12 @@ const shared = path.join(__dirname, "..", "src", "shared");
   assert.strictEqual((await ask("status")).result.state, "none", "making the request asks nobody");
   assert.ok(other.joinAsked(request));
   const { keys } = await other.allow(request.id);
-  const joined = await ask("receiveKeys", keys, "library two");
+  const joined = await ask("receiveKeys", keys);
   assert.ok(!joined.error, joined.error);
   assert.strictEqual(joined.result.code, other.status().code, "in the other library");
-  assert.strictEqual(store.p2pPassphrase, "library two", "with its passphrase");
   assert.ok(store.libraryOn && store.libraryOn.code === other.status().code);
   assert.match((await ask("joinRequest")).error, /leave it first/, "not while it is in one");
-  assert.match((await ask("receiveKeys", keys, "x")).error, /not for this extension/);
+  assert.match((await ask("receiveKeys", keys)).error, /not for this extension/);
 
 
   console.log("OK — library host checks passed");

@@ -2,13 +2,13 @@
 
 heavenlydao.com Reader is a browser extension. This page says what it does with your data. Questions: support@heavenlydao.com
 
-Last updated: 2026-10-25
+Last updated: 2026-11-01
 
 ## Summary
 
 - The extension has no account of its own, no analytics and no telemetry. The developer runs no server that stores your chapters, glossaries, settings or API keys.
-- Everything the extension keeps (chapters, glossaries, your library, settings, your API keys) stays in your browser's local storage and
-  on your own other devices (your API keys and your playground sign-in stay in this browser only).
+- Everything the extension keeps (chapters, glossaries, your library, settings, your API keys) stays in your browser's local storage. The
+  library site's tab in the same browser reads your library through the extension, on your computer.
 - Text leaves your browser only to the services listed below, and only for the feature that needs it.
 
 ## What is kept on your device
@@ -28,8 +28,6 @@ the extension deletes it.
 | The playground (`playground.heavenlydao.com`) | The same, for a profile paid with tickets, with the extension's sign-in. The playground passes the text to the model (through OpenRouter) and keeps no text. | When a watch fetches chapters of a novel translated with such a profile. |
 | Google Translate (`translate.googleapis.com`) | Titles and book details. | When title translation uses Google Translate (the default). |
 | Novel sites (the built-in list, and any site you add a rule for) | Requests for the pages you ask for or that your watches check, made with your browser's own cookies for that site. | When you fetch chapters or a watch runs. |
-| Trackers (`tracker.heavenlydao.com`, `tracker.webtorrent.dev`) | An identifier derived from your library's secret, so your devices can find each other. No chapter text. | While sync is on. |
-| Your other devices, and readers of anything you choose to share | Chapters, glossaries and library records, directly over WebRTC. Only devices that have proved they belong to your library receive your library; readers receive only what you share. | While sync is on. |
 | The public pool (`pool.heavenlydao.com`) | **Downloads:** once a day the extension downloads the public pool of terms, with no cookies and no referrer, and nothing about you. **Uploads:** only if you turn on *Settings > Translation > Add my terms to the public pool*, which first shows you exactly what would be added. Only terms (a source term and its rendering) are sent, with a proof of work in place of a login. No names of novels, characters, sentences, addresses or identifiers are kept. | Uploads are off until you agree and stop when you turn them off. Terms already added become public domain (CC0) and cannot be taken back. |
 
 The extension makes no other requests.
@@ -40,7 +38,7 @@ See the Permissions table in the [README](README.md#permissions).
 
 ## What the developer receives
 
-Nothing from the extension itself. The servers the extension contacts (`tracker.heavenlydao.com`, `pool.heavenlydao.com` and, for a profile paid with tickets,
+Nothing from the extension itself. The servers the extension contacts (`pool.heavenlydao.com` and, for a profile paid with tickets,
 `playground.heavenlydao.com`) see the request they receive, such as your IP address, as any web server does, and keep no record of it beyond what is described
 above for the pool and, for the playground, the tickets used (its own privacy page: heavenlydao.com/privacy.html).
 

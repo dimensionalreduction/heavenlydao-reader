@@ -1,10 +1,11 @@
 // Runs every test in test/ one after the other and lists the ones that failed: npm test
 // (Each test is a plain Node script that exits non-zero on failure; any one can also be run alone: node test/<name>.test.js)
+// Another folder of such tests: node extension/tools/test.js site/test (the site's, as the Test site task and the site's publishing run them)
 const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
 
-const dir = path.join(__dirname, "..", "test");
+const dir = process.argv[2] ? path.resolve(process.argv[2]) : path.join(__dirname, "..", "test");
 const files = fs.readdirSync(dir).filter((f) => f.endsWith(".test.js")).sort();
 const failed = [];
 for (const file of files) {

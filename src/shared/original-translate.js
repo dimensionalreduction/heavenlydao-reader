@@ -7,7 +7,7 @@
 var OriginalTranslate = (function () {
   const ext = typeof browser !== "undefined" ? browser : chrome;
   const MAX_CHARS = 20000; // what the in-page translator sends at most
-  // (the requests here are to wtr-lab: the browser has to have allowed the site, site-access.js)
+  // (the requests here are to the translation site: the browser has to have allowed the site, site-access.js)
   const fetch = (url, options) => (typeof SiteAccess !== "undefined" ? SiteAccess.fetch(url, options) : globalThis.fetch(url, options));
 
   function ownEntry(e) {
@@ -78,7 +78,9 @@ var OriginalTranslate = (function () {
     // A chapter that is already English is not sent to the translator: its text is kept as it is, as the chapter's own copy, so it opens like any other.
     // (a re-fetch replaces it with the fresh text, still untranslated; only an asked-for re-translate goes to the translator)
     // (the same for any language the text is already in, the library's Translate into: Spanish text on a Spanish site into Spanish; English text into another language is translated)
-    if (!job.retranslate && LangDetect.isLanguage(job.text, lang)) {
+    // the lines that are the chapter's pictures are not words: they are taken out before the text is looked at or sent, and put back where they were
+    const pictures = typeof ImageChapter !== "undefined" ? ImageChapter.splitIllustrations(job.text) : null;
+    if (!job.retranslate && LangDetect.isLanguage(pictures ? pictures.text : job.text, lang)) {
       await ext.storage.local.set({
         [key]: { translated: String(job.text), suggestions: [], savedAt: Date.now(), model: lang === "en" ? "english source" : "source in " + lang, pageTitle: job.pageTitle || "", novelName: job.novelName || "", ...(job.next ? { next: job.next } : {}) }
       });
@@ -102,11 +104,13 @@ var OriginalTranslate = (function () {
     const { selectedModel } = await ext.storage.local.get("selectedModel");
     // The reader's Custom prompt: the prompt chosen and what goes with it.
     const custom = job.custom && job.custom.prompt ? { prompt: job.custom.prompt, notes: !!job.custom.notes, glossary: job.custom.glossary !== false } : profile ? ProfileTranslate.customOf(profile) : null;
+    if (pictures && pictures.marks.length) job = { ...job, text: pictures.text };
     const response = await TermNotes.translate({ text: String(job.text).slice(0, MAX_CHARS), glossary, model: selectedModel, url: job.url, title: job.pageTitle, novelName: job.novelName, notes: job.notes, lang, english: !!job.english, ...(custom ? { custom } : {}) });
     if (!response || response.error) return { error: (response && response.error) || "no answer from Gemini" };
     await noteMentions(job, glossary, response).catch(() => {});
     // "English glossary" of the Custom prompt: your English fixes (your terms, "Xia Kingdom" -> "China") are done on the answer; none of them is sent to Gemini
     if (custom && job.custom && job.custom.replace && lang === "en") response.translated = WtrTerms.applyReplacements(response.translated, await replacementsFor(job.url));
+    if (pictures && pictures.marks.length) response.translated = ImageChapter.joinIllustrations(response.translated, pictures);
     await ext.storage.local.set({
       [key]: {
         translated: response.translated,

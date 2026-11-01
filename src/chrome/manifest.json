@@ -1,5 +1,8 @@
 {
   "manifest_version": 3,
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
+  },
   "name": "heavenlydao.com Reader",
   "version": "1.0.8",
   "description": "Fetch web-novel chapters, translate them with Gemini, and keep them in your heavenlydao.com library on all your devices.",
@@ -19,6 +22,7 @@
     "offscreen",
     "alarms",
     "unlimitedStorage",
+    "declarativeNetRequestWithHostAccess",
     "background"
   ],
   "host_permissions": [

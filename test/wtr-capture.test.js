@@ -36,7 +36,7 @@ function fakeStorage() {
   };
 }
 
-// ---- a fake wtr-lab: the terms file in the site's shape, and per-term vote answers that include account IDs ----
+// ---- a stand-in for the translation site: the terms file in the site's shape, and per-term vote answers that include account IDs ----
 const novel = [["科雷", "Corey"], ["希恩", "Sheen"], ["银月花", "Silver Moon Flower"]];
 const ai = [["星盟", "Star Alliance", "Xingmeng"], ["权杖", "Scepter", "Staff"]];
 const shared = [["道", "Dao"], ["外门弟子", "Outer Sect Disciple"]];
@@ -149,7 +149,7 @@ function runContentScript({ href, storage, wtrBase, G, page, clock, calls }) {
   const ctx = {
     location: { href },
     document: { addEventListener: (type, fn) => { if (type === "click") clickHandler = fn; }, querySelectorAll: (sel) => (sel.includes("chapter-tracker") ? (page.trackers || []) : page.terms.map((h) => ({ getAttribute: (n) => (n === "data-hash" ? h : null) }))), getElementById: (id) => (id === "__NEXT_DATA__" ? { textContent: JSON.stringify({ buildId: "BUILD123" }) } : null) },
-    // as in a Firefox content script, which fetches as the extension: a bare "/api/..." is no address there (it threw, and nothing of the site was recorded on Firefox)
+    // as in a Firefox content script, which fetches as the extension: a bare "/api/..." is no address there (it threw, and the translation site recorded nothing on Firefox)
     fetch: (u, opts) => (u.startsWith("/") ? Promise.reject(new TypeError(u + " is not a valid URL.")) : fetch(u.replace(/^https:\/\/wtr-lab\.com\//, wtrBase + "/"), opts)),
     chrome: { storage: { local: { ...storage, get: (k) => (Array.isArray(k) && k.includes("libraryOn") ? Promise.resolve({ libraryOn: { libId: "test" } }) : storage.get(k)), set: (o) => storage.set(o) } }, runtime: { sendMessage: handler } },
     WtrTerms,
@@ -184,18 +184,18 @@ function runContentScript({ href, storage, wtrBase, G, page, clock, calls }) {
 
   await until(async () => (await serverGlossary()) !== null, "the glossary to reach the library");
   await settle();
-  assert.deepStrictEqual(requested(), [], "nothing is requested from wtr-lab until a term is clicked");
+  assert.deepStrictEqual(requested(), [], "nothing is requested from the translation site until a term is clicked");
   assert.strictEqual((await serverGlossary()).countedTerms || 0, 0);
   for (const t of ["银月花", "科雷", "星盟", "道", "不在词表"]) script.click(t); // "not in the glossary" is clicked too
   await until(async () => ((await serverGlossary()) || { countedTerms: 0 }).countedTerms >= 4, "counts for the clicked terms");
   let g = await serverGlossary();
   assert.strictEqual(g.termCount, 8, "novel (3) + AI-built (2) + shared (2) + one of yours for every novel (the one for this novel took an AI-built term's place)");
-  assert.deepStrictEqual([term(g, "权杖")[1], term(g, "权杖")[3].o, term(g, "出手")[1], term(g, "出手")[3].o], ["Scepter of Light", "yours", "taken action", "yours"], "the person's own terms from wtr-lab come first, as theirs");
-  assert.ok(!g.terms.some((x) => x[1] === "English Fix"), "a fix of wtr-lab's English is not a term of the glossary");
+  assert.deepStrictEqual([term(g, "权杖")[1], term(g, "权杖")[3].o, term(g, "出手")[1], term(g, "出手")[3].o], ["Scepter of Light", "yours", "taken action", "yours"], "the person's own terms from the translation site come first, as theirs");
+  assert.ok(!g.terms.some((x) => x[1] === "English Fix"), "a fix of the translation site's English is not a term of the glossary");
   assert.deepStrictEqual(calls.myterms.map((m) => m.terms), [[{ id: "wtr-3", from: ["Some words"], to: "English Fix", cs: false, global: false }]], "it goes to the library's terms (shown after the translation), once, with this novel's own");
   assert.strictEqual(calls.myterms[0].rawId, RAW);
   assert.deepStrictEqual(["科雷", "星盟", "道"].map((s) => term(g, s)[3].o), ["novel", "ai", "shared:Cultivation"]);
-  assert.deepStrictEqual(term(g, "银月花")[3].v, [["Silver Moon Flower", 24], ["silvermoon flower", 4], ["Silver Moonflower", 2]], "the 24 / 4 / 2 from the wtr-lab page");
+  assert.deepStrictEqual(term(g, "银月花")[3].v, [["Silver Moon Flower", 24], ["silvermoon flower", 4], ["Silver Moonflower", 2]], "the 24 / 4 / 2 from the translation-site page");
   assert.strictEqual(term(g, "银月花")[3].n, 24);
   assert.strictEqual(term(g, "科雷")[1], "Corey", "curated wording untouched");
   assert.strictEqual(term(g, "星盟")[1], "Xingmeng", "an uncurated term switches to the rendering most readers chose");
@@ -230,7 +230,7 @@ function runContentScript({ href, storage, wtrBase, G, page, clock, calls }) {
   await until(async () => (await indexes()).length === 1, "the chapter list to reach the library");
   const ci = (await indexes())[0];
   assert.deepStrictEqual(ci.chapters.map((c) => c[0]), [1, 2, 3], "every numbered chapter; the one without a number is dropped");
-  assert.deepStrictEqual(ci.chapters[1], [2, "Chapter 2 The Illusory Legend", "https://wtr-lab.com/en/novel/8053/synthesis-wizard/chapter-2", "第2章 虚幻传说"], "number, English title, the chapter's own wtr-lab address, original title");
+  assert.deepStrictEqual(ci.chapters[1], [2, "Chapter 2 The Illusory Legend", "https://wtr-lab.com/en/novel/8053/synthesis-wizard/chapter-2", "第2章 虚幻传说"], "number, English title, the chapter's own translation-site address, original title");
   await settle();
   assert.strictEqual(wtr.state.listFetches, 1, "one request for the list, not one per pass");
   assert.ok(storage.data.wtrChapterListAt[RAW] > 0, "and it is remembered, so the list is never asked for again on a timer");
@@ -358,7 +358,7 @@ function runContentScript({ href, storage, wtrBase, G, page, clock, calls }) {
   wtr.state.status = 200; // The site recovers
   clock.t += 11 * 60 * 1000;
   script6.click("科雷");
-  await until(async () => { const kl = term((await serverGlossary()) || { terms: [] }, "科雷"); return !!kl && kl[3].n !== undefined; }, "科雷's count to land once wtr-lab answers again");
+  await until(async () => { const kl = term((await serverGlossary()) || { terms: [] }, "科雷"); return !!kl && kl[3].n !== undefined; }, "科雷's count to land once the translation site answers again");
   assert.strictEqual(wtr.state.order.length, 3);
   script6.stop();
 

@@ -31,12 +31,12 @@ const dedupe = (list) => { const seen = new Map(); for (const e of list) seen.se
 const fill = (prompt, language) => String(prompt).replace(/\{language\}/g, language) + (language !== "English" && !/\{language\}/.test(prompt) ? " Write the translation in " + language + "." : "");
 
 // { prompt, sent }: `sent` the glossary entries chosen for this text (those the translation is told to use), as the extension chooses them: longest first, a one-character term only
-// where it is a name, the parts of a person's name with the full name.
+// where it is a name (or a word like 甲 = Grade A, marked to be used where it means that), the parts of a person's name with the full name; each line as the extension writes it.
 export function buildPrompt({ instruction, language = "English", text, glossary = [] }) {
   const TM = globalThis.TermMatch;
   const chosen = TM ? TM.select(text, glossary, {}).entries : glossary.filter((e) => text.includes(e.term));
   const rendered = chosen.filter((e) => e.translation);
-  const lines = rendered.map((e) => `${(e.terms || [e.term]).join(" / ")} = ${e.translation}` + (e.gender ? ` (${e.gender})` : "") + (e.forms && e.forms.length ? ` (the same person, when written alone: ${e.forms.join("; ")})` : "")).join("\n");
+  const lines = rendered.map((e) => (TM && TM.line ? TM.line(e) : (e.terms || [e.term]).join(" / ") + " = " + e.translation)).join("\n");
   const block = lines ? "Use these exact translations whenever these terms appear, for consistency:\n" + lines + "\n\n" : "";
   return { prompt: fill(instruction || DEFAULT_PROMPT, language) + "\n\n" + block + text, sent: rendered };
 }
@@ -70,7 +70,7 @@ export function splitChapters(text) {
 
 // ---------- what a text will cost, in tickets ----------
 const CJK = /[㐀-鿿぀-ヿ가-힯]/g;
-// the reader site's price (its FAQ): (characters + 500) x 0.0012 tickets, one at least; its characters are letters and numbers without punctuation or spaces (the server does the same count)
+// The translation site's price (its FAQ): (characters + 500) x 0.0012 tickets, one at least; its characters are letters and numbers without punctuation or spaces (the server does the same count)
 export const charsOf = (text) => (String(text || "").match(/[\p{L}\p{N}]/gu) || []).length;
 export const chapterTickets = (chars) => Math.max(1, (Number(chars) + 500) * 0.0012);
 // How many English words the translation of a text will be: a Chinese, Japanese or Korean character is about two thirds of one, any other word is one.
@@ -81,8 +81,8 @@ export function wordsOf(text) {
 }
 // Tokens of a prompt: a CJK character is about 1.3, any other word about 1.4.
 const tokensOf = (t) => Math.round(((String(t).match(CJK) || []).length) * 1.3 + String(t).replace(CJK, " ").split(/\s+/).filter(Boolean).length * 1.4);
-// About how many tickets one translation uses: the reader site's price for the text, or what the model will cost in tickets when that is more (a ticket pays for `ticketUsd`; prices are dollars per
-// million tokens: the prompt in, and as many English words out as the text has). With no price known, the site's alone.
+// About how many tickets one translation uses: the translation site's price for the text, or what the model will cost in tickets when that is more (a ticket pays for `ticketUsd`; prices are dollars per
+// million tokens: the prompt in, and as many English words out as the text has). With no price known, the translation site's alone.
 // About what one translation costs in dollars at the model's listed prices (null when they are not known): what the person's own key pays.
 export function estimateUsd({ model, prompt, text }) {
   if (!model || !Number.isFinite(model.promptPerM) || !Number.isFinite(model.completionPerM)) return null;

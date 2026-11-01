@@ -1,10 +1,9 @@
-// Joining at once and leaving (library.js joinMessage, leave, leaveProof, removeLeaving; p2p-core.js "lx"): a device let in with no asking (the
-// site's tab in the extension's browser, as the main device, answers the extension's request with the keys), a device leaving and the main device
-// taking it off the list, through a device that passes it on, and the device joining again as a new one.
+// Joining at once and leaving (library.js joinMessage, leave, leaveProof, removeLeaving): a device let in with no asking (the site's tab in the
+// extension's browser, as the main device, answers the extension's request with the keys), a device leaving and the main device taking it off
+// the list (the popup hands the proof to the site's tabs: site-bridge.js "leaving"), and the device joining again as a new one.
 // Run: node test/leave.test.js
 const assert = require("assert");
 const path = require("path");
-const WebTorrent = require("webtorrent");
 require(path.join(__dirname, "..", "src", "shared", "p2p-core.js"));
 const { createP2P } = globalThis.P2PCore;
 const Library = require("../src/shared/library.js");
@@ -18,9 +17,9 @@ async function waitFor(cond, what, ms = 20000) {
   }
   throw new Error("timed out waiting for: " + what);
 }
-function chapterAdapter(passphrase) {
+function chapterAdapter() {
   return {
-    getConfig: async () => ({ enabled: true, passphrase, trackers: ["ws://127.0.0.1:1"] }),
+    getConfig: async () => ({}),
     getIndex: async () => ({}),
     setIndex: async () => {},
     getTranslation: async () => undefined,
@@ -30,10 +29,9 @@ function chapterAdapter(passphrase) {
 }
 
 (async () => {
-  const common = { WebTorrent, makeSeedInput: (bytes, name) => Object.assign(Buffer.from(bytes), { name }), log: () => {} };
   async function device(name) {
     const lib = await Library.open({ adapter: Library.memoryAdapter(), deviceName: name });
-    const core = createP2P({ ...common, adapter: chapterAdapter("room " + name), role: "device", library: Library.roomLink(lib) });
+    const core = createP2P({ adapter: chapterAdapter(), log: () => {}, role: "device", library: Library.roomLink(lib) });
     lib.on("records", (rs) => core.announceRecords(rs));
     await core.start();
     return { name, lib, core };
@@ -41,8 +39,8 @@ function chapterAdapter(passphrase) {
   const clone = (m) => JSON.parse(JSON.stringify(m));
   function link(x, y) {
     const h = {};
-    h.x = x.core.addLocalPeer({ send: (m) => setImmediate(() => h.y && h.y.receive(clone(m))) });
-    h.y = y.core.addLocalPeer({ send: (m) => setImmediate(() => h.x && h.x.receive(clone(m))) });
+    h.x = x.core.addLocalPeer({ send: (m) => setImmediate(() => h.y && h.y.receive(clone(m))) }, { trusted: true });
+    h.y = y.core.addLocalPeer({ send: (m) => setImmediate(() => h.x && h.x.receive(clone(m))) }, { trusted: true });
     return h;
   }
 
@@ -55,7 +53,6 @@ function chapterAdapter(passphrase) {
   // ---- let in at once: the request is made without asking anyone, and the main device answers it with the keys ----
   const request = ext.lib.joinMessage();
   assert.strictEqual(ext.lib.status().state, "none", "making the request asks nobody");
-  assert.strictEqual(Library.roomLink(ext.lib).joinRequest(), null, "nor does the room ask for it");
   assert.ok(laptop.lib.joinAsked(request));
   const { keys } = await laptop.lib.allow(request.id);
   assert.ok(await ext.lib.receiveKeys(keys));
@@ -64,10 +61,9 @@ function chapterAdapter(passphrase) {
   laptop.lib.joinAsked(tabAsk);
   assert.ok(await tab.lib.receiveKeys((await laptop.lib.allow(tabAsk.id)).keys));
 
-  // the extension reaches the laptop only through the tab
   link(laptop, tab);
-  link(tab, ext);
-  await waitFor(async () => (await ext.lib.api("GET", "/api/novels")).novels.length === 1, "the library to reach the extension through the tab");
+  link(laptop, ext);
+  await waitFor(async () => (await ext.lib.api("GET", "/api/novels")).novels.length === 1, "the library to reach the extension");
   await waitFor(() => ext.lib.status().devices.length === 3 && tab.lib.status().devices.length === 3, "every list to have the three devices");
 
   // ---- leaving ----
@@ -91,8 +87,8 @@ function chapterAdapter(passphrase) {
   assert.strictEqual(st.state, "none", "it is in no library");
   assert.notStrictEqual(st.device.id, oldId, "a new device from then on");
   await assert.rejects(ext.lib.api("GET", "/api/novels"), /not in a library/);
-  // the room passes it on (the tab is not the main device), and the laptop takes it off the list
-  assert.strictEqual(ext.core.sayLeaving(proof), 1, "told the one device it is linked to");
+  // the proof handed to the main device (the popup gives it to the site's tabs in its browser): it takes the device off the list
+  assert.strictEqual(await laptop.lib.removeLeaving(proof), true, "the main device takes it off");
   await waitFor(() => laptop.lib.status().devices.length === 2, "the laptop to take it off the list");
   assert.deepStrictEqual(laptop.lib.status().devices.map((d) => d.name).sort(), ["Laptop", "Tab"]);
   await waitFor(() => tab.lib.status().devices.length === 2, "the tab to have the new list");

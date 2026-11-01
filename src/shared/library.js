@@ -1,14 +1,14 @@
-// Your library, kept on your own devices (docs/SHARED-LIBRARIES.md).
+// Your library, kept in your browser: by the extension, and by the library site's page beside it.
 //
 // The library is library-api.js's state (it answers the /api/... calls from it), split into records: one
 // per glossary's details, per part of a glossary's terms, per novel, cover, chapter list, note, term of yours... Each record is encrypted with
-// the owner key and signed by the device that wrote it, so the devices of the library can pass records to each other through the passphrase
-// room and every one can check that a record came, unchanged, from a device of the library.
+// the owner key and signed by the device that wrote it, so the devices of the library (the site's page and the extension, over the link
+// between them: p2p-core.js) can pass records to each other and every one can check that a record came, unchanged, from a device of the library.
 //
 // Devices. The device that creates the library is its main device and keeps the root key; the library's id is the root key's public half. The
-// `devices` record, signed with the root key, lists the devices whose records count. A new device asks to join (joinRequest), the main device
-// is asked to allow it, and on Allow it lists the device and sends it the owner key, encrypted so only that device can read it (sealed with
-// the device's X25519 key), with the new list of devices beside it. Knowing the passphrase alone is not enough to write into a library.
+// `devices` record, signed with the root key, lists the devices whose records count. A new device asks to join (joinMessage: the extension,
+// through the site's page), the main device lets it in (joinAsked, allow): it lists the device and sends it the owner key, encrypted so only that
+// device can read it (sealed with the device's X25519 key), with the new list of devices beside it.
 //
 // A record:
 //   { v: 1, lib, key, ver: [ms, counter, device], by: <device id> | "root", iv, body, sig }
@@ -22,11 +22,6 @@
 // (its generation is the record's `kg`), and the new key goes to each remaining device sealed with its X25519 key (an `okey:<device>` record), so
 // the removed device can read nothing written after.
 //
-// Sharing (docs/SHARED-LIBRARIES.md, step 2). The library's read key (in its share link, kept in the private `share` record) gives a catalog key
-// and one key per book (HKDF), and the ids of the rooms they are read in. What readers get are "published" records: made by the owner's devices
-// from the novels shared (`sbook:<book id>`: the list the library page made of a novel and its chapters) and from the chapters they hold, signed
-// by the device that made them and encrypted with the catalog key or the book's key; their version comes from what they are made of, so two
-// devices publishing the same novel make the same records. readPublished checks one for a reader.
 (function (root) {
   "use strict";
   const LibraryApi = root.LibraryApi || (typeof require === "function" ? require("./library-api.js") : null);
@@ -138,19 +133,16 @@
   }
 
   // The kinds of records, each a part of the state. `one`: a single record; `map`: one record per id in S[field].
-  // (`private` ones are the owner's alone: they will never be shared beyond the owner's devices, docs/SHARED-LIBRARIES.md section 1.)
+  // (`private` ones are the owner's alone.)
   const MAPS = {
     binding: "bindings", novel: "novels", chapters: "chapterIndex", term: "myTerms", note: "termNotes", "comment-link": "commentLinks",
     rating: "myRatings", watch: "watches"
   };
   const ONES = { "novel-links": "novelLinks", settings: "settings", "wtr-library": "wtrLibrary", "comment-identity": "commentIdentity" };
-  // Records of the owner's devices that are not part of the API's state: the share key (`share`: the link's read key), the library's public
-  // profile (`profile`: its name), the novels shared (`sbook:<book id>`), each device's X25519 key (`dh:<device>`, written by that device) and
-  // the owner key sealed for one device after another was removed (`okey:<device>`, written by the main device). The last two are not encrypted
-  // with the owner key: dh is public, okey is sealed for its device.
-  // Step 3: your version of a novel someone shared (`layer:<book id>`: { lib, bookKey, title, chapters: { their chapter's address: your chapter's
-  // key } }, made the first time you change it) and how you use another library's edition of a novel you own (`edition:<book id>`:
-  // { modes: { <library id>: "off" | "notify" | "use" }, asked: { <chapter number>: when } }).
+  // Records of the owner's devices that are not part of the API's state: each device's X25519 key (`dh:<device>`, written by that device) and
+  // the owner key sealed for one device after another was removed (`okey:<device>`, written by the main device). Neither is encrypted with
+  // the owner key: dh is public, okey is sealed for its device. (A library from before has the records of sharing too: share, profile, sharing,
+  // sbook:<book id>, layer:<book id>, edition:<book id>. They are kept and pass between the devices as they are; nothing makes or reads them now.)
   const OWNER_ONES = new Set(["share", "profile", "sharing"]);
   const OWNER_MAPS = new Set(["sbook", "dh", "okey", "layer", "edition"]);
   const PLAIN = new Set(["devices", "dh", "okey"]);
@@ -597,8 +589,7 @@
           devices: devices.map((d) => ({ id: d.id, name: d.name, added: d.added, main: !!d.main, me: d.id === me.id })),
           refused: meta.root ? (meta.refused || []).map((id) => ({ id, name: (meta.refusedNames && meta.refusedNames[id]) || "Device" })) : [],
           joins: [...joins.values()].filter((j) => now - j.seenAt < JOIN_TTL).map((j) => ({ id: j.id, name: j.name, at: j.at })),
-          asking: meta.root ? [] : [...asking.values()].filter((j) => now - j.seenAt < JOIN_TTL && !devices.some((d) => d.id === j.id)).map((j) => ({ id: j.id, name: j.name })),
-          name: (extra.profile && extra.profile.name) || "", sharing: !!extra.share, shared: Object.keys(extra.sbook).length
+          asking: meta.root ? [] : [...asking.values()].filter((j) => now - j.seenAt < JOIN_TTL && !devices.some((d) => d.id === j.id)).map((j) => ({ id: j.id, name: j.name }))
         };
       },
 
@@ -814,36 +805,8 @@
         return { stored: true, out };
       }),
 
-      // ----- the owner's records outside the API: the profile, the novels shared -----
-      // put("profile", { name }) · put("sbook:<book id>", list | null) · put("layer:<book id>", ...) · put("edition:<book id>", ...). Written only
-      // when it changed; the answer says whether it did.
-      put: (key, body) => serial(async () => {
-        if (!listed()) throw new Error("this device is not in a library yet");
-        const [kind] = splitKey(key);
-        if (!["profile", "sharing", "sbook", "layer", "edition"].includes(kind) || !knownKey(key)) throw new Error("not something to put: " + key);
-        const cur = bodyOf(key);
-        if (stable(cur === undefined ? null : cur) === stable(body)) return { changed: false };
-        applyBody(key, body);
-        await publish([key]);
-        emit("change", { key });
-        return { changed: true };
-      }),
-      sharedBooks: () => JSON.parse(JSON.stringify(extra.sbook)),
-      sharedBookIds: () => Object.keys(extra.sbook), // (the ids alone: no copy of every novel's list of chapters)
       changeCount: () => changes,
-      // What is shared with readers (`sharing`, the owner's own): every novel (all), but those stopped one by one (off: book ids); all false:
-      // only the novels shared one by one. Every novel by default.
-      sharing: () => Object.assign({ all: true, off: [], outCap: 0 }, JSON.parse(JSON.stringify(extra.sharing || {}))), // (outCap: what each device sends readers a day at most; 0: OUT_CAP)
-      layers: () => JSON.parse(JSON.stringify(extra.layer)),
-      editions: () => JSON.parse(JSON.stringify(extra.edition)),
-      // Your terms for a novel known by these keys (and those for every novel), with their versions: what readers of it get.
-      termsFor: (keys) => {
-        const ks = new Set(keys || []);
-        return Object.values(S.myTerms)
-          .filter((t) => !t.gone && (!(t.keys && t.keys.length) || t.keys.some((k) => ks.has(k))))
-          .map((t) => ({ term: { id: t.id, from: t.from, to: t.to, cs: !!t.cs }, ver: records.has("term:" + t.id) ? records.get("term:" + t.id).ver : [1, 0, ""] }));
-      },
-      // The glossary of a novel known by these keys, for readers who get the novel: the glossaries bound to it (a key that is a glossary's own id counts) and
+      // The glossary of a novel known by these keys (the extension's in-page translation reads it): the glossaries bound to it (a key that is a glossary's own id counts) and
       // the ones in other languages made from them ("<id>@<code>"), as { ver, langs: { en: [[source, rendering, list]], es: [...] } } where list is novel, ai,
       // shared:<name>, yours, gemini or copied; a term deleted here is not in it. null when it has none. A source in two of the glossaries has the first's.
       glossaryFor: (keys) => {
@@ -877,55 +840,16 @@
         for (const lang of Object.keys(langs)) if (!langs[lang].length) delete langs[lang];
         return Object.keys(langs).length ? { ver: [at || 1, rev, ""], langs } : null;
       },
-      // a novel's cover copy, for publishing it: { type, bytes, at } or null
       // a cover's picture: { type, bytes, at } or null (read from its record when not kept: covers are not all held in memory)
       cover: async (id) => {
         const m = S.covers[id];
         const bytes = m ? await coverBytesOf(id) : null;
         return m && bytes ? { type: m.type, bytes, at: m.at } : null;
       },
-      sharedBook: (id) => (extra.sbook[id] ? Object.assign({ ver: records.get("sbook:" + id).ver }, extra.sbook[id]) : null),
-      profile: () => Object.assign({ ver: records.has("profile") ? records.get("profile").ver : [0, 0, ""] }, extra.profile || { name: "" }),
-
-      // The library's read key (made the first time it is asked for), and with it the catalog key and the library room. newLink: a new read key,
-      // so the links given so far get nothing new.
-      share: (newLink) => serial(async () => {
-        if (!listed()) throw new Error("this device is not in a library yet");
-        if (!extra.share || newLink) {
-          const readKey = b64u(webcrypto.getRandomValues(new Uint8Array(32)));
-          applyBody("share", { readKey, at: Date.now() });
-          await publish(["share"]);
-          emit("change", { key: "share" });
-        }
-        return Object.assign({ libId: meta.libId }, extra.share, await shareKeys(meta.libId, extra.share.readKey));
-      }),
-      shareNow: () => (extra.share ? Object.assign({ libId: meta.libId }, extra.share) : null),
-
-      // A record for readers, signed by this device: key, its version, what it holds, and the key it is encrypted with (none: plain).
-      makePublished: async (key, ver, body, aesB64u) => {
-        const r = { v: V, lib: meta.libId, key, ver, by: me.id, iv: null, body: null };
-        if (body !== null && aesB64u) Object.assign(r, await seal(await aesKeyU(aesB64u), JSON.stringify(body)));
-        else if (body !== null) r.body = JSON.stringify(body);
-        r.sig = await sign(me.priv, signedPart(r));
-        return r;
-      },
-
-      // ----- comments (step 5) -----
-      // A comment (or the deleting of one) signed by this device for its library, for the comments server: its author is the library.
-      //   what: { t: "comment", thread, text, name, url } or { t: "delete", id } -> { lib, by, at, devices, sig }
-      signComment: async (what) => {
-        if (!listed()) throw new Error("this device is not in a library yet");
-        const s = { lib: meta.libId, by: me.id, at: Date.now() };
-        const sig = await sign(me.priv, stable(Object.assign({}, what, s)));
-        return Object.assign(s, { devices: records.get("devices"), sig });
-      },
-
-      shareVer: () => (records.has("share") ? records.get("share").ver : [0, 0, ""]),
-
       // ----- removing a device (main device only) -----
-      // The list of devices without it; a new owner key, sealed for each remaining device; every record written again with it. newLink: a new
-      // read key too (the removed device knows the old one). Answers which devices could not be sent the new key (from before devices said theirs).
-      removeDevice: (id, opts = {}) => serial(async () => {
+      // The list of devices without it; a new owner key, sealed for each remaining device; every record written again with it. Answers which
+      // devices could not be sent the new key (from before devices said theirs).
+      removeDevice: (id) => serial(async () => {
         if (!meta.root) throw new Error("only the main device can remove devices");
         if (id === me.id) throw new Error("the main device cannot remove itself");
         if (!devices.some((d) => d.id === id)) throw new Error("no such device");
@@ -952,15 +876,10 @@
         }
         delete extra.okey[id];
         delete extra.dh[id];
-        if (extra.share) {
-          // a new read key when asked
-          applyBody("share", Object.assign({}, extra.share, { at: Date.now() }, opts.newLink ? { readKey: b64u(webcrypto.getRandomValues(new Uint8Array(32))) } : {}));
-        }
         // everything again: the owner keys first, so a device can read what follows
         const keys = [...records.keys()].filter((k) => k !== "devices");
         keys.sort((a, b) => (b.startsWith("okey:") ? 1 : 0) - (a.startsWith("okey:") ? 1 : 0));
         for (const d of list) if (extra.okey[d.id] && !keys.includes("okey:" + d.id)) keys.unshift("okey:" + d.id);
-        if (!keys.includes("share") && extra.share) keys.push("share");
         const rewritten = [];
         for (const k of keys) {
           const body = await bodyFor(k);
@@ -1012,80 +931,7 @@
     return lib;
   }
 
-  // ---------- sharing ----------
-  const aesKeyU = (raw) => cached("u" + raw, () => subtle.importKey("raw", unb64u(raw), { name: "AES-GCM" }, false, ["encrypt", "decrypt"]));
-  async function hkdf(raw, info) {
-    const k = await subtle.importKey("raw", raw, "HKDF", false, ["deriveBits"]);
-    return new Uint8Array(await subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: new Uint8Array(32), info: enc.encode(info) }, k, 256));
-  }
-  const sha256hex = async (x) => hex(new Uint8Array(await subtle.digest("SHA-256", typeof x === "string" ? enc.encode(x) : x)));
-  // From a library's read key: the catalog key, and the library room (where the catalog is read).
-  async function shareKeys(libId, readKey) {
-    const catalogKey = b64u(await hkdf(unb64u(readKey), "p2p-read catalog"));
-    return { catalogKey, libRoom: await sha256hex("p2p-read:lib:v1:" + libId + ":" + (await sha256hex(unb64u(catalogKey)))) };
-  }
-  // A book's key, from the library's read key, and its room (where its chapters are read). From a book link the key is given, not made.
-  const bookKeyOf = async (readKey, bookId) => b64u(await hkdf(unb64u(readKey), "p2p-read book:" + bookId));
-  const bookRoomOf = async (libId, bookKey) => sha256hex("p2p-read:book:v1:" + libId + ":" + (await sha256hex(unb64u(bookKey))));
-
-  // Links: "<site>#/f/<library id>/<read key>" (the whole library) or "<site>#/f/<library id>/b/<book id>/<book key>" (one novel).
-  const B64U = /^[A-Za-z0-9_-]{40,50}$/;
-  const libraryLink = (base, libId, readKey) => base.replace(/#.*$/, "") + "#/f/" + libId + "/" + readKey;
-  // (a book link may end with the title as words, "/the-golden-elixir…", only to read: it is not part of what opens it)
-  const slugOf = (title) => String(title || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80).replace(/-+$/, "");
-  const bookLink = (base, libId, bookId, bookKey, title) => base.replace(/#.*$/, "") + "#/f/" + libId + "/b/" + encodeURIComponent(bookId).replace(/%3A/gi, ":") + "/" + bookKey + (slugOf(title) ? "/" + slugOf(title) : "");
-  function parseLink(text) {
-    const m = /#\/f\/([A-Za-z0-9_-]+)\/(?:b\/([^/]+)\/([A-Za-z0-9_-]+)(?:\/[a-z0-9-]*)?|([A-Za-z0-9_-]+))\s*$/.exec(String(text || "").trim());
-    const key = m && (m[3] || m[4]);
-    if (!m || !B64U.test(m[1]) || !B64U.test(key)) return null;
-    let bookId = null;
-    if (m[2]) {
-      try { bookId = decodeURIComponent(m[2]); } catch (e) { return null; }
-      if (!bookId || bookId.length > 300) return null;
-    }
-    return bookId ? { libId: m[1], bookId, bookKey: key } : { libId: m[1], readKey: key };
-  }
-
-  // What readers get. In the library room: devices, profile (both plain), head, entry:<book>, cover:<book> (the catalog key); in a book's room:
-  // devices, profile, book:<book>, bhead:<book>, bcover:<book> (its cover, for a reader with only the book's link), terms:<book> (the owner's
-  // terms for it, shown over its text), chapter:<source url> (that book's key).
-  const PUBLISHED = { devices: "plain", profile: "plain", head: "catalog", entry: "catalog", cover: "catalog", book: "book", bhead: "book", bcover: "book", terms: "book", chapter: "book" };
-  function publishedScope(key) {
-    const [kind, id] = splitKey(key);
-    const scope = PUBLISHED[kind];
-    if (!scope) return null;
-    if ((kind === "devices" || kind === "profile" || kind === "head") !== (id === "")) return null;
-    return scope;
-  }
-
-  // A record from a share room, as a reader checks it: { lib, devices (the list, once known), keyOf(key) -> the AES key (base64url) it is
-  // encrypted with, or null when this reader has none }. -> { body } (null: deleted) or { why }.
-  async function readPublished(r, ctx) {
-    if (!r || typeof r !== "object" || r.v !== V || r.lib !== ctx.lib || typeof r.key !== "string" || r.key.length > 600 || !validVer(r.ver)) return { why: "malformed" };
-    if (r.body !== null && (typeof r.body !== "string" || r.body.length > MAX_RECORD * 1.4)) return { why: "too big" };
-    const scope = publishedScope(r.key);
-    if (!scope) return { why: "unknown kind" };
-    if (r.key === "devices") {
-      if (r.by !== "root" || typeof r.body !== "string") return { why: "malformed" };
-      if (!(await verify(ctx.lib, signedPart(r), r.sig))) return { why: "bad signature" };
-      try { return { body: JSON.parse(r.body) }; } catch (e) { return { why: "malformed" }; }
-    }
-    const dev = (ctx.devices || []).find((d) => d.id === r.by);
-    if (!dev) return { why: "not a device of this library" };
-    if (!(await verify(dev.pub, signedPart(r), r.sig))) return { why: "bad signature" };
-    if (r.body === null) return { body: null };
-    try {
-      if (scope === "plain") return { body: JSON.parse(r.body) };
-      const k = ctx.keyOf(r.key);
-      if (!k) return { why: "no key" };
-      return { body: JSON.parse(await unseal(await aesKeyU(k), r.iv, r.body)) };
-    } catch (e) {
-      return { why: "cannot be read" };
-    }
-  }
-
-  // What the sync room needs of a library (p2p-core.js opts.library). A device asks to join only once its user has asked (lib.joinRequest()
-  // from the page or the popup), never by itself.
+  // What the link between the site's page and the extension needs of a library (p2p-core.js opts.library).
   function roomLink(lib) {
     return {
       lib: () => lib.status().libId,
@@ -1093,23 +939,14 @@
       wants: (k, v) => lib.wants(k, v),
       wantsMany: (rows) => (Array.isArray(rows) ? rows : []).filter((r) => Array.isArray(r) && lib.wants(r[0], r[1])), // ([[key, ver]] -> the rows worth asking for)
       get: (k) => lib.get(k),
-      receive: (r) => lib.receive(r),
-      joinAsked: (m) => lib.joinAsked(m),
-      receiveKeys: (m) => lib.receiveKeys(m),
-      peerProof: (data) => lib.peerProof(data),
-      peerCheck: (id, data, sig) => lib.peerCheck(id, data, sig),
-      leaving: (m) => lib.removeLeaving(m),
-      joinRequest: () => {
-        const st = lib.status();
-        return st.state === "joining" && !st.libId ? lib.joinRequest() : null;
-      }
+      receive: (r) => lib.receive(r)
     };
   }
 
   // Its calls, and what each answers where there is no library to ask.
-  const ROOM_CALLS = Object.freeze({ lib: "", versions: Object.freeze([]), wants: false, wantsMany: Object.freeze([]), get: null, receive: Object.freeze({ stored: false, why: "not in a library" }), joinAsked: false, receiveKeys: false, joinRequest: null, peerProof: null, peerCheck: false, leaving: false });
+  const ROOM_CALLS = Object.freeze({ lib: "", versions: Object.freeze([]), wants: false, wantsMany: Object.freeze([]), get: null, receive: Object.freeze({ stored: false, why: "not in a library" }) });
 
-  // The same, for a library still being opened (a promise of it, or of null where the browser cannot make its keys): the room can be made at once.
+  // The same, for a library still being opened (a promise of it, or of null where the browser cannot make its keys): the link can be made at once.
   function lazyRoomLink(ready) {
     const out = {};
     for (const name of Object.keys(ROOM_CALLS)) {
@@ -1133,8 +970,7 @@
   }
 
   const Library = {
-    open, supported, roomLink, lazyRoomLink, ROOM_CALLS, memoryAdapter, idbAdapter, isPrivate, bucketOf, codeOf, cmpVer, stable, BUCKETS,
-    shareKeys, bookKeyOf, bookRoomOf, libraryLink, bookLink, parseLink, readPublished, publishedScope
+    open, supported, roomLink, lazyRoomLink, ROOM_CALLS, memoryAdapter, idbAdapter, isPrivate, bucketOf, codeOf, cmpVer, stable, BUCKETS
   };
   if (typeof module !== "undefined" && module.exports) module.exports = Library;
   else root.Library = Library;

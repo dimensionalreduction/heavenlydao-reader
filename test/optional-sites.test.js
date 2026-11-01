@@ -33,9 +33,8 @@ for (const target of ["chrome", "firefox"]) {
 }
 const plain = (v) => JSON.parse(JSON.stringify(v)); // (made in another context: compared by value)
 const groups = plain(rel.matches.SITE_SCRIPTS);
-assert.deepStrictEqual(groups.map((g) => g.js.join("+")), ["wtr-terms.js+wtr-capture.js", "chapter-index.js", "book-rules.js+user-rules.js+book-capture.js"], "the novel sites' scripts wait for the site to be allowed");
+assert.deepStrictEqual(groups.map((g) => g.js.join("+")), ["wtr-terms.js+wtr-capture.js", "chapter-index.js"], "the novel sites' scripts wait for the site to be allowed (the book recorder is not one: Import to library runs it, docs/ADD-BOOK.md)");
 assert.ok(groups.every((g) => g.runAt === "document_idle" && g.matches.length), "each is added at idle, with its sites");
-assert.ok(groups[2].matches.length > 500 && groups[2].matches.includes("https://*.69shuba.com/*"), "the book recorder is for every built-in site");
 assert.ok(plain(rel.matches.SITE_BRIDGE_MATCHES).includes("https://heavenlydao.com/*"), "the bridge's addresses are still listed");
 
 // ---- a dev build ----
@@ -43,7 +42,8 @@ const dev = build(["--dev"]);
 for (const target of ["chrome", "firefox"]) {
   const m = dev.manifest(target);
   assert.ok(hostsOf(m).length > 500 && hostsOf(m).includes("https://*.69shuba.com/*") && hostsOf(m).includes("https://wtr-lab.com/*"), target + ": a dev build has every site in the manifest, as before");
-  assert.ok(m.content_scripts.length >= 4, target + ": and their scripts");
+  assert.ok(m.content_scripts.length >= 3, target + ": and their scripts (the site bridge, the translation site's, the chapter index; no book recorder)");
+  assert.ok(!m.content_scripts.some((c) => c.js.includes("book-capture.js")), target + ": a book is recorded only when Import to library asks");
 }
 assert.deepStrictEqual(plain(dev.matches.SITE_SCRIPTS), [], "so nothing is added by the background");
 console.log("OK — optional-sites checks passed");

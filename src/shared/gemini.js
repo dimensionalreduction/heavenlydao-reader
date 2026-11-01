@@ -30,11 +30,11 @@ function geminiLanguageName(code) {
   return found ? found[1] : String(code || "English");
 }
 
-// The person's own Gemini API key: the one typed in the library's Settings › Translation › Paid by, which the library's page in this browser hands over
+// The person's own Gemini API key: the one typed in the library's Settings › Connect › Tickets, which the library's page in this browser hands over
 // (site-bridge.js "access", kept in storage.local.profileKeys by Google's address), else the one typed in the popup before it had no place for it
 // (storage.local.geminiApiKey). None is built in: without one every Gemini request fails with GEMINI_NO_KEY (translateByMode then gives titles and book
 // details Google's translation in the "gemini-google" mode, or leaves them as they are).
-const GEMINI_NO_KEY = "No Gemini API key: add yours in the library's Settings › Translation › Paid by, then open the library in this browser";
+const GEMINI_NO_KEY = "No Gemini API key: add yours in the library's Settings › Connect › Tickets, then open the library in this browser";
 const GEMINI_KEY_BASE = "https://generativelanguage.googleapis.com/v1beta/openai";
 async function getApiKey() {
   const ext = typeof browser !== "undefined" ? browser : chrome;
@@ -98,7 +98,8 @@ const GEMINI_TERM_RULES =
   "not part of it: the stage 斗之气 and not 斗之气八段; the person 药老 and not 药老说). " +
   "translation: its translation, the way it will be written every time: names of people and places in pinyin (surname first, as in the original), " +
   "techniques, realms, ranks, items and organizations by their meaning, title-cased, in the style web-novel sites use; related terms follow one pattern " +
-  "(the stages of one realm, the members of one family, the grades of one kind of item). kind: person, place, organization, technique, realm, item, creature or other.";
+  "(the stages of one realm, the members of one family, the grades of one kind of item). A grade written as one character (甲, 乙, 丙, 丁) is a rank too: by its meaning, as English " +
+  "writes grades (Grade A, Grade B), never by its sound. kind: person, place, organization, technique, realm, item, creature or other.";
 const GEMINI_EVERY_TERM =
   "Translate the following chapter of a web novel to {language}, keeping the original formatting and line breaks. Translate all of it: if the author wrote notes, an " +
   "afterword or a glossary or explanation of the novel's terms (often at the chapter's end or start), translate it in its place, in full, and take the terms it explains " +
@@ -489,10 +490,14 @@ const NOTES_SCHEMA = {
 // english: the text is already in English (a chapter the site translated, or one translated before without notes): only the notes are asked for.
 // custom: a prompt chosen for this one request (the reader's Custom prompt), used in place of the one in use
 async function notesBlock(notes, english, custom) {
-  const text = custom || (await geminiPrompt("notes"));
+  return notesText(custom || (await geminiPrompt("notes")), notes, english) + "\n\n";
+}
+// The notes prompt `text` with its {chapter}, {how} and {terms} filled in, and the terms with their notes so far (notes.items) after it when it has no {terms}: they go
+// with it, whatever the prompt says. (The site sends it with a profile's translation too: vendor/gemini-prompts.js has it.)
+function notesText(text, notes, english) {
   const terms = JSON.stringify(notes.items);
   const filled = fillPrompt(text, { chapter: notes.chapter, how: english ? ", already in English. " : ". Beside translating it, ", terms });
-  return filled + (text.includes("{terms}") ? "" : "\n" + terms) + "\n\n"; // (the terms go with it, whatever the prompt says)
+  return filled + (text.includes("{terms}") ? "" : "\n" + terms);
 }
 
 // notes (optional): { chapter, items } from term-notes.js: the notes of the terms in this text, for Gemini to bring up to date. The answer then also
@@ -514,8 +519,8 @@ async function translateText(text, glossary, model, notes, language, extra) {
 
   // Large glossaries (e.g. imported from SITE) would bloat every request, so only send the entries
   // whose source term really occurs in this text.
-  // (term-match.js picks them when it is loaded: longest first, a term of one character only where it is a name, the parts of a person's name with the full
-  // name. `extra.singles` is the benchmark's switch: "always" is the plain text.includes.)
+  // (term-match.js picks them when it is loaded: longest first, a term of one character only where it is a name (or, a word like 甲 = Grade A, marked to be used where it
+  // means that), the parts of a person's name with the full name. `extra.singles` is the benchmark's switch: "always" is the plain text.includes.)
   const relevantGlossary = typeof TermMatch !== "undefined"
     ? TermMatch.select(text, glossary, { singles: extra && extra.singles }).entries
     : (Array.isArray(glossary) ? glossary : []).filter((e) => (e.terms || [e.term]).some((t) => t && text.includes(t)));
@@ -524,9 +529,7 @@ async function translateText(text, glossary, model, notes, language, extra) {
   const rendered = relevantGlossary.filter((e) => e.translation);
   const wanting = relevantGlossary.filter((e) => !e.translation);
   if (rendered.length > 0) {
-    const lines = rendered
-      .map((e) => `${(e.terms || [e.term]).join(" / ")} = ${e.translation}` + (e.gender ? ` (${e.gender})` : "") + (e.forms && e.forms.length ? ` (the same person, when written alone: ${e.forms.join("; ")})` : ""))
-      .join("\n");
+    const lines = rendered.map((e) => (typeof TermMatch !== "undefined" ? TermMatch.line(e) : (e.terms || [e.term]).join(" / ") + " = " + e.translation)).join("\n");
     glossaryBlock =
       "Use these exact translations whenever these terms appear, for consistency:\n" + lines + "\n\n";
   }

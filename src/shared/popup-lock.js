@@ -1,17 +1,11 @@
 // The popup until this extension is a device of your library. Detect library finds the library of the site's tabs in this browser (with none
-// open, it opens the site in a tab of its own), and Join joins it: the tab lets this extension in at once when it is the library's main
-// device; else this extension asks in the library's room and the main device shows "… asks to join" with Allow. Or the passphrase the site
-// shows (Settings > Library > Passphrase) and Join. Once let in, the popup's other parts show (#app), and the extension starts working
-// (background.js refuses everything before).
+// open, it opens the site in a tab of its own), and Join joins it: the tab, the library's main device, lets this extension in at once. Once
+// let in, the popup's other parts show (#app), and the extension starts working (background.js refuses everything before).
 (function () {
   const ext = typeof browser !== "undefined" ? browser : chrome;
   const lock = document.getElementById("lock");
   const app = document.getElementById("app");
   const text = document.getElementById("lockText");
-  const pass = document.getElementById("lockPass");
-  const passRow = document.getElementById("lockPassRow");
-  const join = document.getElementById("lockJoin");
-  const stop = document.getElementById("lockStop");
   const note = document.getElementById("lockNote");
   const detectRow = document.getElementById("lockDetectRow");
   const detectBtn = document.getElementById("lockDetect");
@@ -133,7 +127,7 @@
         if (seen.has(f.lib.libId)) continue; // (several tabs of one library)
         seen.add(f.lib.libId);
         usable++;
-        row("Library " + f.lib.code + (f.lib.name ? " · " + f.lib.name : ""), host + " · " + many(f.lib.novels || 0, "novel") + " · " + many(f.lib.devices || 1, "device"),
+        row("Library " + f.lib.code + (f.lib.name ? " · " + f.lib.name : ""), host + " · " + many(f.lib.novels || 0, "novel"),
           button("Join", "btn-primary", () => joinFound(f)));
       } else if (f.error && noBridge(f.error)) {
         row(host, "Reload this tab", button("Reload", "btn-secondary", async () => {
@@ -148,28 +142,24 @@
       } else if (f.error) {
         row(host, f.error.message);
       } else {
-        row(host, f.lib.state === "joining" ? "Joining a library" : "No library");
+        row(host, "No library");
       }
     }
     if (!found.length) foundEl.textContent = "No library tab open.";
     site.hidden = !site.href || usable > 0;
   }
 
-  // Joining a library Detect found: let in by its tab at once when it is the main device, else asked in its room.
-  let waitingOn = ""; // the main device that shows Allow (the tab's library's own, by name)
+  // Joining a library Detect found: let in by its tab at once (the tab is the library's main device).
   async function joinFound(f) {
     busy = true;
     note.textContent = "Joining…";
     drawFound();
     try {
+      if (!f.lib.main) throw new Error("this tab's library was made on another device, which is the only one that lets devices in");
       const request = await call("joinRequest");
-      const r = f.lib.main ? await ask(f.tab.id, "letIn", [request]).catch(() => null) : null;
-      if (r && r.keys) {
-        await call("receiveKeys", r.keys, f.lib.passphrase);
-      } else {
-        waitingOn = (r && r.mainName) || f.lib.mainName || "";
-        await call("join", f.lib.passphrase);
-      }
+      const r = await ask(f.tab.id, "letIn", [request]).catch(() => null);
+      if (!r || !r.keys) throw new Error("the tab did not let this extension in");
+      await call("receiveKeys", r.keys);
       note.textContent = "";
     } catch (e) {
       note.textContent = "Not joined: " + e.message;
@@ -195,54 +185,26 @@
       return;
     }
     if (wasMember) { wasMember = false; detected = false; setTimeout(() => detect(false), 0); } // (it left: the tabs open now are asked)
-    const now = JSON.stringify([st.state, st.libId, st.code, busy, st.error, waitingOn]);
+    const now = JSON.stringify([st.state, st.libId, st.code, busy, st.error]);
     if (now === shown) return;
     shown = now;
     lock.hidden = false;
     app.hidden = true;
-    const asking = st.state === "joining";
-    stop.hidden = !asking || !!st.libId;
-    detectRow.hidden = passRow.hidden = asking;
-    if (asking) foundEl.hidden = site.hidden = true;
-    else drawFound();
+    detectRow.hidden = false;
+    drawFound();
     if (st.state === "unsupported") {
       text.textContent = "This browser can't make the library's keys (Ed25519). Update it to use the extension.";
-      detectRow.hidden = passRow.hidden = true;
+      detectRow.hidden = true;
     } else if (st.state === "error") {
       text.textContent = "The extension's library can't be reached: " + st.error;
     } else if (st.state === "removed") {
-      text.textContent = "This extension was taken off your library's devices. Detect your library, or paste its passphrase, to join again.";
-    } else if (asking) {
-      text.textContent = st.libId
-        ? "Let in. Waiting for your library's list of devices…"
-        : "Asking to join… Press Allow for “" + st.device.name + "” on " + (waitingOn ? "“" + waitingOn + "”" : "your library's main device") + " (Settings › Library).";
+      text.textContent = "This extension was taken off your library's devices. Detect your library to join again.";
     } else {
-      text.textContent = "Detect the library open in this browser, or paste your library's passphrase (Settings › Library on its site).";
+      text.textContent = "Detect the library open in this browser.";
     }
   }
 
   detectBtn.onclick = () => detect(true);
-  join.onclick = async () => {
-    const p = pass.value.trim();
-    if (!p) return (note.textContent = "Paste your library's passphrase first.");
-    busy = true;
-    note.textContent = "Asking…";
-    try {
-      waitingOn = "";
-      await call("join", p); // (the room starts again with it)
-      note.textContent = "";
-    } catch (e) {
-      note.textContent = "Not asked: " + e.message;
-    }
-    busy = false;
-    draw();
-  };
-  stop.onclick = async () => {
-    await call("cancelJoin").catch((e) => (note.textContent = e.message));
-    waitingOn = "";
-    draw();
-  };
-  ext.storage.local.get("p2pPassphrase").then((c) => { pass.value = c.p2pPassphrase || ""; }, () => {});
   // the tabs open now are asked at once (none is opened until Detect is pressed)
   draw().then(() => { if (!lock.hidden && detectRow.hidden === false) detect(false); });
   setInterval(draw, 2000); // let in while the popup is open

@@ -1,10 +1,9 @@
 // Chapters on demand (p2p-core.js, getConfig().fetch === "open"): a phone with a big library learns of every chapter (the index) but fetches
 // only the ones asked for (request(), as the reader and its read-ahead do), and newer versions of the ones it holds; a device fetching "all"
-// gets every one, as before. No network: the devices are linked directly and send chapters over that link.
+// gets every one, as before. The devices are linked directly (as the site's tab and the extension are) and send chapters over that link.
 // Run: node test/fetch-on-demand.test.js
 const assert = require("assert");
 const path = require("path");
-const WebTorrent = require("webtorrent");
 require(path.join(__dirname, "..", "src", "shared", "p2p-core.js"));
 const { createP2P } = globalThis.P2PCore;
 const testLibrary = require("./test-library.js");
@@ -23,7 +22,7 @@ function memAdapter(fetch, chapters = {}) {
   const store = new Map(Object.entries(chapters));
   return {
     store,
-    getConfig: async () => ({ enabled: true, passphrase: "on demand test", trackers: ["ws://127.0.0.1:1"], fetch }),
+    getConfig: async () => ({ fetch }),
     getIndex: async () => index,
     setIndex: async (i) => { index = i; },
     getTranslation: async (k) => store.get(k),
@@ -35,12 +34,12 @@ const url = (n) => "translation:https://example.com/novel/chapter-" + n;
 const chapter = (n, savedAt = 1000 + n) => ({ translated: "Text of chapter " + n, savedAt, model: "test", pageTitle: "Chapter " + n, novelName: "Novel" });
 
 (async () => {
-  const common = { WebTorrent, makeSeedInput: (bytes, name) => Object.assign(Buffer.from(bytes), { name }), log: () => {}, library: testLibrary() }; // (one library: protocol 10 talks chapters only between its devices)
+  const common = { log: () => {}, library: testLibrary() };
   const clone = (m) => JSON.parse(JSON.stringify(m));
   function link(x, y) {
     const h = {};
-    h.x = x.addLocalPeer({ send: (m) => setImmediate(() => h.y && h.y.receive(clone(m))) });
-    h.y = y.addLocalPeer({ send: (m) => setImmediate(() => h.x && h.x.receive(clone(m))) });
+    h.x = x.addLocalPeer({ send: (m) => setImmediate(() => h.y && h.y.receive(clone(m))) }, { trusted: true });
+    h.y = y.addLocalPeer({ send: (m) => setImmediate(() => h.x && h.x.receive(clone(m))) }, { trusted: true });
     return h;
   }
 
@@ -93,8 +92,8 @@ const chapter = (n, savedAt = 1000 + n) => ({ translated: "Text of chapter " + n
   hl.y.close();
   const gets = [];
   const h2 = {};
-  h2.x = reader.addLocalPeer({ send: (m) => { if (m.t === "get") gets.push(m.k); setImmediate(() => h2.y && h2.y.receive(clone(m))); } });
-  h2.y = laptop.addLocalPeer({ send: (m) => setImmediate(() => h2.x && h2.x.receive(clone(m))) }); // (the laptop is still here, without chapter 20)
+  h2.x = reader.addLocalPeer({ send: (m) => { if (m.t === "get") gets.push(m.k); setImmediate(() => h2.y && h2.y.receive(clone(m))); } }, { trusted: true });
+  h2.y = laptop.addLocalPeer({ send: (m) => setImmediate(() => h2.x && h2.x.receive(clone(m))) }, { trusted: true }); // (the laptop is still here, without chapter 20)
   await sleep(300);
   reader.request(url(20)); // opened by a person: asked for at once
   await waitFor(() => gets.includes(url(20)), "the reader asks the devices connected");

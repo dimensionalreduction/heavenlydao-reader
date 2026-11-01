@@ -87,7 +87,7 @@ const mine = [
   g("copy:abc", [["青云宗", "Azure Cloud Sect", { o: "yours" }]])
 ];
 const c = TermPool.contribution(mine);
-assert.deepStrictEqual(c.pairs.sort(), [["灵兽师", "Spirit Beast Tamer"], ["青云宗", "Azure Cloud Sect"]].sort(), "what the person made, not wtr-lab's, the pool's, a name, a character or a sentence");
+assert.deepStrictEqual(c.pairs.sort(), [["灵兽师", "Spirit Beast Tamer"], ["青云宗", "Azure Cloud Sect"]].sort(), "what the person made, not the translation site's, the pool's, a name, a character or a sentence");
 assert.strictEqual(c.novels, 2);
 
 // the library's own rows: [source, rendering, owner, { o }]: what the person typed or Gemini made and they kept; not the site's, a copy's or the pool's

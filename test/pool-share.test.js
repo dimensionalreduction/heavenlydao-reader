@@ -26,7 +26,7 @@ const fetcher = async (url, opts) => {
 
 (async () => {
   // not agreed: the pool is downloaded, nothing is sent
-  let out = await PoolShare.maybeRun({ force: true, fetcher });
+  let out = await PoolShare.maybeRun({ available: true, force: true, fetcher });
   assert.deepStrictEqual(out, { downloaded: 2, sent: 0 }, "the pool comes down, nothing goes up");
   assert.deepStrictEqual(stored.centralPool.entries.map((e) => e[0]), ["散修", "谎"], "its terms and renderings only");
   assert.deepStrictEqual(requests.map(([u]) => u), ["https://pool.heavenlydao.com/api/pool/snapshot"]);
@@ -34,19 +34,19 @@ const fetcher = async (url, opts) => {
   assert.strictEqual(requests[0][1].referrerPolicy, "no-referrer");
 
   // once a day
-  assert.deepStrictEqual(await PoolShare.maybeRun({ fetcher }), { skipped: true });
+  assert.deepStrictEqual(await PoolShare.maybeRun({ available: true, fetcher }), { skipped: true });
   assert.strictEqual(requests.length, 1);
 
   // agreed: what the person made goes, once each
   settings = { sharePool: true };
   requests.length = 0;
-  out = await PoolShare.maybeRun({ force: true, fetcher });
+  out = await PoolShare.maybeRun({ available: true, force: true, fetcher });
   assert.strictEqual(out.sent, 2);
   const posts = requests.filter(([u]) => /contribute$/.test(u));
   assert.strictEqual(posts.length, 1);
   const body = JSON.parse(posts[0][1].body);
   assert.deepStrictEqual(Object.keys(body).sort(), ["n", "pairs", "t", "v"], "a version, a time, the pairs, a proof: nothing about who or which novels");
-  assert.deepStrictEqual(body.pairs.slice().sort(), [["灵兽师", "Spirit Beast Tamer"], ["御兽", "Beast Taming"]].sort(), "what they made: not wtr-lab's, not a name, not an uploaded file's novel");
+  assert.deepStrictEqual(body.pairs.slice().sort(), [["灵兽师", "Spirit Beast Tamer"], ["御兽", "Beast Taming"]].sort(), "what they made: not the translation site's, not a name, not an uploaded file's novel");
   assert.ok(PoolShare.zeroBits(await PoolShare.sha256Hex(body.n + ":" + JSON.stringify({ v: 1, t: body.t, pairs: body.pairs })), 14), "with its proof of work");
   assert.strictEqual(posts[0][1].credentials, "omit");
   assert.strictEqual(stored.poolSent.length, 2);
@@ -54,27 +54,27 @@ const fetcher = async (url, opts) => {
 
   // not again, and a new one when there is one
   requests.length = 0;
-  assert.strictEqual((await PoolShare.maybeRun({ force: true, fetcher })).sent, 0);
+  assert.strictEqual((await PoolShare.maybeRun({ available: true, force: true, fetcher })).sent, 0);
   assert.strictEqual(requests.filter(([u]) => /contribute$/.test(u)).length, 0);
   stored.glossaryLibrary["adopted:69shuba.com/txt/9"].terms.push(["金丹期", "Golden Core Stage", "gemini", { o: "gemini" }]);
-  assert.strictEqual((await PoolShare.maybeRun({ force: true, fetcher })).sent, 1);
+  assert.strictEqual((await PoolShare.maybeRun({ available: true, force: true, fetcher })).sent, 1);
   assert.deepStrictEqual(JSON.parse(requests.filter(([u]) => /contribute$/.test(u))[0][1].body).pairs, [["金丹期", "Golden Core Stage"]]);
 
   // the person turned the pool off: it is not downloaded; turned sharing off: nothing goes
   settings = { poolHints: false, sharePool: false };
   requests.length = 0;
   stored.glossaryLibrary["adopted:69shuba.com/txt/9"].terms.push(["丹药", "Medicinal Pill", "gemini", { o: "gemini" }]);
-  assert.deepStrictEqual(await PoolShare.maybeRun({ force: true, fetcher }), { downloaded: 0, sent: 0 });
+  assert.deepStrictEqual(await PoolShare.maybeRun({ available: true, force: true, fetcher }), { downloaded: 0, sent: 0 });
   assert.strictEqual(requests.length, 0);
 
   // a service that does not answer: nothing breaks, nothing is marked sent
   settings = { sharePool: true };
   const before = stored.poolSent.length;
   const broken = async () => { throw new Error("offline"); };
-  assert.deepStrictEqual(await PoolShare.maybeRun({ force: true, fetcher: broken }), { downloaded: 0, sent: 0 });
+  assert.deepStrictEqual(await PoolShare.maybeRun({ available: true, force: true, fetcher: broken }), { downloaded: 0, sent: 0 });
   assert.strictEqual(stored.poolSent.length, before);
   const refusing = async (url) => ({ ok: false });
-  assert.strictEqual((await PoolShare.maybeRun({ force: true, fetcher: refusing })).sent, 0);
+  assert.strictEqual((await PoolShare.maybeRun({ available: true, force: true, fetcher: refusing })).sent, 0);
   assert.strictEqual(stored.poolSent.length, before, "a request the service did not take is sent again later");
 
   // the downloaded pool is a layer of what a translation starts from
