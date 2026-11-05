@@ -703,7 +703,6 @@
   // originals / made: [{ bytes, type }] (made: null where nothing was drawn on that picture).
   async function saveComic({ url, novelName, pageTitle, lang, originals, made, lines, madeWith }) {
     if (!pictures) throw new Error("pictures cannot be kept on this device");
-    if (typeof LibraryHost === "undefined" || !LibraryHost.isMember()) throw new Error("this extension is not in a library yet");
     const store = direct ? directAdapter : proxyAdapter;
     const baseKey = PREFIX + String(url).split("#")[0];
     if (!P2PCore.kindOf(baseKey)) throw new Error("not a chapter's address");
@@ -1074,7 +1073,6 @@
     return pending.has(k) || inflight.has(k) || [...translating].some((t) => t === url || t.startsWith(url + "#lang="));
   };
   async function fetchFound(items, w, opts = {}) {
-    if (typeof LibraryHost === "undefined" || !LibraryHost.isMember()) throw new Error("this extension is not in a library yet");
     const novelName = String((w && w.name) || (/^name:/.test((w && w.novel) || "") ? w.novel.slice(5) : "")).slice(0, 300);
     if (!novelName) throw new Error("the watch has no novel name yet: open the novel's page and set it again");
     const store = direct ? directAdapter : proxyAdapter;
@@ -1202,21 +1200,18 @@
   // The library site's own tab (through site-bridge.js) connects directly: one more peer for the sync, with no network between the two.
   ext.runtime.onConnect.addListener((port) => {
     if (port.name !== "p2p-local" || typeof LibraryHost === "undefined" || !LibraryHost.fromSite(port.sender)) return; // only site-bridge.js, in a tab of the library site
-    // (the site in this browser: trusted once this extension is in a library, which the site's tab then uses as its own: the records it
-    // writes go into this library, and what it tells of them is passed on)
-    const member = () => typeof LibraryHost !== "undefined" && LibraryHost.isMember();
-    const link = core.addLocalPeer({ send: (obj) => port.postMessage(obj) }, { trusted: member });
-    const timer = setInterval(() => link.refresh(), 3000);
+    // (the site in this browser: its tab keeps a copy of this library, the records it writes come here, and what it tells of them is passed on)
+    const link = core.addLocalPeer({ send: (obj) => port.postMessage(obj) }, { trusted: true });
     port.onMessage.addListener((m) => link.receive(m));
-    port.onDisconnect.addListener(() => { clearInterval(timer); link.close(); });
+    port.onDisconnect.addListener(() => link.close());
   });
 
   ext.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (!msg) return;
-    // the library site's tab reads a chapter's pictures (only once this extension is in a library, like everything else it does)
+    // the library site's tab reads a chapter's pictures
     if (msg.target === "img") {
       const ownPage = !sender.tab || (typeof sender.url === "string" && sender.url.startsWith(ext.runtime.getURL("")));
-      if (typeof LibraryHost === "undefined" || !LibraryHost.isMember() || (!ownPage && !LibraryHost.fromSite(sender))) { sendResponse({ error: "not the library's site" }); return; }
+      if (typeof LibraryHost === "undefined" || (!ownPage && !LibraryHost.fromSite(sender))) { sendResponse({ error: "not the library's site" }); return; }
       answerPictures(String(msg.op || ""), Array.isArray(msg.args) ? msg.args : []).then((result) => sendResponse({ result }), (e) => sendResponse({ error: String((e && e.message) || e) }));
       return true; // answered later
     }
@@ -1233,11 +1228,10 @@
       fetchFound(msg.items, msg.watch || {}, msg.opts || {}).then((r) => sendResponse(r), (e) => sendResponse({ error: String((e && e.message) || e) }));
       return true; // answered later
     }
-    // The popup's Refresh details: fetch a chapter's text, its notes or a novel's details. Only once this extension is in a library (it does nothing before).
+    // The popup's Refresh details: fetch a chapter's text, its notes or a novel's details.
     if (msg.target === "p2p-host" && msg.type === "work") {
       const key = String(msg.key || "");
       const m = msg.meta || {};
-      if (typeof LibraryHost === "undefined" || !LibraryHost.isMember()) { sendResponse({ error: "this extension is not in a library yet" }); return; }
       if (!P2PCore.kindOf(key)) { sendResponse({ error: "not a chapter's address" }); return; }
       const meta = { novelName: String(m.novelName || "").slice(0, 300), pageTitle: String(m.pageTitle || "").slice(0, 300), ahead: Math.max(0, Math.min(50, Math.floor(Number(m.ahead) || 0))),
         translate: !!m.translate, force: !!m.force, ...(Number.isFinite(m.notes) ? { notes: Math.max(0, Math.min(11, Math.floor(m.notes))) } : {}) };

@@ -35,21 +35,10 @@ async function translateTab(tabId, opts = {}) {
   await browser.tabs.executeScript(tabId, { file: "content.js" });
 }
 
-// Until this extension is a device of a library it does nothing for anyone: its popup shows only Detect library, and every request
-// here is refused (the library's own calls, with a target, and the popup's status questions pass). libraryOn: set by library-host.js.
-const LOCKED = "this extension is not in a library yet: open the library site in this browser, then the extension's popup, and press Detect library";
-const LOCK_EXEMPT = new Set(["p2p:status", "bookcapture:done", "access:muted", "access:check"]);
-let unlocked = null;
 const bookAdds = new Map(); // tab -> the answer to the popup's Import to library, when the page says it has recorded the book
 // a page of this extension (the popup, also when it is opened in a tab of its own), never a site's page
 const ownPage = (sender) => !sender || !sender.tab || String(sender.url || "").startsWith(browser.runtime.getURL(""));
-const lockRead = browser.storage.local.get("libraryOn").then((r) => { unlocked = !!r.libraryOn; }, () => { unlocked = false; });
-browser.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes.libraryOn) unlocked = !!changes.libraryOn.newValue; });
-browser.runtime.onMessage.addListener((message, sender) => {
-  if (!message || message.target || LOCK_EXEMPT.has(message.type)) return handleMessage(message, sender);
-  if (unlocked === true) return handleMessage(message, sender);
-  return lockRead.then(() => (unlocked ? handleMessage(message, sender) : { error: LOCKED }));
-});
+browser.runtime.onMessage.addListener((message, sender) => handleMessage(message, sender));
 
 function handleMessage(message, sender) {
   if (!message) return;
@@ -193,8 +182,6 @@ const watchDeps = {
   translateTitles: (texts) => Watcher.cachedTitles(browser.storage.local, (t) => translateByMode(t, "titles"), texts),
   check: (w) => self.__checkWatch(w),
   fetchChapters: (items, w, opts) => self.__fetchFound(items, w, opts), // (a watch set to fetch what it found, or every chapter not here)
-  chapterList: async (key) => ((await GlossaryServer.api("GET", "/api/chapter-index?key=" + encodeURIComponent(key))).indexes || []).flatMap((ix) => ix.chapters || []),
-  settings: () => GlossaryServer.api("GET", "/api/settings"), // (whether this extension does the triggers: Watcher.mayRun)
-  me: () => LibraryHost.call("status")
+  chapterList: async (key) => ((await GlossaryServer.api("GET", "/api/chapter-index?key=" + encodeURIComponent(key))).indexes || []).flatMap((ix) => ix.chapters || [])
 };
-setInterval(() => { if (unlocked) Watcher.tick(watchDeps).catch(() => {}); }, 60 * 1000); // (nothing before it is in a library)
+setInterval(() => Watcher.tick(watchDeps).catch(() => {}), 60 * 1000);

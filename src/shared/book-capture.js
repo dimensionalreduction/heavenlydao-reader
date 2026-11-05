@@ -327,12 +327,10 @@
   }
   // A book is recorded only when the person asks (docs/ADD-BOOK.md): Import to library in the popup (the background sets window.__p2preadAdd and runs this in the tab),
   // or Refresh details (a visit made by book-visit.js: its address ends in the marker). Either is told when the recording has finished, and how it went.
-  // (nothing until this extension is a device of a library)
   const added = window.__p2preadAdd === true;
   window.__p2preadAdd = false;
   if (!visited && !added) return;
-  (typeof browser !== "undefined" ? browser : chrome).storage.local.get(["libraryOn"]).then((r) => !!r.libraryOn, () => false)
-    .then((on) => (on ? run() : { saved: false, reason: "the extension is not in a library yet" }))
+  Promise.resolve().then(run)
     .catch((e) => ({ saved: false, reason: String((e && e.message) || e) }))
     .then((result) => ext.runtime.sendMessage({ type: "bookcapture:done", added, ...(result || { saved: false, reason: "nothing was recorded" }) }).catch(() => {}));
 })();

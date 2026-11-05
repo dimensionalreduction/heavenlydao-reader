@@ -56,24 +56,10 @@ async function translateTab(tabId, opts = {}) {
   });
 }
 
-// Until this extension is a device of a library it does nothing for anyone: its popup shows only Detect library, and every request
-// here is refused (the library's own calls, with a target, and the popup's status questions pass). libraryOn: set by library-host.js.
-const LOCKED = "this extension is not in a library yet: open the library site in this browser, then the extension's popup, and press Detect library";
-const LOCK_EXEMPT = new Set(["p2p:status", "lib:wake", "bookcapture:done", "access:has", "access:note", "access:muted", "access:check"]);
-let unlocked = null;
 const bookAdds = new Map(); // tab -> the answer to the popup's Import to library, when the page says it has recorded the book
 // a page of this extension (the popup, also when it is opened in a tab of its own), never a site's page
 const ownPage = (sender) => !sender || !sender.tab || String(sender.url || "").startsWith(chrome.runtime.getURL(""));
-const lockRead = chrome.storage.local.get("libraryOn").then((r) => { unlocked = !!r.libraryOn; }, () => { unlocked = false; });
-chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes.libraryOn) unlocked = !!changes.libraryOn.newValue; });
-const isUnlocked = () => lockRead.then(() => unlocked);
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (!message || message.target || LOCK_EXEMPT.has(message.type)) return handleMessage(message, sender, sendResponse);
-  if (unlocked === true) return handleMessage(message, sender, sendResponse);
-  if (unlocked === false) return void sendResponse({ error: LOCKED });
-  lockRead.then(() => (unlocked ? handleMessage(message, sender, sendResponse) : sendResponse({ error: LOCKED }))); // (the worker just woke)
-  return true;
-});
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => handleMessage(message, sender, sendResponse));
 
 function handleMessage(message, sender, sendResponse) {
   if (!message) return;
@@ -350,13 +336,6 @@ function p2pStorageOp(op, args) {
       return chrome.storage.local.get(args[0]).then((r) => r[args[0]]);
     case "setTranslation":
       return chrome.storage.local.set({ [args[0]]: args[1] });
-    // the library (library-host.js, in the offscreen page): whether this extension is in it
-    case "setLibraryOn":
-      return chrome.storage.local.set({ libraryOn: args[0] || null });
-    // leaving a library: the chapters and the glossaries' copy go (library-host.js forgetStored)
-    case "forgetLibrary":
-      return chrome.storage.local.get(null).then((all) => chrome.storage.local.remove(Object.keys(all).filter((k) =>
-        k.startsWith(P2P_PREFIX) || k.startsWith(P2P_INDEX_KEY) || ["glossaryLibrary", "glossaryBindings", "glossaryRev", "myTerms"].includes(k))));
     case "listTranslations":
       return chrome.storage.local.get(null).then((all) =>
         Object.keys(all)
@@ -430,17 +409,10 @@ const watchDeps = {
     if (!reply || reply.error) throw new Error((reply && reply.error) || "the extension's page did not answer");
     return reply;
   },
-  chapterList: async (key) => ((await GlossaryServer.api("GET", "/api/chapter-index?key=" + encodeURIComponent(key))).indexes || []).flatMap((ix) => ix.chapters || []),
-  // whether this extension is the one that does the triggers (Watcher.mayRun): the library's settings, and this device in it
-  settings: () => GlossaryServer.api("GET", "/api/settings"),
-  me: async () => {
-    await ensureOffscreen();
-    const r = await chrome.runtime.sendMessage({ target: "lib", op: "status" });
-    return r && r.result;
-  }
+  chapterList: async (key) => ((await GlossaryServer.api("GET", "/api/chapter-index?key=" + encodeURIComponent(key))).indexes || []).flatMap((ix) => ix.chapters || [])
 };
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name !== "p2p-keepalive") return;
   ensureOffscreen().catch(() => {});
-  isUnlocked().then((on) => on && Watcher.tick(watchDeps)).catch(() => {}); // (nothing before it is in a library)
+  Watcher.tick(watchDeps).catch(() => {});
 });

@@ -1,30 +1,24 @@
-// The library kept on your own devices (src/shared/library.js): making one, letting a second device in, records going between them, terms
-// changed on both devices at once, records that must be refused, loading again, and moving the glossary server's data in.
+// Your library as each copy keeps it (src/shared/library.js): the page's copy and the extension's, records going between them, terms
+// changed in both at once, records that must be refused, loading again, a library kept before 2026-11 (encrypted) written again as plain
+// records, and moving the glossary server's data in.
 // Run: node test/library.test.js
 const assert = require("assert");
+const { webcrypto } = require("node:crypto");
 const Library = require("../src/shared/library.js");
 
-// The API's answers without what is only this device's own counting (rev), so two devices' answers can be compared.
-// (A glossary's terms come in the order each device first had them, so they are compared sorted.)
+// The API's answers without what is only one copy's own counting (rev), so two copies' answers can be compared.
+// (A glossary's terms come in the order each copy first had them, so they are compared sorted.)
 const norev = (v) => JSON.parse(JSON.stringify(v, (k, x) => (k === "rev" ? undefined : k === "terms" && Array.isArray(x) ? x.slice().sort((p, q) => (p[0] < q[0] ? -1 : 1)) : x)));
 const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4, 5]);
 
 (async () => {
-  assert.ok(await Library.supported(), "Ed25519 and X25519 work here");
-
-  // ---- a library, and a second device let in ----
+  // ---- two copies of the library: the page's and the extension's ----
   const adA = Library.memoryAdapter();
-  const A = await Library.open({ adapter: adA, deviceName: "Laptop" });
-  const B = await Library.open({ adapter: Library.memoryAdapter(), deviceName: "Phone" });
-  assert.strictEqual(A.status().state, "none");
-  await assert.rejects(A.api("GET", "/api/novels"), /not in a library/);
-  await A.create();
-  let st = A.status();
-  assert.strictEqual(st.state, "member");
-  assert.ok(st.main && /^[0-9A-F]{4}-[0-9A-F]{4}$/.test(st.code));
-  assert.deepStrictEqual(st.devices.map((d) => [d.name, d.main, d.me]), [["Laptop", true, true]]);
+  const A = await Library.open({ adapter: adA });
+  const B = await Library.open({ adapter: Library.memoryAdapter() });
+  assert.deepStrictEqual((await A.api("GET", "/api/novels")).novels, [], "a library at once, empty");
 
-  // What one device writes goes to the other through the "records" listener.
+  // What one copy writes goes to the other through the "records" listener.
   const toB = [];
   const toA = [];
   A.on("records", (rs) => toB.push(...rs));
@@ -35,47 +29,7 @@ const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 
     return results;
   };
 
-  const ask = B.joinRequest();
-  assert.strictEqual(B.status().state, "joining");
-  assert.strictEqual(B.status().code, "", "a device asking knows no library yet");
-  assert.ok(A.joinAsked(ask));
-  assert.deepStrictEqual(A.status().joins.map((j) => j.name), ["Phone"]);
-  assert.strictEqual(B.joinAsked(ask), false, "only the main device keeps requests to join");
-  const { keys } = await A.allow(ask.id);
-  assert.strictEqual(A.status().joins.length, 0);
-  // the owner key is sealed for B: another device cannot open it
-  const C = await Library.open({ adapter: Library.memoryAdapter(), deviceName: "Stranger" });
-  assert.strictEqual(await C.receiveKeys(Object.assign({}, keys, { to: C.status().device.id })), false, "sealed for B, not for C");
-  // (a main device of an older build sends the keys alone: let in, and the list of devices comes after)
-  const { dv, ...bare } = keys;
-  assert.strictEqual(dv.key, "devices", "the list of devices comes with the keys");
-  assert.ok(await B.receiveKeys(bare));
-  assert.strictEqual(B.status().state, "joining", "let in, but the list of devices has not come yet");
-  await deliver(toB, B); // (the devices record)
-  st = B.status();
-  assert.strictEqual(st.state, "member");
-  assert.strictEqual(st.code, A.status().code, "both show the same library");
-  assert.strictEqual(st.main, false);
-  assert.deepStrictEqual(st.devices.map((d) => d.name).sort(), ["Laptop", "Phone"]);
-  // the list that comes with the keys: in the library at once; one whose signature does not hold is not taken
-  {
-    const M = await Library.open({ adapter: Library.memoryAdapter(), deviceName: "Main" });
-    await M.create();
-    const T = await Library.open({ adapter: Library.memoryAdapter(), deviceName: "Tablet" });
-    const W = await Library.open({ adapter: Library.memoryAdapter(), deviceName: "Watch" });
-    M.joinAsked(T.joinRequest());
-    const tk = (await M.allow(T.status().device.id)).keys;
-    M.joinAsked(W.joinRequest());
-    const wk = (await M.allow(W.status().device.id)).keys;
-    assert.ok(await T.receiveKeys(Object.assign({}, tk, { dv: Object.assign({}, tk.dv, { body: tk.dv.body.replace("Tablet", "Tablet!") }) })), "the keys open");
-    assert.strictEqual(T.status().state, "joining", "a list whose signature does not hold is not taken");
-    assert.ok((await T.receive(tk.dv)).stored);
-    assert.strictEqual(T.status().state, "member", "the real one, come after");
-    assert.ok(await W.receiveKeys(wk));
-    assert.deepStrictEqual([W.status().state, W.status().devices.map((d) => d.name).sort()], ["member", ["Main", "Tablet", "Watch"]], "in the library as the keys come");
-  }
-
-  // ---- what is written on one device is read on the other ----
+  // ---- what is written in one copy is read in the other ----
   const G = "wtr-lab:8053";
   const enc = encodeURIComponent(G);
   await A.api("POST", `/api/glossaries/${enc}/import`, { name: "wizard", site: "wtr-lab", rawId: "8053", slug: "w", terms: [["科雷", "Corey"], ["希恩", "Sheen"], ["密林小屋", "Secret Forest Cabin", { o: "ai" }]] });
@@ -220,16 +174,16 @@ const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 
   await A.api("PUT", "/api/comment-links", { key: "69shuba.com/txt/1", novel: G });
   await A.api("PUT", "/api/comment-identity", { key: "k".repeat(24), name: "me" });
   assert.ok(toB.length > 10, "every change became records");
-  assert.ok(toB.every((r) => r.body === null || !/Corey|Synthesis|hero/.test(r.body)), "records are encrypted");
+  assert.ok(toB.some((r) => r.body && /Synthesis/.test(r.body)) && toB.every((r) => r.lib === undefined), "records are plain, with no library id");
   const results = await deliver(toB, B);
   // (every record is taken, or is no newer than one B holds: a part of a glossary B merged with its own terms and published again is newer than what A wrote before it)
   assert.ok(results.every((x) => x.stored || x.why === "not newer"), "B keeps every record of A, or has a newer one");
   for (const p of ["/api/glossaries", "/api/glossaries/" + enc, "/api/bindings", "/api/novels", "/api/chapter-index", "/api/my-terms", "/api/term-notes", "/api/settings", "/api/my-ratings", "/api/novel-links", "/api/watches", "/api/notices", "/api/comment-links", "/api/comment-identity"]) {
-    assert.deepStrictEqual(norev(await B.api("GET", p)), norev(await A.api("GET", p)), p + " is the same on both devices");
+    assert.deepStrictEqual(norev(await B.api("GET", p)), norev(await A.api("GET", p)), p + " is the same in both copies");
   }
   const bw = (await B.api("GET", "/api/watches")).watches[0];
   assert.deepStrictEqual([bw.then, bw.name, bw.hours], ["fetch", "Synthesis Wizard", 6], "a watch keeps what it does with what it finds, and the novel's name");
-  // a look written back without `then` (as an extension of an older build writes it after each look) keeps the choice, on both devices
+  // a look written back without `then` (as an extension of an older build writes it after each look) keeps the choice, in both copies
   await B.api("PUT", "/api/watches/" + encodeURIComponent(G + "|69shuba.com"), { on: true, hours: 6, lastCheck: 5, lastResult: "no new chapters" });
   await deliver(toA, A);
   for (const [who, dev] of [["B", B], ["A", A]]) {
@@ -251,21 +205,17 @@ const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 
   await old.handle("PUT", "/api/watches/" + encodeURIComponent("n|wtr-lab.com"), { on: true, then: "fetch", above: 644 });
   await old.handle("PUT", "/api/watches/" + encodeURIComponent("n|wtr-lab.com"), { on: true, then: "fetch", known: 650, above: 650 });
   assert.strictEqual((await old.handle("GET", "/api/watches")).watches[0].above, 644, "where the new ones start is kept (a look moving on does not move it)");
-  // the triggers' device and each site's wait, in the settings, kept by a save of something else; a novel's own wait, on its watch
-  await old.handle("PUT", "/api/settings", { triggerDevice: { id: "0123456789abcdef", name: "Chrome on Windows (extension)" }, siteWaits: { "www.ranobes.top": 8, "wtr-lab.com": 4.5 } });
+  // each site's wait, in the settings, kept by a save of something else; a novel's own wait, on its watch
+  await old.handle("PUT", "/api/settings", { siteWaits: { "www.ranobes.top": 8, "wtr-lab.com": 4.5 } });
   await old.handle("PUT", "/api/settings", { copyCovers: true, siteWaits: { "ranobes.top": null } });
-  const set = await old.handle("GET", "/api/settings");
-  assert.deepStrictEqual([set.triggerDevice, set.siteWaits], [{ id: "0123456789abcdef", name: "Chrome on Windows (extension)" }, { "wtr-lab.com": 4.5 }], "kept; null takes a site's back to its own");
-  await old.handle("PUT", "/api/settings", { triggerDevice: { id: "not hex!" }, siteWaits: { "wtr-lab.com": 9999 } });
-  const set2 = await old.handle("GET", "/api/settings");
-  assert.deepStrictEqual([set2.triggerDevice.id, set2.siteWaits["wtr-lab.com"]], ["0123456789abcdef", 300], "a device id that is not one is refused; a wait is at most 300 s");
+  assert.deepStrictEqual((await old.handle("GET", "/api/settings")).siteWaits, { "wtr-lab.com": 4.5 }, "kept; null takes a site's back to its own");
+  await old.handle("PUT", "/api/settings", { siteWaits: { "wtr-lab.com": 9999 } });
+  assert.strictEqual((await old.handle("GET", "/api/settings")).siteWaits["wtr-lab.com"], 300, "a wait is at most 300 s");
   await old.handle("PUT", "/api/watches/" + encodeURIComponent("n|wtr-lab.com"), { on: true, wait: 3 });
   await old.handle("PUT", "/api/watches/" + encodeURIComponent("n|wtr-lab.com"), { on: true, lastResult: "a look" });
   assert.strictEqual((await old.handle("GET", "/api/watches")).watches[0].wait, 3, "a novel's own wait, kept when a look writes the watch");
   await old.handle("PUT", "/api/watches/" + encodeURIComponent("n|wtr-lab.com"), { on: true, wait: null });
   assert.strictEqual((await old.handle("GET", "/api/watches")).watches[0].wait, undefined, "null: the site's again");
-  await old.handle("PUT", "/api/settings", { triggerDevice: null });
-  assert.strictEqual((await old.handle("GET", "/api/settings")).triggerDevice, undefined, "null: every extension again");
   const cover = await B.api("GET", "/api/covers/" + enc);
   assert.deepStrictEqual([cover.type, [...cover.bytes]], ["image/png", [...PNG]], "the cover's picture came over");
   // /api/sync on B sees the glossary that arrived, as the extension's sync would
@@ -277,7 +227,7 @@ const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 
   const again = A.get("novel:" + G);
   assert.strictEqual((await B.receive(again)).stored, false);
 
-  // ---- two devices changing terms of one glossary at once: both changes stay ----
+  // ---- the two copies changing terms of one glossary at once: both changes stay ----
   // (two words in the same part of the glossary, so it is one record changed on both sides)
   const sources = ["科雷", "希恩", "密林小屋"];
   let w1 = null;
@@ -299,10 +249,10 @@ const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 
     const terms = (await dev.api("GET", "/api/glossaries/" + enc)).terms;
     assert.ok(terms.some((t) => t[0] === w1 && t[1] === "From Laptop") && terms.some((t) => t[0] === w2 && t[1] === "From Phone"), "both edits are kept");
   }
-  assert.deepStrictEqual(norev(await A.api("GET", "/api/glossaries/" + enc)), norev(await B.api("GET", "/api/glossaries/" + enc)), "and the devices agree");
+  assert.deepStrictEqual(norev(await A.api("GET", "/api/glossaries/" + enc)), norev(await B.api("GET", "/api/glossaries/" + enc)), "and the copies agree");
   assert.strictEqual(toA.length + toB.length, 0, "and stop writing once they agree");
 
-  // a deleted term stays deleted on the other device
+  // a deleted term stays deleted in the other copy
   await B.api("POST", `/api/glossaries/${enc}/edit`, { remove: ["希恩"] });
   await deliver(toA, A);
   assert.ok(!(await A.api("GET", "/api/glossaries/" + enc)).terms.some((t) => t[0] === "希恩"));
@@ -313,31 +263,15 @@ const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 
 
   // ---- what must be refused ----
   const good = A.get("novel:" + G);
-  const tampered = Object.assign({}, good, { ver: [good.ver[0] + 1, 0, good.ver[2]] });
-  assert.strictEqual((await B.receive(tampered)).why, "bad signature", "a changed record");
-  assert.strictEqual((await B.receive(Object.assign({}, good, { lib: "x" }))).why, "malformed", "another library's record");
-  // C makes a library of its own and signs a record for A's library with its own key: C is not a device of A's library
-  await C.create();
-  const forged = Object.assign({}, good, { by: C.status().device.id, ver: [good.ver[0] + 5, 0, "x"] });
-  assert.strictEqual((await B.receive(forged)).why, "not a device of this library");
-  // a request to join from a refused device is not shown again
-  const D = await Library.open({ adapter: Library.memoryAdapter(), deviceName: "Other" });
-  const askD = D.joinRequest();
-  assert.ok(A.joinAsked(askD));
-  await A.refuse(askD.id);
-  assert.strictEqual(A.joinAsked(askD), false);
-  await assert.rejects(B.allow(askD.id), /only the main device/);
-  // another device of the library passes a request on, and notes who asks (for its notifications), but never a device of the library
-  assert.strictEqual(B.joinAsked(askD), false, "passed on to the main device");
-  assert.deepStrictEqual(B.status().asking.map((j) => j.name), ["Other"]);
-  assert.strictEqual(B.joinAsked(ask), false);
-  assert.deepStrictEqual(B.status().asking.map((j) => j.name), ["Other"], "a device of the library is not asking");
-  assert.deepStrictEqual(A.status().asking, [], "the main device has its requests in joins");
+  const later = (r) => Object.assign({}, r, { ver: [good.ver[0] + 1, 0, "x"] });
+  assert.strictEqual((await B.receive(later(Object.assign({}, good, { v: 1 })))).why, "malformed", "a record of before (encrypted)");
+  assert.strictEqual((await B.receive(Object.assign({}, good, { ver: [1, 0] }))).why, "malformed", "a version that is not one");
+  assert.strictEqual((await B.receive(later(Object.assign({}, good, { key: "devices" })))).why, "unknown kind", "a kind the library does not have");
+  assert.strictEqual((await B.receive(later(Object.assign({}, good, { body: "{not json" })))).why, "cannot be read");
+  assert.strictEqual((await B.receive(later(Object.assign({}, good, { body: "x".repeat(3 * 1024 * 1024) })))).why, "too big");
 
   // ---- loading again from what was kept ----
-  const A2 = await Library.open({ adapter: adA, deviceName: "ignored" });
-  assert.strictEqual(A2.status().code, A.status().code);
-  assert.strictEqual(A2.status().main, true);
+  const A2 = await Library.open({ adapter: adA });
   for (const p of ["/api/glossaries/" + enc, "/api/novels", "/api/term-notes", "/api/notices", "/api/settings"]) {
     assert.deepStrictEqual(norev(await A2.api("GET", p)), norev(await A.api("GET", p)), p + " after loading again");
   }
@@ -345,9 +279,41 @@ const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 
   await A2.api("PUT", "/api/novels/" + enc, { title: "Synthesis Wizard!" });
   assert.ok(A2.wants("x", [1, 0, ""]) && Library.cmpVer(A2.get("novel:" + G).ver, good.ver) > 0);
 
+  // ---- a library kept before 2026-11: its records encrypted with the owner key, read and written again as plain ones ----
+  {
+    const subtle = webcrypto.subtle;
+    const raw = webcrypto.getRandomValues(new Uint8Array(32));
+    const key = await subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt"]);
+    const b64 = (u) => Buffer.from(u).toString("base64");
+    const seal = async (body) => {
+      const iv = webcrypto.getRandomValues(new Uint8Array(12));
+      return { iv: b64(iv), body: b64(new Uint8Array(await subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(JSON.stringify(body))))) };
+    };
+    const me = "0123456789abcdef";
+    const lib = "the library's id";
+    const ver = (n) => [1700000000000 + n, 0, me];
+    const ad = Library.memoryAdapter();
+    await ad.setMeta({ device: { id: me, name: "Laptop", pub: "p", priv: "q", dhPub: "d", dhPriv: "e" }, hlc: [1700000000009, 0], libId: lib, root: { priv: "r" }, ownerKey: b64(raw), keys: { 0: b64(raw) }, gen: 0 });
+    await ad.putRecords([
+      { v: 1, lib, key: "devices", ver: ver(1), by: "root", iv: null, body: "[]", sig: "s" },
+      { v: 1, lib, key: "dh:" + me, ver: ver(2), by: me, iv: null, body: "{}", sig: "s" },
+      Object.assign({ v: 1, lib, key: "novel:" + G, ver: ver(3), by: me, sig: "s" }, await seal({ id: G, title: "Synthesis Wizard", addedAt: 1, updatedAt: 1 })),
+      { v: 1, lib, key: "term:gone", ver: ver(4), by: me, iv: null, body: null, sig: "s" },
+      Object.assign({ v: 1, lib, key: "settings", ver: ver(5), by: me, sig: "s", kg: 1 }, await seal({ copyCovers: false })) // (a key this copy never had)
+    ]);
+    const M = await Library.open({ adapter: ad });
+    assert.deepStrictEqual((await M.api("GET", "/api/novels")).novels.map((n) => n.title), ["Synthesis Wizard"], "its novels are read");
+    const kept = await ad.load();
+    assert.deepStrictEqual(kept.meta, { id: me, hlc: [1700000000009, 0] }, "no id or keys are kept");
+    assert.deepStrictEqual(kept.records.map((r) => [r.key, r.v, r.ver[0], r.body === null]).sort(), [["novel:" + G, 2, ver(3)[0], false], ["term:gone", 2, ver(4)[0], true]],
+      "plain records with their versions; the devices, their keys and what could not be read are gone");
+    assert.ok(kept.records.every((r) => !("lib" in r) && !("sig" in r) && !("iv" in r)));
+    const M2 = await Library.open({ adapter: ad });
+    assert.deepStrictEqual(norev(await M2.api("GET", "/api/novels")), norev(await M.api("GET", "/api/novels")), "opened again: the same");
+  }
+
   // ---- moving the glossary server's data in ----
-  const E = await Library.open({ adapter: Library.memoryAdapter(), deviceName: "Fresh" });
-  await E.create();
+  const E = await Library.open({ adapter: Library.memoryAdapter() });
   // a server state with a deleted term of yours (which a site import must not bring back) and the site's own wording of a term you changed
   const serverState = require("../src/shared/library-api.js").normalizeState({
     rev: 7,

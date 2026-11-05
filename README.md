@@ -150,12 +150,9 @@ Every push also builds both extensions in GitHub Actions. Each run has them as t
 
 ## Set up
 
-The extension does nothing until it has joined your library.
-
-1. Open the [library site](https://p2p-library.pages.dev/). Your library is created on your first visit.
-2. Click the extension's toolbar icon and press **Detect library**. It finds the library of the site's tab in this browser.
-3. Press **Join**. The site's tab lets the extension in at once.
-4. For *Detect with AI*, add a key from [Google AI Studio](https://aistudio.google.com/apikey) on the site, in **Settings › Connect › Tickets › Keys**. The site hands it to the extension in the same browser.
+1. Install the extension and open the [library site](https://p2p-library.pages.dev/) in the same browser. The extension and the site keep
+   one library from then on, with nothing to join: a library the site had before the extension was installed goes into it.
+2. For *Detect with AI*, add a key from [Google AI Studio](https://aistudio.google.com/apikey) on the site, in **Settings › Connect › Tickets › Keys**. The site hands it to the extension in the same browser.
    Without a key, everything except that still works.
 
 ## The popup
@@ -218,7 +215,7 @@ The end-to-end tests that drive the real site and extension in Playwright are in
   test/               unit and integration tests (plain Node, no framework)
   vendor/             chapters.js and translate.js, the library site's own (how chapters are put together into novels, how a translation profile
                       translates); ort/, onnxruntime-web for a comic's pictures
-  models/, fonts/     PaddleOCR's text detector and Comic Neue, for a comic's pictures
+  models/, fonts/     PaddleOCR's text detector, Comic Neue and Komika Text, for a comic's pictures
   reference/          WebToEpub, a git submodule
   build.js            joins src/shared and src/<browser> into dist/<browser> and adds every site's permission
 ```
@@ -232,7 +229,7 @@ The end-to-end tests that drive the real site and extension in Playwright are in
 - Most built-in site rules are generated from the parsers of [WebToEpub](https://github.com/dteviot/WebToEpub) (GPL-3.0) by
   `tools/gen-sources.js`.
 - A comic's pictures are read with [onnxruntime-web](https://github.com/microsoft/onnxruntime) (MIT) and PaddleOCR's text detector (Apache-2.0), and lettered in
-  [Comic Neue](https://github.com/crozynski/comicneue) (OFL-1.1).
+  [Comic Neue](https://github.com/crozynski/comicneue) (OFL-1.1) and Komika Text (Apostrophic Labs, freeware).
 - The element picker's interaction follows [uBlock Origin](https://github.com/gorhill/uBlock)'s, without its code.
 
 ## License

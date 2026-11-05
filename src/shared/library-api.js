@@ -465,12 +465,7 @@
         else delete next.promptSets;
       }
       putProfiles(next, body);
-      // which of your extensions does the triggers (looks for new chapters, fetches and translates on its own): one device of the library, by its
-      // id (library.js status().device), else every one; null: every one again
-      if (body.triggerDevice === null) delete next.triggerDevice;
-      else if (body.triggerDevice && typeof body.triggerDevice.id === "string" && /^[0-9a-f]{8,40}$/.test(body.triggerDevice.id)) {
-        next.triggerDevice = { id: body.triggerDevice.id, name: clean(body.triggerDevice.name, 80) };
-      }
+      delete next.triggerDevice; // (which of your extensions did the triggers, from when a library had several devices)
       // seconds between two chapters of a site fetched one after another, the person's default for each site ({ host: seconds }; null: the
       // site's own again), as Settings › Limits sets them; a novel's own (its watch's `wait`) comes first
       if (body.siteWaits && typeof body.siteWaits === "object") {

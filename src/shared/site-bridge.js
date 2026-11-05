@@ -13,9 +13,6 @@
 // "fish" ({ id, op: "speak" | "credit", text, voice, model, key } -> { id, audio, type | credit | error, needsAccess }): Listen with a Fish Audio key (fish-speech.js).
 // "access" (page -> extension only): { keys, token }, the keys this page keeps for translation profiles and the playground's sign-in for this extension, so
 // that the chapters a watch fetches are translated with the novel's profile while no page is open (profile-translate.js).
-// "ask" (extension -> page) and "answer" (page -> extension): the popup asks this page about its library ({ id, op, args } -> { id, result |
-// error }): "library" (which one it is), "letIn" (this extension's request to join: the keys, when this page is its main
-// device), "leaving" (this extension's proof as it leaves: taken off the list there). Sent here as { type: "site:ask", op, args }.
 (function () {
   const ext = typeof browser !== "undefined" ? browser : chrome;
   if (window.__p2preadBridge) return; // injected twice: the first one is enough
@@ -23,24 +20,6 @@
 
   let port = null;
   const post = (type, data) => window.postMessage({ source: "p2pread-ext", type, data }, location.origin);
-
-  // The popup's questions to this page. The page listens once its own script has run (it says so with any message): asked before that, the
-  // question waits for it.
-  const ASK_MS = 20000;
-  const asked = new Map(); // id -> sendResponse
-  let askSeq = 0;
-  let pageUp = false;
-  const waiting = [];
-  ext.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-    if (!msg || msg.type !== "site:ask" || typeof msg.op !== "string" || !sender || sender.id !== ext.runtime.id) return;
-    const id = "a" + ++askSeq;
-    asked.set(id, sendResponse);
-    setTimeout(() => { if (asked.delete(id)) sendResponse({ error: "the page did not answer" }); }, ASK_MS);
-    const send = () => post("ask", { id, op: msg.op, args: Array.isArray(msg.args) ? msg.args : [] });
-    if (pageUp) send();
-    else waiting.push(send);
-    return true; // answered later
-  });
 
   // The Allow card: when the extension needs a site it has not been allowed to read, the background tells this tab ("site:allow": { hosts }) and the card (access.html, a
   // page of the extension: the browser asks the person only on a click there) comes up over the bottom of the page. It goes when answered; "Not now" is told to the
@@ -90,12 +69,7 @@
     const d = ev.data;
     // only this page itself, and only our own envelope
     if (ev.source !== window || ev.origin !== location.origin || !d || d.source !== "p2pread-page") return;
-    if (!pageUp) { pageUp = true; for (const send of waiting.splice(0)) send(); }
-    if (d.type === "answer" && d.data && asked.has(d.data.id)) {
-      const reply = asked.get(d.data.id);
-      asked.delete(d.data.id);
-      reply(d.data.error ? { error: String(d.data.error) } : { result: d.data.result });
-    } else if (d.type === "connect") connect();
+    if (d.type === "connect") connect();
     else if (d.type === "msg" && port) {
       try {
         port.postMessage(d.data);

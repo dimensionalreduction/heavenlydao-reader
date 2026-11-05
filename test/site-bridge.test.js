@@ -21,14 +21,14 @@ window.window = window;
 let ports = [];
 let connectThrows = false;
 const asked = []; // what the relay asked the extension with sendMessage
-const onMessage = []; // the relay's listeners for the extension's messages (the popup's "site:ask")
+const onMessage = []; // the relay's listeners for the extension's messages (the Allow card's "site:allow")
 const runtime = {
   id: "the-extension",
   onMessage: { addListener: (fn) => onMessage.push(fn) },
   sendMessage: async (m) => {
     asked.push(m);
     if (m.type === "lib:wake") return { ok: true };
-    if (m.target === "lib" && m.op === "status") return { result: { state: "member", code: "ABCD-1234" } };
+    if (m.target === "lib" && m.op === "ping") return { result: true };
     if (m.target === "lib") return { error: "unknown library call " + m.op };
     return undefined;
   },
@@ -66,35 +66,12 @@ const types = () => seenByPage.map((m) => m.type);
   await sleep(20);
   assert.deepStrictEqual(types(), ["hello"], "it announces itself so a page that started first knows it is there");
 
-  // ---- the popup asks the page (Detect library): asked before the page has said anything, the question waits for it ----
-  const replies = [];
-  const keepsOpen = onMessage[0]({ type: "site:ask", op: "library", args: [] }, { id: "the-extension" }, (r) => replies.push(r));
-  assert.strictEqual(keepsOpen, true, "answered later");
-  assert.strictEqual(onMessage[0]({ type: "site:ask", op: "library" }, { id: "another-extension" }, () => replies.push("no")), undefined, "another extension is not heard");
-  await sleep(20);
-  assert.deepStrictEqual(types(), ["hello"], "not asked before the page is there");
-
   // ---- connect, then messages both ways ----
   toRelay("connect");
   await sleep(20);
   assert.strictEqual(ports.length, 1);
   assert.strictEqual(ports[0].name, "p2p-local", "it opens the port the extension's sync page listens for");
-  const ask = seenByPage.find((m) => m.type === "ask");
-  assert.strictEqual(JSON.stringify(ask && [ask.data.op, ask.data.args]), JSON.stringify(["library", []]), "asked once the page said something");
-  assert.deepStrictEqual(types(), ["hello", "ask", "connected"]);
-  toRelay("answer", { id: "nobody", result: 1 });
-  toRelay("answer", { id: ask.data.id, result: { state: "member", code: "ABCD-1234" } });
-  toRelay("answer", { id: ask.data.id, result: "again" });
-  await sleep(20);
-  assert.strictEqual(JSON.stringify(replies), JSON.stringify([{ result: { state: "member", code: "ABCD-1234" } }]), "the answer goes back to the popup, once");
-  onMessage[0]({ type: "site:ask", op: "letIn", args: [{ t: "jn" }] }, { id: "the-extension" }, (r) => replies.push(r));
-  await sleep(20);
-  const ask2 = seenByPage.filter((m) => m.type === "ask")[1];
-  toRelay("answer", { id: ask2.data.id, error: "not let in" });
-  await sleep(20);
-  assert.strictEqual(JSON.stringify(replies[1]), JSON.stringify({ error: "not let in" }), "an error too");
-  seenByPage.length = 0;
-  seenByPage.push({ type: "hello" }, { type: "connected" });
+  assert.deepStrictEqual(types(), ["hello", "connected"]);
   toRelay("msg", { t: "get", k: "translation:https://x/1" });
   await sleep(20);
   assert.deepStrictEqual(ports[0].sent, [{ t: "get", k: "translation:https://x/1" }], "page -> extension");
@@ -160,14 +137,14 @@ const types = () => seenByPage.map((m) => m.type);
 
   // ---- a call to the library: asked of the extension, answered to the page with the same id ----
   seenByPage.length = 0;
-  toRelay("lib", { id: 7, op: "status", args: [] });
+  toRelay("lib", { id: 7, op: "ping", args: [] });
   toRelay("lib", { id: 8, op: "nope" });
   await sleep(30);
   const libReplies = seenByPage.filter((m) => m.type === "lib").map((m) => m.data).sort((x, y) => x.id - y.id);
-  assert.deepStrictEqual(libReplies.map((r) => [r.id, r.result && r.result.code, r.error]), [[7, "ABCD-1234", undefined], [8, undefined, "unknown library call nope"]]);
+  assert.deepStrictEqual(libReplies.map((r) => [r.id, r.result, r.error]), [[7, true, undefined], [8, undefined, "unknown library call nope"]]);
   assert.ok(asked.some((m) => m.type === "lib:wake"), "the extension's page that keeps the library is woken first");
   assert.ok(asked.some((m) => m.type === "site:seen" && m.url.startsWith(ORIGIN)), "the site's address is told (where a notification opens it)");
-  assert.ok(asked.some((m) => m.target === "lib" && m.op === "status" && Array.isArray(m.args)));
+  assert.ok(asked.some((m) => m.target === "lib" && m.op === "ping" && Array.isArray(m.args)));
 
   // ---- injected twice: still one relay ----
   connectThrows = false;

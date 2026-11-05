@@ -16,15 +16,15 @@
 // }
 //
 // The links: addLocalPeer(link, { trusted }) -> { receive(msg), refresh(), close() }. The host gives a link { send(obj) } and passes what
-// comes back to receive(msg). trusted: a boolean, or a function asked each time (the extension trusts the site's tab once it is in a library
-// itself; the tab trusts the extension once it uses the extension's library); refresh() after it may have changed. Nothing of the chapters
-// goes to a link before it is trusted, and nothing of that kind it sends is taken or answered.
+// comes back to receive(msg). trusted: a boolean, or a function asked each time; refresh() after it may have changed. Nothing of the chapters
+// goes to a link before it is trusted, and nothing of that kind it sends is taken or answered. (The extension links only the site's own tabs,
+// and the page only the extension in its browser: both trust the link.)
 //
 // The library (library.js): when opts.library is given, the two ends of a link also swap its records: each says which records it has ("lv",
 // with their versions), asks for the newer ones ("lq"), sends them in pieces ("lr") and tells the other when it has new ones ("lh"). Every
 // record is checked by the library itself; this only carries them.
 //   opts.library = {
-//     lib(): libId | "",  versions(): [[key, ver]],  wants(key, ver): bool,  wantsMany?(rows): the rows of [[key, ver]] wanted,  get(key): record | null,
+//     versions(): [[key, ver]],  wants(key, ver): bool,  wantsMany?(rows): the rows of [[key, ver]] wanted,  get(key): record | null,
 //     receive(record): { stored, why?, out?: [records written again] }
 //   }   (each may answer with a promise)
 (function (root) {
@@ -41,8 +41,9 @@
   // What this build of the sync protocol can do. Bumped when the ends gain a message the other must understand, so one can tell what the
   // other is: 2 = direct sending ("get"/"blob"), 3 = original texts and translating on request ("raw"/"rs"), 4 = looking up a next-chapter link,
   // 5 = redoing a chapter, 6 = the ends carry an id, 7 = the library's records ("lv" / "lq" / "lr" / "lh"), 8 to 11 = what the network had
-  // (reading a library without joining it, proofs between devices, pictures as torrents), 12 = no network: the link in this browser only
-  const PROTOCOL = 12;
+  // (reading a library without joining it, proofs between devices, pictures as torrents), 12 = no network: the link in this browser only,
+  // 13 = one library in a browser: its records carry no library id
+  const PROTOCOL = 13;
   const MEMBER_ONLY = new Set(["ent", "raw", "rs", "rawfail", "rawstop"]);
   const CHAPTER_TALK = new Set(["ver", "need", "get", "blob"]);
   // A chapter is sent over the link in pieces small enough for one message each.
@@ -55,7 +56,7 @@
   const REASK_MAX_MS = 60 * 60 * 1000;
   const reaskAfter = (n) => (n < 2 ? DIRECT_REASK_MS : Math.min(REASK_BACKOFF_MS * 2 ** (n - 2), REASK_MAX_MS));
   const MAX_ASSEMBLIES = 30;
-  const MAX_RECORD_BYTES = 4 * 1024 * 1024; // one library record as sent (its body is at most 2 MB before encryption: library.js)
+  const MAX_RECORD_BYTES = 4 * 1024 * 1024; // one library record as sent (its body is at most 2 MB: library.js)
 
   const enc = new TextEncoder();
   const dec = new TextDecoder();
@@ -190,7 +191,6 @@
     const recAsked = new Map(); // library record key -> { at, ver }: when it was asked for, and which version
     const recHeard = new Map(); // library record key -> { ver, peer }: the newest version the other end said it has (asked for again if what came is older)
     const recAssemblies = new Map(); // library record key -> pieces received so far
-    let afterDevices = new Set(); // records refused for now (their device not listed yet, their owner key not here yet): asked for again when that comes
     let onDemand = false; // cfg.fetch === "open": only what is asked for
     const wanted = new Set(); // (on demand) chapters asked for and not here yet
     const rawAsks = new Map(); // chapters asked of the extension (requestRaw) and not said done yet -> whether the original text alone was asked for
@@ -319,12 +319,8 @@
 
     // ---------- the library's records ----------
     async function sendRecordVersions(peer) {
-      const l = await lib.lib();
-      if (!l) return;
       const rows = (await lib.versions()).map(([k, v]) => [k, v]);
-      // (the list of devices first: without it the other end cannot check any record)
-      rows.sort((a, b) => (b[0] === "devices") - (a[0] === "devices"));
-      sendChunked(peer, (b, last) => ({ t: "lv", l, v: b, last }), rows, (r) => r[0].length + 40);
+      sendChunked(peer, (b, last) => ({ t: "lv", v: b, last }), rows, (r) => r[0].length + 40);
     }
 
     const verAfter = (a, b) => JSON.stringify(a) !== JSON.stringify(b) && (a[0] - b[0] || a[1] - b[1] || (a[2] > b[2] ? 1 : -1)) > 0;
@@ -340,7 +336,6 @@
         recAsked.set(k, { at: now, ver: v });
         fresh.push(k);
       }
-      fresh.sort((a, b) => (b === "devices") - (a === "devices"));
       for (let i = 0; i < fresh.length; i += 300) peer.send({ t: "lq", k: fresh.slice(i, i + 300) });
     }
 
@@ -406,31 +401,22 @@
       const heard = recHeard.get(key);
       if (heard && Array.isArray(record.ver) && verAfter(heard.ver, record.ver) && peers.has(heard.peer)) askRecords(heard.peer, [[key, heard.ver]]);
       else recHeard.delete(key);
-      // refused for now: its device is not listed yet, or it was written with an owner key that is still on its way (after a device was removed)
-      if (res.why === "not a device of this library" || res.why === "key not known yet") afterDevices.add(key);
       if (!res.stored) return;
       stats.records = (stats.records || 0) + 1;
       const told = [[record.key, record.ver]].concat((res.out || []).map((r) => [r.key, r.ver]));
-      for (const p of peers) if (p !== peer && p.ready) p.send({ t: "lh", l: record.lib, v: told }); // passed on
-      if (res.out && res.out.length) peer.send({ t: "lh", l: record.lib, v: res.out.map((r) => [r.key, r.ver]) }); // (merged: the sender wants it too)
-      if ((key === "devices" || key.startsWith("okey:")) && afterDevices.size) {
-        const again = [...afterDevices];
-        afterDevices = new Set();
-        for (const k of again) recAsked.set(k, { at: Date.now(), ver: [0, 0, ""] });
-        for (const p of peers) if (p.ready) p.send({ t: "lq", k: again.slice(0, 300) });
-      }
+      for (const p of peers) if (p !== peer && p.ready) p.send({ t: "lh", v: told }); // passed on
+      if (res.out && res.out.length) peer.send({ t: "lh", v: res.out.map((r) => [r.key, r.ver]) }); // (merged: the sender wants it too)
       onChange({ type: "record", key });
     }
 
     // Records this side wrote (from the library's API): the other ends are told, and ask for them.
     async function announceRecords(records) {
       if (!lib || stopped || !records.length) return;
-      const l = await lib.lib();
       const v = records.map((r) => [r.key, r.ver]);
-      for (const p of peers) if (p.ready) p.send({ t: "lh", l, v });
+      for (const p of peers) if (p.ready) p.send({ t: "lh", v });
     }
 
-    // Now and then, and after joining: every other end is asked for what it has.
+    // Now and then: every other end is asked for what it has.
     function syncLibrary() {
       if (!lib || stopped) return;
       for (const p of peers) {
@@ -438,14 +424,6 @@
         p.send({ t: "lvq" });
         sendRecordVersions(p).catch(() => {});
       }
-    }
-
-    // The library this side is in changed (it joined one, or left it): the links it trusts now hear what it holds, and the library's records
-    // are compared again.
-    function libraryChanged() {
-      if (!lib || stopped) return;
-      for (const l of locals) refreshLocal(l);
-      syncLibrary();
     }
 
     // What this side lacks of what the other end holds (asked for) and what that end lacks of this one's (sent), by the versions it told.
@@ -542,8 +520,7 @@
 
     async function onLibraryMessage(peer, msg) {
       const rows = (v) => (Array.isArray(v) ? v : []).filter((r) => Array.isArray(r) && typeof r[0] === "string" && r[0].length <= 600 && Array.isArray(r[1]));
-      if ((msg.t === "lv" || msg.t === "lh") && typeof msg.l === "string") {
-        if (msg.l !== (await lib.lib())) return; // another library's (or this side is not in one yet)
+      if (msg.t === "lv" || msg.t === "lh") {
         if (msg.t === "lv") {
           peer.recVersions = (peer.recVersions || []).concat(rows(msg.v));
           if (!msg.last) return;
@@ -557,7 +534,6 @@
       } else if (msg.t === "lvq") {
         await sendRecordVersions(peer);
       } else if (msg.t === "lq" && Array.isArray(msg.k)) {
-        if (!(await lib.lib())) return;
         queueRecords(peer, msg.k.filter((k) => typeof k === "string" && k.length <= 600).slice(0, 300));
       } else if (msg.t === "lr" && typeof msg.k === "string") {
         await receiveRecordPiece(peer, msg);
@@ -804,7 +780,6 @@
       // the library: records this side wrote, and asking the other ends again
       announceRecords: (records) => announceRecords(records).catch((e) => log("announce failed", e)),
       syncLibrary,
-      libraryChanged,
       activity,
       // Asks the extension (which can fetch from the source site) to save this chapter's original text. Returns how many were asked.
       requestRaw: (key, meta = {}) => {

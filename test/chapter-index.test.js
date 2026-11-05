@@ -114,7 +114,7 @@ globalThis.fetch = async (url, opts) => {
       if (m.type === "chapterindex:save") { calls.save++; return globalThis.GlossaryServer.saveChapterIndex(m.record); }
       return null;
     };
-    const ctx = { document: p.doc, location: { href: p.url }, chrome: { storage: { local: { ...storage, get: (k) => (Array.isArray(k) && k.includes("libraryOn") ? Promise.resolve({ libraryOn: { libId: "test" } }) : storage.get(k)), set: (o) => storage.set(o) } }, runtime: { sendMessage: handler } }, URL, Date, Number, Math, Promise, JSON, console, Object, Array, String };
+    const ctx = { document: p.doc, location: { href: p.url }, chrome: { storage: { local: { ...storage, set: (o) => storage.set(o) } }, runtime: { sendMessage: handler } }, URL, Date, Number, Math, Promise, JSON, console, Object, Array, String };
     vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "src", "shared", "chapter-index.js"), "utf8"), ctx);
     await sleep(120);
   }

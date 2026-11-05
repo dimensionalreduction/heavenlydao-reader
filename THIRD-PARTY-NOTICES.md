@@ -25,3 +25,8 @@ unchanged (`models/`).
 
 <https://github.com/crozynski/comicneue>, Copyright 2014 The Comic Neue Project Authors, SIL Open Font License 1.1 (the whole license is in
 `fonts/OFL-comic-neue.txt`). The lettering of a comic's translated pictures.
+
+## Komika Text (Apostrophic Labs License)
+
+<http://www.apostrophiclab.com>, Komika Text Bold by Apostrophic Laboratories: freeware, used as it is (not modified, not sold; the whole license is in
+`fonts/Apostrophic-Labs-License.txt`). `komika-text-bold.ttf`, unchanged. The capitals of a comic's translated speech and thoughts.

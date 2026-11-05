@@ -8,8 +8,7 @@ const same = (a, b) => a && b && a.length === b.length && a.every((x, i) => x ==
 
 (async () => {
   const store = Library.memoryAdapter();
-  let laptop = await Library.open({ adapter: store, deviceName: "Laptop" });
-  await laptop.create();
+  let laptop = await Library.open({ adapter: store });
   for (let i = 0; i < 100; i++) await laptop.api("PUT", "/api/covers/novel" + i, { type: "image/png", bytes: png(i) });
   const c7 = await laptop.cover("novel7");
   assert.ok(c7 && c7.type === "image/png" && same(c7.bytes, png(7)), "a cover, read back");
@@ -17,22 +16,18 @@ const same = (a, b) => a && b && a.length === b.length && a.every((x, i) => x ==
   assert.ok(served && same(served.bytes, png(42)), "and as the API serves it");
 
   // opened again: what is held is each cover's head; the pictures are read when asked for
-  laptop = await Library.open({ adapter: store, deviceName: "Laptop" });
+  laptop = await Library.open({ adapter: store });
   assert.ok(laptop.versions().some(([k]) => k === "cover:novel3"), "the cover is among the records kept");
   const asked = laptop.get("cover:novel3");
   assert.ok(asked instanceof Promise, "its record is read from the adapter, not held");
-  assert.ok(!(laptop.get("devices") instanceof Promise), "(other records are held)");
+  assert.ok(!(laptop.get("novel:x") instanceof Promise), "(other records are held)");
   const whole = await asked;
-  assert.ok(whole && typeof whole.body === "string" && whole.body.length > 1000 && whole.sig, "its whole record, read from the adapter");
+  assert.ok(whole && typeof whole.body === "string" && whole.body.length > 1000, "its whole record, read from the adapter");
   assert.ok(same((await laptop.cover("novel99")).bytes, png(99)), "a cover after opening again");
   assert.strictEqual((await laptop.api("GET", "/api/novels")).novels.length, 0);
 
-  // a device let in gets the covers as records, and can read them
-  const phone = await Library.open({ adapter: Library.memoryAdapter(), deviceName: "Phone" });
-  const ask = phone.joinRequest();
-  laptop.joinAsked(ask);
-  const { keys } = await laptop.allow(ask.id);
-  assert.ok(await phone.receiveKeys(keys));
+  // the other copy gets the covers as records, and can read them
+  const phone = await Library.open({ adapter: Library.memoryAdapter() });
   for (const [k, v] of laptop.versions()) if (phone.wants(k, v)) assert.ok((await phone.receive(await laptop.get(k))).stored, k + " taken");
   assert.ok(same((await phone.cover("novel55")).bytes, png(55)), "the phone reads a cover it was sent");
 
@@ -43,8 +38,7 @@ const same = (a, b) => a && b && a.length === b.length && a.every((x, i) => x ==
   assert.ok(same((await phone.cover("novel55")).bytes, png(255)), "on the phone too");
 
   // an import with covers: written as records, readable after
-  const fresh = await Library.open({ adapter: Library.memoryAdapter(), deviceName: "Desk" });
-  await fresh.create();
+  const fresh = await Library.open({ adapter: Library.memoryAdapter() });
   const exported = await laptop.api("GET", "/api/export");
   const covers = {};
   for (let i = 0; i < 5; i++) covers["novel" + i] = png(i);

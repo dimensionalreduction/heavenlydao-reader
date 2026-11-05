@@ -97,6 +97,6 @@
     }
   }
 
-  // (nothing until this extension is a device of a library, nor with "Library copy" off in its popup: it records nothing then)
-  (typeof browser !== "undefined" ? browser : chrome).storage.local.get(["libraryOn", "libraryCopy"]).then((r) => !!r.libraryOn && r.libraryCopy !== false, () => false).then((on) => on && run()).catch(() => {});
+  // (nothing with "Library copy" off in its popup: it records nothing then)
+  (typeof browser !== "undefined" ? browser : chrome).storage.local.get(["libraryCopy"]).then((r) => r.libraryCopy !== false, () => false).then((on) => on && run()).catch(() => {});
 })();

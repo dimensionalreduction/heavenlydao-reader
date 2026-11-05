@@ -1,40 +1,30 @@
 // Your library, kept in your browser: by the extension, and by the library site's page beside it.
 //
 // The library is library-api.js's state (it answers the /api/... calls from it), split into records: one
-// per glossary's details, per part of a glossary's terms, per novel, cover, chapter list, note, term of yours... Each record is encrypted with
-// the owner key and signed by the device that wrote it, so the devices of the library (the site's page and the extension, over the link
-// between them: p2p-core.js) can pass records to each other and every one can check that a record came, unchanged, from a device of the library.
-//
-// Devices. The device that creates the library is its main device and keeps the root key; the library's id is the root key's public half. The
-// `devices` record, signed with the root key, lists the devices whose records count. A new device asks to join (joinMessage: the extension,
-// through the site's page), the main device lets it in (joinAsked, allow): it lists the device and sends it the owner key, encrypted so only that
-// device can read it (sealed with the device's X25519 key), with the new list of devices beside it.
+// per glossary's details, per part of a glossary's terms, per novel, cover, chapter list, note, term of yours... The site's page and the
+// extension each keep a copy and pass records to each other over the link between them (p2p-core.js), so both hold the same library. There is
+// one library in a browser: a copy that comes to the link with records of its own (the page used before the extension was installed) adds them.
 //
 // A record:
-//   { v: 1, lib, key, ver: [ms, counter, device], by: <device id> | "root", iv, body, sig }
-//   body: the JSON of what the record holds, AES-GCM encrypted with the owner key (base64; iv is its nonce); the devices record's body is
-//   plain JSON; null in both is a deletion. sig: Ed25519, by the device `by` (the root key for `devices`), of the canonical JSON of the rest.
-//   The newest `ver` of a key wins, except the parts of a glossary's terms, which are merged term by term (a term's updatedAt decides).
+//   { v: 2, key, ver: [ms, counter, copy], body }
+//   body: the JSON of what the record holds; null is a deletion. The newest `ver` of a key wins, except the parts of a glossary's terms,
+//   which are merged term by term (a term's updatedAt decides).
 //
-// Library.open({ adapter, deviceName }) -> library; the adapter keeps it: memoryAdapter() (tests) or idbAdapter(name) (the extension, the site).
+// Library.open({ adapter }) -> library; the adapter keeps it: memoryAdapter() (tests) or idbAdapter(name) (the extension, the site).
 //
-// Removing a device (main device only) lists the devices without it and replaces the owner key: every record is written again with the new key
-// (its generation is the record's `kg`), and the new key goes to each remaining device sealed with its X25519 key (an `okey:<device>` record), so
-// the removed device can read nothing written after.
+// (Until 2026-11 a library had an id and keys: its records were encrypted and signed, and the extension joined the page's library to read
+// them. A library kept that way is read once with its keys and written again as plain records: migrate.)
 //
 (function (root) {
   "use strict";
   const LibraryApi = root.LibraryApi || (typeof require === "function" ? require("./library-api.js") : null);
   const webcrypto = (typeof globalThis !== "undefined" && globalThis.crypto && globalThis.crypto.subtle) ? globalThis.crypto : require("node:crypto").webcrypto;
   const subtle = webcrypto.subtle;
-  const enc = new TextEncoder();
   const dec = new TextDecoder();
 
-  const V = 1;
+  const V = 2;
   const MAX_RECORD = 2 * 1024 * 1024; // the body of one record, as sent (a chapter list of 6,700 chapters is 1.2 MB)
   const BUCKETS = 16; // a glossary's terms are kept in this many records, so changing one term rewrites a sixteenth of it
-  const JOIN_TTL = 10 * 60 * 1000; // a request to join is shown this long
-  const LEAVE_TTL = 30 * 24 * 3600 * 1000; // a device that left is taken off the list when its proof comes this long after, at most
   const COVERS_KEPT = 30; // covers' pictures kept in memory (the others are read from their records when asked for)
 
   // ---------- encoding ----------
@@ -49,11 +39,10 @@
     for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
     return out;
   }
-  const b64u = (bytes) => b64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  const unb64u = (s) => unb64(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4));
   const hex = (bytes) => Array.from(bytes, (x) => x.toString(16).padStart(2, "0")).join("");
+  const newId = () => hex(webcrypto.getRandomValues(new Uint8Array(8)));
 
-  // Canonical JSON (sorted keys), so what is signed is the same bytes on every device.
+  // Canonical JSON (sorted keys): two copies of a glossary's part compare equal when they hold the same.
   function stable(v) {
     if (Array.isArray(v)) return "[" + v.map(stable).join(",") + "]";
     if (v && typeof v === "object") {
@@ -62,70 +51,13 @@
     return JSON.stringify(v);
   }
 
-  // ---------- keys ----------
-  const ED = { name: "Ed25519" };
-  const XDH = { name: "X25519" };
-  async function edPair() {
-    const k = await subtle.generateKey(ED, true, ["sign", "verify"]);
-    return { pub: b64u(new Uint8Array(await subtle.exportKey("raw", k.publicKey))), priv: b64(new Uint8Array(await subtle.exportKey("pkcs8", k.privateKey))) };
-  }
-  async function xPair() {
-    const k = await subtle.generateKey(XDH, true, ["deriveBits"]);
-    return { pub: b64u(new Uint8Array(await subtle.exportKey("raw", k.publicKey))), priv: b64(new Uint8Array(await subtle.exportKey("pkcs8", k.privateKey))) };
-  }
-  const keyCache = new Map();
-  function cached(id, make) {
-    if (!keyCache.has(id)) keyCache.set(id, make().catch((e) => { keyCache.delete(id); throw e; }));
-    return keyCache.get(id);
-  }
-  const signKey = (priv) => cached("s" + priv, () => subtle.importKey("pkcs8", unb64(priv), ED, false, ["sign"]));
-  const verifyKey = (pub) => cached("v" + pub, () => subtle.importKey("raw", unb64u(pub), ED, false, ["verify"]));
-  const aesKey = (raw) => cached("a" + raw, () => subtle.importKey("raw", unb64(raw), { name: "AES-GCM" }, false, ["encrypt", "decrypt"]));
-
-  async function sign(priv, data) {
-    return b64(new Uint8Array(await subtle.sign(ED, await signKey(priv), enc.encode(data))));
-  }
-  async function verify(pub, data, sig) {
-    try {
-      return await subtle.verify(ED, await verifyKey(pub), unb64(sig), enc.encode(data));
-    } catch (e) {
-      return false;
-    }
-  }
-  async function seal(key, plain) {
-    const iv = webcrypto.getRandomValues(new Uint8Array(12));
-    return { iv: b64(iv), body: b64(new Uint8Array(await subtle.encrypt({ name: "AES-GCM", iv }, key, enc.encode(plain)))) };
-  }
-  async function unseal(key, iv, body) {
-    return dec.decode(await subtle.decrypt({ name: "AES-GCM", iv: unb64(iv) }, key, unb64(body)));
-  }
-  // An AES key both sides can make from an X25519 pair: mine (private) and theirs (public).
-  async function sharedKey(myPriv, theirPub, info) {
-    const priv = await subtle.importKey("pkcs8", unb64(myPriv), XDH, false, ["deriveBits"]);
-    const pub = await subtle.importKey("raw", unb64u(theirPub), XDH, false, []);
-    const bits = await subtle.deriveBits({ name: "X25519", public: pub }, priv, 256);
-    const hk = await subtle.importKey("raw", bits, "HKDF", false, ["deriveKey"]);
-    return subtle.deriveKey({ name: "HKDF", hash: "SHA-256", salt: new Uint8Array(32), info: enc.encode(info) }, hk, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
-  }
-
-  // Can this browser make and check the library's keys? (Ed25519 and X25519 in WebCrypto: Chrome 137, Firefox 130, Safari 17.)
-  async function supported() {
-    try {
-      await subtle.generateKey(ED, true, ["sign", "verify"]);
-      await subtle.generateKey(XDH, true, ["deriveBits"]);
-      return true;
-    } catch (e) {
-      return false;
-    }
-  }
-
   // ---------- versions ----------
-  // A hybrid logical clock: [ms, counter, device]. Later than every version this device has made or seen, and comparable between devices.
+  // A hybrid logical clock: [ms, counter, copy]. Later than every version this copy has made or seen, and comparable between the two copies.
   const cmpVer = (a, b) => (a[0] - b[0]) || (a[1] - b[1]) || (a[2] < b[2] ? -1 : a[2] > b[2] ? 1 : 0);
   const validVer = (v) => Array.isArray(v) && v.length === 3 && Number.isFinite(v[0]) && v[0] > 0 && Number.isInteger(v[1]) && v[1] >= 0 && typeof v[2] === "string" && v[2].length <= 40;
 
   // ---------- what the state is made of ----------
-  // A glossary term's part: the same for a source word on every device.
+  // A glossary term's part: the same for a source word in both copies.
   function bucketOf(source) {
     let h = 0x811c9dc5;
     for (let i = 0; i < source.length; i++) { h ^= source.charCodeAt(i); h = Math.imul(h, 0x01000193); }
@@ -133,20 +65,11 @@
   }
 
   // The kinds of records, each a part of the state. `one`: a single record; `map`: one record per id in S[field].
-  // (`private` ones are the owner's alone.)
   const MAPS = {
     binding: "bindings", novel: "novels", chapters: "chapterIndex", term: "myTerms", note: "termNotes", "comment-link": "commentLinks",
     rating: "myRatings", watch: "watches"
   };
   const ONES = { "novel-links": "novelLinks", settings: "settings", "wtr-library": "wtrLibrary", "comment-identity": "commentIdentity" };
-  // Records of the owner's devices that are not part of the API's state: each device's X25519 key (`dh:<device>`, written by that device) and
-  // the owner key sealed for one device after another was removed (`okey:<device>`, written by the main device). Neither is encrypted with
-  // the owner key: dh is public, okey is sealed for its device. (A library from before has the records of sharing too: share, profile, sharing,
-  // sbook:<book id>, layer:<book id>, edition:<book id>. They are kept and pass between the devices as they are; nothing makes or reads them now.)
-  const OWNER_ONES = new Set(["share", "profile", "sharing"]);
-  const OWNER_MAPS = new Set(["sbook", "dh", "okey", "layer", "edition"]);
-  const PLAIN = new Set(["devices", "dh", "okey"]);
-  const PRIVATE = new Set(["rating", "watch", "notice", "settings", "wtr-library", "comment-identity", "share", "sharing", "sbook", "dh", "okey", "layer", "edition"]);
   const CHANGE_TO_PREFIX = { binding: "binding", novel: "novel", chapterIndex: "chapters", myTerm: "term", note: "note", commentLink: "comment-link", rating: "rating", watch: "watch" };
   const CHANGE_TO_ONE = { novelLinks: "novel-links", settings: "settings", wtrLibrary: "wtr-library", commentIdentity: "comment-identity" };
 
@@ -154,17 +77,13 @@
     const i = key.indexOf(":");
     return i < 0 ? [key, ""] : [key.slice(0, i), key.slice(i + 1)];
   };
-  const isPrivate = (key) => PRIVATE.has(splitKey(key)[0]);
   // Is this the key of a part of the state? (gterms:<glossary id>:<0 to 15>, novel:<id>, settings...)
   function knownKey(key) {
     const [kind, id] = splitKey(key);
     if (kind === "gterms") return /^.+:(\d|1[0-5])$/.test(id);
-    if (kind === "glossary" || kind === "cover" || kind === "notice" || MAPS[kind] || OWNER_MAPS.has(kind)) return id.length > 0;
-    return (!!ONES[kind] || OWNER_ONES.has(kind)) && id === "";
+    if (kind === "glossary" || kind === "cover" || kind === "notice" || MAPS[kind]) return id.length > 0;
+    return !!ONES[kind] && id === "";
   }
-
-  // What a record's signature covers: everything but the signature. (kg, the owner key's generation, only on records written after a removal.)
-  const signedPart = (r) => stable({ v: r.v, lib: r.lib, key: r.key, ver: r.ver, by: r.by, iv: r.iv, body: r.body, kg: r.kg });
 
   // ---------- adapters ----------
   function memoryAdapter() {
@@ -173,13 +92,14 @@
     return {
       async load() { return { meta, records: [...records.values()] }; },
       async putRecords(list) { for (const r of list) records.set(r.key, r); },
+      async deleteRecords(keys) { for (const k of keys) records.delete(k); },
       async getRecord(key) { return records.get(key) || null; },
       async setMeta(m) { meta = JSON.parse(JSON.stringify(m)); },
       async clear() { records.clear(); meta = null; }
     };
   }
 
-  // IndexedDB: "records" by key, "meta" holds this device's keys and the library it is in.
+  // IndexedDB: "records" by key, "meta" holds this copy's id and clock.
   function idbAdapter(name) {
     let dbp = null;
     const db = () => dbp || (dbp = new Promise((resolve, reject) => {
@@ -205,29 +125,59 @@
         return { meta: meta || null, records: records || [] };
       },
       putRecords: (list) => tx(["records"], "readwrite", (t) => { const st = t.objectStore("records"); for (const r of list) st.put(r, r.key); }),
+      deleteRecords: (keys) => tx(["records"], "readwrite", (t) => { const st = t.objectStore("records"); for (const k of keys) st.delete(k); }),
       getRecord: (key) => tx(["records"], "readonly", (t) => t.objectStore("records").get(key)).then((r) => r || null),
       setMeta: (m) => tx(["meta"], "readwrite", (t) => t.objectStore("meta").put(m, "meta")),
       clear: () => tx(["records", "meta"], "readwrite", (t) => { t.objectStore("records").clear(); t.objectStore("meta").clear(); })
     };
   }
 
+  // ---------- a library kept before 2026-11 ----------
+  // Its records are read with the keys this copy had (the owner key of each generation) and written again as plain ones, with their versions,
+  // so the page's copy and the extension's, which held the same library, still agree. What cannot be read (a copy that asked to join and was
+  // never let in) and the records of devices, keys and sharing go.
+  async function migrate(saved, adapter) {
+    const old = saved.meta;
+    const keys = old.keys || (old.ownerKey ? { 0: old.ownerKey } : {});
+    const aes = {};
+    const keyOf = (gen) => aes[gen] || (aes[gen] = subtle.importKey("raw", unb64(keys[gen]), { name: "AES-GCM" }, false, ["decrypt"]));
+    const kept = [];
+    const gone = [];
+    for (const r of saved.records) {
+      if (r && r.v === V) { kept.push(r); continue; } // (written again already: a migration stopped part way)
+      if (r && typeof r.key === "string") gone.push(r.key);
+      if (!old.libId || !r || typeof r.key !== "string" || !knownKey(r.key) || !validVer(r.ver)) continue;
+      let body = null;
+      if (r.body !== null) {
+        if (!keys[r.kg || 0] || typeof r.iv !== "string" || typeof r.body !== "string") continue;
+        try {
+          body = dec.decode(await subtle.decrypt({ name: "AES-GCM", iv: unb64(r.iv) }, await keyOf(r.kg || 0), unb64(r.body)));
+        } catch (e) {
+          continue;
+        }
+      }
+      kept.push({ v: V, key: r.key, ver: r.ver, body });
+    }
+    const meta = { id: (old.device && old.device.id) || newId(), hlc: Array.isArray(old.hlc) ? old.hlc : [0, 0] };
+    const keptKeys = new Set(kept.map((r) => r.key));
+    await adapter.putRecords(kept);
+    await adapter.deleteRecords(gone.filter((k) => !keptKeys.has(k)));
+    await adapter.setMeta(meta);
+    return { meta, records: kept };
+  }
+
   // ---------- the library ----------
-  async function open({ adapter, deviceName }) {
-    const saved = await adapter.load();
+  async function open({ adapter }) {
+    let saved = await adapter.load();
+    if (saved.meta && !saved.meta.id) saved = await migrate(saved, adapter);
     let meta = saved.meta;
-    if (!meta || !meta.device) {
-      // This device's own keys, made once: it signs with one, and receives the owner key on the other.
-      const sig = await edPair();
-      const dh = await xPair();
-      meta = { device: { id: hex(webcrypto.getRandomValues(new Uint8Array(8))), name: String(deviceName || "Device").slice(0, 60), pub: sig.pub, priv: sig.priv, dhPub: dh.pub, dhPriv: dh.priv }, hlc: [0, 0] };
+    if (!meta) {
+      meta = { id: newId(), hlc: [0, 0] }; // this copy's id: the last part of the versions it makes
       await adapter.setMeta(meta);
     }
-    const me = meta.device;
 
     const records = new Map(); // key -> the record as it travels
     let S = LibraryApi.normalizeState({});
-    const extra = { share: null, profile: null, sharing: null, sbook: {}, dh: {}, okey: {}, layer: {}, edition: {} }; // the owner's records outside the API's state (OWNER_ONES, OWNER_MAPS)
-    if (meta.ownerKey && !meta.keys) { meta.keys = { 0: meta.ownerKey }; meta.gen = 0; } // (a library from before keys had generations)
     // Covers are not all held here: a cover record is kept by its head alone (`lazy`: the whole of it is in the adapter, read when it is sent),
     // and a cover's picture is read and opened when it is asked for (the last COVERS_KEPT of them are kept). pendingCovers: pictures being
     // written (the API saved one, an import), until their records are made.
@@ -241,7 +191,7 @@
     const isLazy = (key) => key.startsWith("cover:");
     // a record, kept: a cover's by its head alone
     function keep(r) {
-      if (isLazy(r.key) && r.body !== null) records.set(r.key, { v: r.v, lib: r.lib, key: r.key, ver: r.ver, by: r.by, kg: r.kg, body: "", lazy: true });
+      if (isLazy(r.key) && r.body !== null) records.set(r.key, { v: r.v, key: r.key, ver: r.ver, body: "", lazy: true });
       else records.set(r.key, r);
     }
     async function wholeRecord(key) {
@@ -256,7 +206,7 @@
       const r = await wholeRecord("cover:" + id);
       if (!r || r.body === null) return null;
       try {
-        const body = await bodyOfRecord(r);
+        const body = bodyOfRecord(r);
         if (!body || typeof body.data !== "string") return null;
         const bytes = unb64(body.data);
         keepCover(id, bytes);
@@ -265,10 +215,6 @@
         return null;
       }
     }
-    let devices = []; // [{ id, pub, name, added, main }]
-    let ownerAes = null;
-    const joins = new Map(); // device id -> a request to join, on the main device
-    const asking = new Map(); // (a device that is not the main one) who asks to join, as they pass: id -> { id, name, seenAt }
     const listeners = { records: new Set(), change: new Set() };
     let changes = 0; // (how many changes so far: what is made from the library can be kept until the next)
     const emit = (what, x) => { if (what === "change") changes++; for (const fn of listeners[what]) { try { fn(x); } catch (e) { /* a listener's own trouble */ } } };
@@ -277,7 +223,7 @@
     function tick() {
       const ms = Math.max(Date.now(), meta.hlc[0]);
       meta.hlc = [ms, ms === meta.hlc[0] ? meta.hlc[1] + 1 : 0];
-      return [meta.hlc[0], meta.hlc[1], me.id];
+      return [meta.hlc[0], meta.hlc[1], meta.id];
     }
     function seen(ver) {
       if (cmpVer([ver[0], ver[1], ""], [meta.hlc[0], meta.hlc[1], ""]) > 0 && ver[0] < Date.now() + 24 * 3600 * 1000) meta.hlc = [ver[0], ver[1]];
@@ -308,8 +254,6 @@
         return m && bytes ? Object.assign({}, m, { data: b64(bytes) }) : null;
       }
       if (kind === "notice") return S.notices.find((n) => n.id === id) || null;
-      if (OWNER_ONES.has(kind) && !id) return extra[kind];
-      if (OWNER_MAPS.has(kind)) return extra[kind][id] === undefined ? null : extra[kind][id];
       if (MAPS[kind]) {
         const v = S[MAPS[kind]][id];
         if (v === undefined) return null;
@@ -352,12 +296,6 @@
         if (body) { S.notices.push(body); S.notices.sort((a, b) => b.at - a.at); }
         return;
       }
-      if (OWNER_ONES.has(kind) && !id) { extra[kind] = body; return; }
-      if (OWNER_MAPS.has(kind)) {
-        if (body === null) delete extra[kind][id];
-        else extra[kind][id] = body;
-        return;
-      }
       if (MAPS[kind]) {
         const map = S[MAPS[kind]];
         if (body === null) delete map[id];
@@ -370,128 +308,43 @@
       }
     }
 
-    // Merges an arriving part of a glossary's terms with this device's: per term, the later change wins (a deleted term stays deleted until
-    // changed again), so two devices changing different terms both keep what they did.
+    // Merges an arriving part of a glossary's terms with this copy's: per term, the later change wins (a deleted term stays deleted until
+    // changed again), so the page and the extension changing different terms both keep what they did. Changed in the same millisecond, the
+    // arriving one wins: its record is the later one.
     function mergeTerms(mine, theirs) {
       const out = {};
       const later = (a, b) => {
         if (!a) return b;
         if (!b) return a;
-        if ((a.updatedAt || 0) !== (b.updatedAt || 0)) return (a.updatedAt || 0) > (b.updatedAt || 0) ? a : b;
-        return stable(a) >= stable(b) ? a : b;
+        return (a.updatedAt || 0) > (b.updatedAt || 0) ? a : b;
       };
       for (const s of new Set([...Object.keys(mine), ...Object.keys(theirs)])) out[s] = later(mine[s], theirs[s]);
       return out;
     }
 
     // ----- making and checking records -----
-    async function makeRecord(key, body) {
-      const r = { v: V, lib: meta.libId, key, ver: tick(), by: me.id, iv: null, body: null };
-      if (body !== null && PLAIN.has(splitKey(key)[0])) r.body = JSON.stringify(body);
-      else if (body !== null) {
-        Object.assign(r, await seal(ownerAes, JSON.stringify(body)));
-        if (meta.gen) r.kg = meta.gen;
-      }
-      r.sig = await sign(me.priv, signedPart(r));
-      return r;
-    }
+    const makeRecord = (key, body) => ({ v: V, key, ver: tick(), body: body === null ? null : JSON.stringify(body) });
+    // What a record holds (null: deleted). Throws when it is not JSON.
+    const bodyOfRecord = (r) => (r.body === null ? null : JSON.parse(r.body));
 
-    // What a record holds (null: deleted). Throws when it cannot be read; "key not known yet" when it was written with an owner key this
-    // device has not got yet (the sealed one is on its way).
-    async function bodyOfRecord(r) {
-      if (r.body === null) return null;
-      if (PLAIN.has(splitKey(r.key)[0])) return JSON.parse(r.body);
-      const k = meta.keys && meta.keys[r.kg || 0];
-      if (!k) throw new Error("key not known yet");
-      return JSON.parse(await unseal(await aesKey(k), r.iv, r.body));
-    }
-
-    // The owner key sealed for this device (after a device was removed): kept, and used for writing from now on when it is the newest.
-    async function takeOwnerKey(body) {
-      if (!body || !Number.isInteger(body.gen)) return false;
-      try {
-        const key = await sharedKey(me.dhPriv, body.epk, "p2p-read owner key " + me.id + " " + body.gen);
-        const raw = JSON.parse(await unseal(key, body.iv, body.ct));
-        if (typeof raw.key !== "string") return false;
-        meta.keys = Object.assign({}, meta.keys, { [body.gen]: raw.key });
-        if (body.gen > (meta.gen || 0)) { meta.gen = body.gen; meta.ownerKey = raw.key; ownerAes = await aesKey(raw.key); }
-        return true;
-      } catch (e) {
-        return false;
-      }
-    }
-
-    async function makeDevices(list) {
-      const r = { v: V, lib: meta.libId, key: "devices", ver: tick(), by: "root", iv: null, body: JSON.stringify(list) };
-      r.sig = await sign(meta.root.priv, signedPart(r));
-      return r;
-    }
-
-    // Is this record what a device of the library signed, and something this device can keep? (Not yet: whether it is newer.)
-    async function check(r) {
-      if (!r || typeof r !== "object" || r.v !== V || r.lib !== meta.libId || typeof r.key !== "string" || r.key.length > 600 || !validVer(r.ver)) return "malformed";
+    // Is this a record of the library this copy can keep? (Not yet: whether it is newer.)
+    function check(r) {
+      if (!r || typeof r !== "object" || r.v !== V || typeof r.key !== "string" || r.key.length > 600 || !validVer(r.ver)) return "malformed";
       if (r.body !== null && (typeof r.body !== "string" || r.body.length > MAX_RECORD * 1.4)) return "too big";
-      if (r.key === "devices") {
-        if (r.by !== "root" || typeof r.body !== "string") return "malformed";
-        return (await verify(meta.libId, signedPart(r), r.sig)) ? "" : "bad signature";
-      }
-      if (!knownKey(r.key)) return "unknown kind";
-      const dev = devices.find((d) => d.id === r.by);
-      if (!dev) return "not a device of this library";
-      const [kind, id] = splitKey(r.key);
-      if (PLAIN.has(kind) ? r.iv !== null : r.body !== null && typeof r.iv !== "string") return "malformed";
-      if (kind === "dh" && id !== r.by) return "a device's key is written by that device";
-      if (kind === "okey" && !dev.main) return "owner keys are sent by the main device";
-      return (await verify(dev.pub, signedPart(r), r.sig)) ? "" : "bad signature";
-    }
-
-    function setDevices(r) {
-      try {
-        const list = JSON.parse(r.body);
-        devices = Array.isArray(list) ? list.filter((d) => d && typeof d.id === "string" && typeof d.pub === "string").slice(0, 50) : [];
-      } catch (e) {
-        devices = [];
-      }
-      if (devices.some((d) => d.id === me.id)) meta.wasListed = true;
-    }
-    const listed = () => !!ownerAes && devices.some((d) => d.id === me.id);
-    // A list of devices kept as the one in use (checked and newer: receive, takeDevices).
-    async function keepDevices(r) {
-      records.set("devices", r);
-      setDevices(r);
-      await adapter.putRecords([r]);
-      await adapter.setMeta(meta);
-    }
-    // The list that came with the keys (receiveKeys): kept when it is a real list of this library, newer than the one here.
-    async function takeDevices(r) {
-      if (await check(r)) return false;
-      if (r.key !== "devices") return false;
-      const cur = records.get("devices");
-      if (cur && cmpVer(cur.ver, r.ver) >= 0) return false;
-      seen(r.ver);
-      await keepDevices(r);
-      await ensureDh();
-      return true;
+      return knownKey(r.key) ? "" : "unknown kind";
     }
 
     // ----- loading -----
-    if (meta.libId) {
-      const all = saved.records;
-      const dev = all.find((r) => r.key === "devices");
-      if (dev) { records.set("devices", dev); setDevices(dev); }
-      if (meta.ownerKey) {
-        ownerAes = await aesKey(meta.keys[meta.gen || 0]);
-        // (each part of a glossary goes in after the glossary itself, so its details are there)
-        all.sort((a, b) => (a.key.startsWith("gterms:") ? 1 : 0) - (b.key.startsWith("gterms:") ? 1 : 0));
-        for (const r of all) {
-          if (r.key === "devices") continue;
-          if (!knownKey(r.key)) continue; // (pull requests, from before they were taken out: not kept)
+    {
+      // (each part of a glossary goes in after the glossary itself, so its details are there)
+      const all = saved.records.slice().sort((a, b) => (a.key.startsWith("gterms:") ? 1 : 0) - (b.key.startsWith("gterms:") ? 1 : 0));
+      for (const r of all) {
+        if (check(r)) continue;
+        try {
+          applyBody(r.key, bodyOfRecord(r));
           keep(r);
-          try {
-            applyBody(r.key, await bodyOfRecord(r));
-          } catch (e) {
-            records.delete(r.key); // (a record this device cannot read: it is asked for again)
-          }
+        } catch (e) {
+          /* (a record that cannot be read: the other copy is asked for it again) */
         }
       }
     }
@@ -513,7 +366,7 @@
         if (body === undefined) continue;
         const cur = records.get(key);
         if (body === null && (!cur || cur.body === null)) continue; // gone, and already said so (or never was)
-        out.push(await makeRecord(key, body));
+        out.push(makeRecord(key, body));
       }
       if (out.length) {
         await adapter.putRecords(out);
@@ -535,13 +388,6 @@
       return [];
     }
 
-    // Each listed device says its X25519 key once (dh:<device>), so the main device can send it a new owner key after removing another.
-    async function ensureDh() {
-      if (!listed() || extra.dh[me.id]) return [];
-      extra.dh[me.id] = { dh: me.dhPub };
-      return publish(["dh:" + me.id]);
-    }
-
     // The API works on S; an import replaces S, so the API is made again then.
     let pending = [];
     let handler = null;
@@ -554,204 +400,12 @@
     };
     rebuild();
 
-    // What this device holds of a library goes (abandon, leave): its keys stay, and `keep` is the rest of the new meta.
-    async function forget(keep) {
-      await adapter.clear();
-      meta = Object.assign({ device: me, hlc: meta.hlc }, keep);
-      await adapter.setMeta(meta);
-      records.clear();
-      devices = [];
-      ownerAes = null;
-      S = LibraryApi.normalizeState({});
-      for (const k of Object.keys(extra)) extra[k] = k === "share" || k === "profile" || k === "sharing" ? null : {};
-      coverCache.clear();
-      pendingCovers.clear();
-      joins.clear();
-      asking.clear();
-      pending = [];
-      rebuild();
-      emit("change", { status: true });
-    }
-
     const lib = {
       on(what, fn) { listeners[what].add(fn); return () => listeners[what].delete(fn); },
 
-      // none: in no library · joining: asked, or let in and waiting for the list of devices to say so · member · removed: taken off the list
-      status() {
-        const listed = devices.some((d) => d.id === me.id);
-        let state = "none";
-        if (meta.libId && ownerAes) state = listed ? "member" : meta.wasListed ? "removed" : "joining";
-        else if (meta.joinAsked) state = "joining";
-        const now = Date.now();
-        return {
-          state, libId: meta.libId || "", code: meta.libId ? codeOf(meta.libId) : "",
-          device: { id: me.id, name: me.name }, main: !!meta.root,
-          devices: devices.map((d) => ({ id: d.id, name: d.name, added: d.added, main: !!d.main, me: d.id === me.id })),
-          refused: meta.root ? (meta.refused || []).map((id) => ({ id, name: (meta.refusedNames && meta.refusedNames[id]) || "Device" })) : [],
-          joins: [...joins.values()].filter((j) => now - j.seenAt < JOIN_TTL).map((j) => ({ id: j.id, name: j.name, at: j.at })),
-          asking: meta.root ? [] : [...asking.values()].filter((j) => now - j.seenAt < JOIN_TTL && !devices.some((d) => d.id === j.id)).map((j) => ({ id: j.id, name: j.name }))
-        };
-      },
-
-      // A new library, with this device as its main device.
-      create: () => serial(async () => {
-        if (meta.libId) throw new Error("this device is already in a library");
-        const rootKey = await edPair();
-        meta.libId = rootKey.pub;
-        meta.root = { priv: rootKey.priv };
-        meta.ownerKey = b64(webcrypto.getRandomValues(new Uint8Array(32)));
-        ownerAes = await aesKey(meta.ownerKey);
-        meta.keys = { 0: meta.ownerKey };
-        meta.gen = 0;
-        const list = [{ id: me.id, pub: me.pub, name: me.name, added: Date.now(), main: true, dh: me.dhPub }];
-        const r = await makeDevices(list);
-        records.set("devices", r);
-        setDevices(r);
-        await adapter.putRecords([r]);
-        await adapter.setMeta(meta);
-        emit("records", [r]);
-        await ensureDh();
-        emit("change", { status: true });
-        return lib.status();
-      }),
-
-      // Drops a library to join yours instead: one no other device is in (one a page started by itself on a first visit), or one this device was
-      // taken off (its list no longer has it, so it can only ask again). What it holds goes, this device's own keys stay, and it asks to join.
-      abandon: () => serial(async () => {
-        if (listed() && devices.some((d) => d.id !== me.id)) throw new Error("other devices are in this library: remove them first");
-        await forget({ joinAsked: Date.now() });
-      }),
-
-      // Leaves the library: what this device holds of it goes, and it is a new device from then on (new keys, so it can ask to join any library,
-      // this one again too; the list may still have the old one until the main device takes it off: leaveProof). Not the main device while
-      // others are in it: none would be left to let devices in.
-      leave: () => serial(async () => {
-        if (meta.root && devices.some((d) => d.id !== me.id)) throw new Error("this is your library's main device: it can't leave while your other devices are in it");
-        const sig = await edPair();
-        const dh = await xPair();
-        Object.assign(me, { id: hex(webcrypto.getRandomValues(new Uint8Array(8))), pub: sig.pub, priv: sig.priv, dhPub: dh.pub, dhPriv: dh.priv });
-        await forget({});
-      }),
-      // What a device leaving signs, for the main device to take it off the list (removeLeaving): made before it leaves.
-      leaveProof: async () => {
-        if (!listed()) return null;
-        const at = Date.now();
-        return { t: "lx", lib: meta.libId, id: me.id, at, sig: await sign(me.priv, leaveText(meta.libId, me.id, at)) };
-      },
-      // On the main device: a device of the library that left (its leaveProof) is removed, as Remove does (a new owner key, the same link).
-      removeLeaving: async (p) => {
-        if (!meta.root || !p || p.lib !== meta.libId || typeof p.id !== "string" || p.id === me.id || !Number.isFinite(p.at) || typeof p.sig !== "string") return false;
-        if (Date.now() - p.at > LEAVE_TTL || !devices.some((d) => d.id === p.id)) return false;
-        if (!(await lib.peerCheck(p.id, leaveText(p.lib, p.id, p.at), p.sig))) return false;
-        await lib.removeDevice(p.id, {});
-        return true;
-      },
-
-      // A connection's proof that this is a device of the library (p2p-core.js, "pf"): what it signs is made by the room, from both ends'
-      // keys for that connection. null when this device is in no library (whether it is listed is for the other end to see: a device just let
-      // in has not had the list yet).
-      peerProof: async (data) => (meta.libId && ownerAes ? { d: me.id, s: await sign(me.priv, data) } : null),
-      // Did a device listed in this library sign `data`?
-      peerCheck: async (id, data, sig) => {
-        const d = typeof id === "string" && typeof sig === "string" && devices.find((x) => x.id === id);
-        return !!d && verify(d.pub, data, sig);
-      },
-
-      // What this device sends to ask to join the library of the devices it meets.
-      joinRequest() {
-        if (!meta.joinAsked) { meta.joinAsked = Date.now(); adapter.setMeta(meta).catch(() => {}); }
-        return lib.joinMessage();
-      },
-      // The same, without asking the devices it meets (the library site's tab in the same browser lets it in at once: library-host.js).
-      joinMessage: () => ({ t: "jn", id: me.id, name: me.name, pub: me.pub, dh: me.dhPub, at: meta.joinAsked || Date.now() }),
-      cancelJoin: () => serial(async () => { delete meta.joinAsked; await adapter.setMeta(meta); emit("change", { status: true }); }),
-
-      // A request to join, arriving at a device of the library. Only the main device can answer it, so only it keeps it. Another device of the
-      // library notes who asks (status().asking), to say so (its notifications: the main device is where it is answered), and passes it on.
-      joinAsked(msg) {
-        if (!meta.root && msg && typeof msg.id === "string" && /^[0-9a-f]{16}$/.test(msg.id) && meta.libId && ownerAes && !devices.some((d) => d.id === msg.id)) {
-          const fresh = !asking.has(msg.id);
-          asking.set(msg.id, { id: msg.id, name: String(msg.name || "Device").slice(0, 60), seenAt: Date.now() });
-          if (asking.size > 50) asking.delete(asking.keys().next().value);
-          if (fresh) emit("change", { status: true });
-          return false;
-        }
-        if (!meta.root || !msg || typeof msg.id !== "string" || !/^[0-9a-f]{16}$/.test(msg.id) || typeof msg.pub !== "string" || typeof msg.dh !== "string") return false;
-        if (devices.some((d) => d.id === msg.id) || meta.refused && meta.refused.includes(msg.id)) return false;
-        const fresh = !joins.has(msg.id);
-        joins.set(msg.id, { id: msg.id, name: String(msg.name || "Device").slice(0, 60), pub: msg.pub.slice(0, 100), dh: msg.dh.slice(0, 100), at: Number(msg.at) || Date.now(), seenAt: Date.now() });
-        if (fresh) emit("change", { status: true });
-        return true;
-      },
-
-      // Allow a device that asked: list it, and give it the owner key, sealed for that device only.
-      allow: (id) => serial(async () => {
-        if (!meta.root) throw new Error("only the main device can add devices");
-        const j = joins.get(id);
-        if (!j) throw new Error("that device is no longer asking");
-        joins.delete(id);
-        const list = devices.filter((d) => d.id !== id).concat([{ id: j.id, pub: j.pub, name: j.name, added: Date.now(), main: false, dh: j.dh }]);
-        const r = await makeDevices(list);
-        records.set("devices", r);
-        setDevices(r);
-        await adapter.putRecords([r]);
-        await adapter.setMeta(meta);
-        const eph = await xPair();
-        const key = await sharedKey(eph.priv, j.dh, "p2p-read join " + j.id);
-        const sealed = await seal(key, JSON.stringify({ lib: meta.libId, ownerKey: meta.ownerKey, keys: meta.keys, gen: meta.gen || 0 }));
-        emit("records", [r]);
-        emit("change", { status: true });
-        // dv: the list that has it, so it is a device of the library as the keys come, whichever devices pass them on (one in no library
-        // passes them, but has no list to send)
-        return { keys: { t: "jk", to: j.id, epk: eph.pub, iv: sealed.iv, ct: sealed.body, dv: r }, records: [r] };
-      }),
-
-      // Not this device: it is kept on the refused list (status().refused, with the name it asked with), so its asking is not shown again,
-      // until unrefuse takes it off.
-      refuse: (id) => serial(async () => {
-        const j = joins.get(id);
-        joins.delete(id);
-        meta.refused = (meta.refused || []).filter((x) => x !== id).concat(id).slice(-50);
-        meta.refusedNames = Object.assign({}, meta.refusedNames, { [id]: (j && j.name) || (meta.refusedNames && meta.refusedNames[id]) || "Device" });
-        for (const k of Object.keys(meta.refusedNames)) if (!meta.refused.includes(k)) delete meta.refusedNames[k];
-        await adapter.setMeta(meta);
-        emit("change", { status: true });
-      }),
-      // Take a device off the refused list: when it asks again (a device asks whenever it meets the main device), it is shown, to be allowed.
-      unrefuse: (id) => serial(async () => {
-        meta.refused = (meta.refused || []).filter((x) => x !== id);
-        if (meta.refusedNames) delete meta.refusedNames[id];
-        await adapter.setMeta(meta);
-        emit("change", { status: true });
-      }),
-
-      // The owner key, sent by the main device after Allow. Opens only with this device's own X25519 key.
-      receiveKeys: (msg) => serial(async () => {
-        if (!msg || msg.t !== "jk" || msg.to !== me.id || meta.ownerKey) return false;
-        let got;
-        try {
-          const key = await sharedKey(me.dhPriv, msg.epk, "p2p-read join " + me.id);
-          got = JSON.parse(await unseal(key, msg.iv, msg.ct));
-        } catch (e) {
-          return false;
-        }
-        if (!got || typeof got.lib !== "string" || typeof got.ownerKey !== "string") return false;
-        meta.libId = got.lib;
-        meta.ownerKey = got.ownerKey;
-        meta.keys = got.keys && typeof got.keys === "object" ? got.keys : { 0: got.ownerKey };
-        meta.gen = Number.isInteger(got.gen) ? got.gen : 0;
-        delete meta.joinAsked;
-        ownerAes = await aesKey(meta.ownerKey);
-        await adapter.setMeta(meta);
-        if (msg.dv) await takeDevices(msg.dv).catch(() => false); // (from a main device of before: the list comes from the devices met)
-        emit("change", { status: true });
-        return true;
-      }),
-
       // One /api/... call, answered from the library (library-api.js). What it changes is written as records and
-      // handed to the "records" listeners, to be sent to the other devices.
+      // handed to the "records" listeners, to be sent to the other copy.
       api: (method, path, body) => serial(async () => {
-        if (!listed()) throw Object.assign(new Error(meta.wasListed ? "this device was removed from the library" : "this device is not in a library yet"), { status: 503 });
         pending = [];
         let out;
         try {
@@ -764,29 +418,20 @@
         return out;
       }),
 
-      // A record from another device. Kept when it is a real record of this library and newer than the one kept; a part of a glossary that
-      // this device has newer terms for is merged and written again (returned in `out`, to be sent on).
+      // A record from the other copy. Kept when it is a record of the library and newer than the one kept; a part of a glossary that this
+      // copy has newer terms for is merged and written again (returned in `out`, to be sent back).
       receive: (r) => serial(async () => {
-        if (!meta.libId) return { stored: false, why: "not in a library" };
-        const why = await check(r);
+        const why = check(r);
         if (why) return { stored: false, why };
         const cur = records.get(r.key);
         if (cur && cmpVer(cur.ver, r.ver) >= 0) return { stored: false, why: "not newer" };
-        seen(r.ver);
-        if (r.key === "devices") {
-          await keepDevices(r);
-          const out = await ensureDh();
-          emit("change", { status: true });
-          return { stored: true, out };
-        }
-        if (!ownerAes) return { stored: false, why: "no owner key yet" };
         let body;
         try {
-          body = await bodyOfRecord(r);
+          body = bodyOfRecord(r);
         } catch (e) {
-          return { stored: false, why: e.message === "key not known yet" ? e.message : "cannot be read" };
+          return { stored: false, why: "cannot be read" };
         }
-        if (r.key === "okey:" + me.id && body) await takeOwnerKey(body);
+        seen(r.ver);
         let out = [];
         if (r.key.startsWith("gterms:") && cur && cur.body !== null) {
           const mine = bodyOf(r.key) || { terms: {} };
@@ -846,55 +491,8 @@
         const bytes = m ? await coverBytesOf(id) : null;
         return m && bytes ? { type: m.type, bytes, at: m.at } : null;
       },
-      // ----- removing a device (main device only) -----
-      // The list of devices without it; a new owner key, sealed for each remaining device; every record written again with it. Answers which
-      // devices could not be sent the new key (from before devices said theirs).
-      removeDevice: (id) => serial(async () => {
-        if (!meta.root) throw new Error("only the main device can remove devices");
-        if (id === me.id) throw new Error("the main device cannot remove itself");
-        if (!devices.some((d) => d.id === id)) throw new Error("no such device");
-        const list = devices.filter((d) => d.id !== id);
-        const dr = await makeDevices(list);
-        records.set("devices", dr);
-        setDevices(dr);
-        await adapter.putRecords([dr]);
-        emit("records", [dr]);
-        const gen = (meta.gen || 0) + 1;
-        const key = b64(webcrypto.getRandomValues(new Uint8Array(32)));
-        meta.keys = Object.assign({}, meta.keys, { [gen]: key });
-        meta.gen = gen;
-        meta.ownerKey = key;
-        ownerAes = await aesKey(key);
-        const missed = [];
-        for (const d of list) {
-          if (d.id === me.id) continue;
-          const dh = (extra.dh[d.id] && extra.dh[d.id].dh) || d.dh;
-          if (!dh) { missed.push(d.name); continue; }
-          const eph = await xPair();
-          const sealed = await seal(await sharedKey(eph.priv, dh, "p2p-read owner key " + d.id + " " + gen), JSON.stringify({ key }));
-          extra.okey[d.id] = { gen, epk: eph.pub, iv: sealed.iv, ct: sealed.body };
-        }
-        delete extra.okey[id];
-        delete extra.dh[id];
-        // everything again: the owner keys first, so a device can read what follows
-        const keys = [...records.keys()].filter((k) => k !== "devices");
-        keys.sort((a, b) => (b.startsWith("okey:") ? 1 : 0) - (a.startsWith("okey:") ? 1 : 0));
-        for (const d of list) if (extra.okey[d.id] && !keys.includes("okey:" + d.id)) keys.unshift("okey:" + d.id);
-        const rewritten = [];
-        for (const k of keys) {
-          const body = await bodyFor(k);
-          if (body === undefined || body === null) continue;
-          rewritten.push(await makeRecord(k, body));
-        }
-        await adapter.putRecords(rewritten);
-        for (const r of rewritten) keep(r);
-        await adapter.setMeta(meta);
-        emit("records", rewritten);
-        emit("change", { status: true });
-        return { removed: id, missed, records: rewritten.length };
-      }),
 
-      // [[key, ver], ...] of every record kept: what another device compares with its own.
+      // [[key, ver], ...] of every record kept: what the other copy compares with its own.
       versions: () => [...records.values()].map((r) => [r.key, r.ver]),
       // (a cover's whole record is read from the adapter: a promise then)
       get: (key) => { const r = records.get(key); return r && r.lazy ? adapter.getRecord(key) : r || null; },
@@ -903,8 +501,7 @@
 
       // A whole state (library-api.js's, as a glossary server once exported it) and its covers ({ id: bytes }), as this library's content, written as records.
       importState: (raw, covers) => serial(async () => {
-        if (!listed()) throw new Error("this device is not in a library yet");
-        const prevKeys = [...records.keys()].filter((k) => k !== "devices" && !OWNER_ONES.has(splitKey(k)[0]) && !OWNER_MAPS.has(splitKey(k)[0]));
+        const prevKeys = [...records.keys()];
         S = LibraryApi.normalizeState(raw);
         coverCache.clear();
         pendingCovers.clear();
@@ -934,7 +531,6 @@
   // What the link between the site's page and the extension needs of a library (p2p-core.js opts.library).
   function roomLink(lib) {
     return {
-      lib: () => lib.status().libId,
       versions: () => lib.versions(),
       wants: (k, v) => lib.wants(k, v),
       wantsMany: (rows) => (Array.isArray(rows) ? rows : []).filter((r) => Array.isArray(r) && lib.wants(r[0], r[1])), // ([[key, ver]] -> the rows worth asking for)
@@ -944,9 +540,9 @@
   }
 
   // Its calls, and what each answers where there is no library to ask.
-  const ROOM_CALLS = Object.freeze({ lib: "", versions: Object.freeze([]), wants: false, wantsMany: Object.freeze([]), get: null, receive: Object.freeze({ stored: false, why: "not in a library" }) });
+  const ROOM_CALLS = Object.freeze({ versions: Object.freeze([]), wants: false, wantsMany: Object.freeze([]), get: null, receive: Object.freeze({ stored: false, why: "no library" }) });
 
-  // The same, for a library still being opened (a promise of it, or of null where the browser cannot make its keys): the link can be made at once.
+  // The same, for a library still being opened (a promise of it, or of null where it could not be opened): the link can be made at once.
   function lazyRoomLink(ready) {
     const out = {};
     for (const name of Object.keys(ROOM_CALLS)) {
@@ -959,18 +555,8 @@
     return out;
   }
 
-  // What a device leaving a library signs (lib.leaveProof, lib.removeLeaving).
-  const leaveText = (libId, id, at) => "p2p-read leave v1|" + libId + "|" + id + "|" + at;
-
-  // A short code to tell libraries apart by eye ("4F2A-91C0"): the start of a hash of the library's id would do, but its own first letters are
-  // as good and need no hashing.
-  function codeOf(libId) {
-    const h = hex(unb64u(libId)).toUpperCase();
-    return h.slice(0, 4) + "-" + h.slice(4, 8);
-  }
-
   const Library = {
-    open, supported, roomLink, lazyRoomLink, ROOM_CALLS, memoryAdapter, idbAdapter, isPrivate, bucketOf, codeOf, cmpVer, stable, BUCKETS
+    open, roomLink, lazyRoomLink, ROOM_CALLS, memoryAdapter, idbAdapter, bucketOf, cmpVer, stable, BUCKETS
   };
   if (typeof module !== "undefined" && module.exports) module.exports = Library;
   else root.Library = Library;

@@ -1,5 +1,5 @@
-// The extension's library (library-host.js) with its client (glossary-server.js), as Firefox's background page runs them: before a library,
-// every call is refused; once there is one, the calls are answered by it. Run: node test/library-host.test.js
+// The extension's library (library-host.js) with its client (glossary-server.js), as Firefox's background page runs them: who may ask it, and
+// the calls answered by it. Run: node test/library-host.test.js
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
@@ -47,26 +47,13 @@ const shared = path.join(__dirname, "..", "src", "shared");
   const askFrom = (url, op, ...args) => new Promise((resolve) => msgFns.forEach((fn) => fn({ target: "lib", op, args }, { tab: { id: 7 }, url }, resolve)));
 
   // ---- who may ask: the extension's own pages (no tab, or its popup opened in a tab), and a tab of the library site; a tab anywhere else is refused ----
-  assert.strictEqual((await askFrom("https://p2p-library.pages.dev/#/settings/library", "status")).result.state, "none", "the site's tab");
-  assert.strictEqual((await askFrom("moz-extension://test-uuid/popup.html", "status")).result.state, "none", "the popup, opened in a tab");
-  assert.strictEqual((await askFrom("moz-extension://another-extension/popup.html", "status")).error, "not the library's site", "another extension's page");
+  assert.strictEqual((await askFrom("https://p2p-library.pages.dev/#/settings", "ping")).result, true, "the site's tab");
+  assert.strictEqual((await askFrom("moz-extension://test-uuid/popup.html", "ping")).result, true, "the popup, opened in a tab");
+  assert.strictEqual((await askFrom("moz-extension://another-extension/popup.html", "ping")).error, "not the library's site", "another extension's page");
   for (const elsewhere of ["http://heavenlydao.com/", "http://localhost:3000/", "http://127.0.0.1:3000/", "https://p2p-library.pages.dev.example.com/", "https://www.69shuba.com/txt/1/1"]) {
-    assert.strictEqual((await askFrom(elsewhere, "status")).error, "not the library's site", "refused: " + elsewhere);
+    assert.strictEqual((await askFrom(elsewhere, "ping")).error, "not the library's site", "refused: " + elsewhere);
   }
   assert.ok(LibraryHost.fromSite({ tab: { id: 1 }, url: "https://heavenlydao.com/#/" }) && !LibraryHost.fromSite({ url: "https://heavenlydao.com/" }), "a tab of the site, not just its address");
-
-  // ---- before a library: every call is refused ----
-  assert.strictEqual((await ask("status")).result.state, "none");
-  await assert.rejects(GlossaryServer.api("GET", "/api/novels"), /not in a library yet/, "nothing is answered before the extension is in a library");
-  assert.ok(!store.libraryOn);
-  assert.match((await ask("schedule")).error, /not in a library yet/, "nor the site's tab's questions");
-  assert.match((await ask("room", "versions")).error, /not in a library yet/);
-
-  // ---- an empty library, with this device as its main device ----
-  const made = await ask("create");
-  assert.ok(!made.error, made.error);
-  assert.deepStrictEqual([made.result.state, made.result.main], ["member", true]);
-  assert.ok(store.libraryOn && store.libraryOn.code === made.result.code, "the extension is told it is in a library");
 
   // ---- the calls are answered by the library ----
   await GlossaryServer.api("POST", "/api/glossaries/" + encodeURIComponent(G) + "/import", { name: "wizard", terms: [["科雷", "Corey"]] });
@@ -140,34 +127,8 @@ const shared = path.join(__dirname, "..", "src", "shared");
   assert.deepStrictEqual([sch.watches.every, typeof sch.now], [60000, "number"], "the schedule");
   // what the network had is not asked any more
   for (const op of ["room", "join", "allow", "share", "put", "follows", "helpDevices"]) assert.match((await ask(op)).error, /unknown library call/, op + " is no call any more");
-
-
-  // ---- leaving (the popup only), and joining another library at once (the popup's Detect: the keys from the library's tab) ----
-  assert.strictEqual((await askFrom("https://heavenlydao.com/#/", "leave")).error, "only the extension's popup does that", "the site's tab can't make it leave");
-  Object.assign(store, { "translation:https://x.example/1": { text: "a chapter", savedAt: 1, translated: true }, "p2pIndex:3": { "translation:https://x.example/1": { savedAt: 1 } },
-    myTerms: [{ id: "t" }], geminiApiKey: "the key" });
-  const left = await ask("leave");
-  assert.ok(!left.error, left.error);
-  assert.strictEqual(left.result.state, "none", "in no library");
-  assert.strictEqual(left.result.proof, null, "(its only device: nobody to tell)");
-  assert.notStrictEqual(left.result.device.id, made.result.device.id, "a new device from then on");
-  assert.strictEqual(JSON.stringify(Object.keys(store).filter((k) => /^translation:|^p2pIndex|^glossary|^myTerms$/.test(k))), "[]", "its chapters and the glossaries' copy are gone");
-  assert.strictEqual(store.geminiApiKey, "the key", "the extension's own settings stay");
-  assert.ok(!store.libraryOn, "the extension is told it is in no library");
-  await assert.rejects(GlossaryServer.api("GET", "/api/novels"), /not in a library yet/);
-  const other = await ctx.Library.open({ adapter: ctx.Library.memoryAdapter(), deviceName: "Library tab" });
-  await other.create();
-  const request = (await askFrom("moz-extension://test-uuid/popup.html", "joinRequest")).result;
-  assert.strictEqual((await ask("status")).result.state, "none", "making the request asks nobody");
-  assert.ok(other.joinAsked(request));
-  const { keys } = await other.allow(request.id);
-  const joined = await ask("receiveKeys", keys);
-  assert.ok(!joined.error, joined.error);
-  assert.strictEqual(joined.result.code, other.status().code, "in the other library");
-  assert.ok(store.libraryOn && store.libraryOn.code === other.status().code);
-  assert.match((await ask("joinRequest")).error, /leave it first/, "not while it is in one");
-  assert.match((await ask("receiveKeys", keys)).error, /not for this extension/);
-
+  // nor what a library with an id and devices had (joining, leaving, its devices)
+  for (const op of ["status", "create", "joinRequest", "receiveKeys", "leave", "removeDevice"]) assert.match((await ask(op)).error, /unknown library call/, op + " is no call any more");
 
   console.log("OK — library host checks passed");
 })().catch((e) => {

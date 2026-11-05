@@ -328,8 +328,8 @@
     const term = el ? String(el.getAttribute("data-hash") || "").trim() : "";
     if (term && term.length <= 200) countTerm(term);
   }
-  // (nothing until this extension is a device of a library, nor with "Library copy" off in its popup: it records nothing then)
-  (typeof browser !== "undefined" ? browser : chrome).storage.local.get(["libraryOn", "libraryCopy"]).then((r) => !!r.libraryOn && r.libraryCopy !== false, () => false).then((on) => {
+  // (nothing with "Library copy" off in its popup: it records nothing then)
+  (typeof browser !== "undefined" ? browser : chrome).storage.local.get(["libraryCopy"]).then((r) => r.libraryCopy !== false, () => false).then((on) => {
     if (!on) return;
     document.addEventListener("click", onPageClick, true); // capture phase: counted even if the page stops the click
     capture();

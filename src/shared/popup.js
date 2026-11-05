@@ -1,8 +1,7 @@
-// The popup once this extension is a device of your library (popup-lock.js shows only Detect library before): a header with the
-// novel and chapter of the page in front of you, and two tabs (docs/ADD-BOOK.md, the design's PopupScreen):
+// The popup: a header with the novel and chapter of the page in front of you, and two tabs (docs/ADD-BOOK.md, the design's PopupScreen):
 //   Novel    a book's page: what was read from it (cover, title, author, chapters, text or pictures), Import to library or Detect with AI; one in your library: Open in
 //            library, Refresh details, Refresh chapters. A chapter's page: Translate and Listen in the page, nothing kept (a comic's: its pictures made again, comic-host.js)
-//   Library  your library: its numbers, leaving it (popup-library.js), the pictures kept
+//   Library  your library: its numbers, the pictures kept
 // Fetching, translating and the notes on terms are done on the library site (its reader and novel pages), and so are the Gemini key, model and prompts
 // (Settings › Translation): the key is handed to this extension by the library's page in this browser (site-bridge.js "access").
 (async function () {
@@ -185,7 +184,7 @@
 
   ext.runtime.sendMessage({ type: "glossary:pull" }).catch(() => {}); // (brought up to date whenever the popup opens)
 
-  // ---------- Library: its numbers (leaving it: popup-library.js) ----------
+  // ---------- Library: its numbers ----------
   {
     const statsEl = $("libStats");
     const row = (k, v) => { const r = document.createElement("div"); r.className = "stat"; r.append(Object.assign(document.createElement("span"), { textContent: k }), Object.assign(document.createElement("b"), { textContent: v })); return r; };
@@ -201,10 +200,8 @@
     let used = null;
     if (ext.storage.local.getBytesInUse) Promise.resolve(ext.storage.local.getBytesInUse(null)).then((n) => { used = n; draw(); }, () => {});
     async function draw() {
-      const st = await lib("status").catch(() => null);
       const p = await Promise.resolve(ext.runtime.sendMessage({ type: "p2p:status" })).catch(() => null);
       const rows = [];
-      if (st && st.devices) rows.push(row("Devices", st.devices.length + (st.main ? " (this one is the main device)" : "")));
       if (novels) rows.push(row("Novels", String(novels.length)));
       if (p) rows.push(row("Chapters here", String(p.indexed || 0) + (p.queued ? " · " + p.queued + " downloading" : "")));
       if (used !== null) rows.push(row("Stored here", size(used)));
@@ -544,7 +541,6 @@
     // who can pay: the keys and the sign-in the library's page in this browser handed over (profile-translate.js keeps them)
     const { profileKeys, playgroundToken, popupPay, listenVoice } = await ext.storage.local.get(["profileKeys", "playgroundToken", "popupPay", "listenVoice"]);
     let voiceIs = listenVoice === "ai" ? "ai" : "browser";
-    const inLibraryNow = !!(await ext.storage.local.get("libraryOn")).libraryOn;
     let savedAs = ""; // (the key it was kept under, once Save to library has done it)
     let saveError = "";
     const keys = profileKeys || {};
@@ -633,8 +629,8 @@
           } else { zip.textContent = "Download zip"; zip.disabled = false; saveError = (r && r.error) || "the extension did not answer"; paint(); }
         };
         acts.append(zip);
-        // Save to library: the pictures and the English kept as a chapter of the library (the extension has to be in one)
-        if (inLibraryNow) {
+        // Save to library: the pictures and the English kept as a chapter of the library
+        {
           const save = mk("button", { textContent: savedAs ? "Saved to library ✓" : "Save to library", disabled: !!savedAs });
           save.onclick = async () => {
             save.disabled = true;

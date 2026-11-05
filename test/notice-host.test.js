@@ -13,9 +13,8 @@ const NoticeHost = require(path.join(__dirname, "..", "src", "shared", "notice-h
   let pageOpen = false; // a page of the site open: notice-bg.js shows nothing
   const show = async (item) => { if (pageOpen) return false; shown.push(item); return true; };
 
-  const st = { state: "member", libId: "L1", main: true, devices: [{ id: "d1", name: "Chrome (extension)" }] };
   let notices = [];
-  const lib = { status: () => st,
+  let lib = {
     api: async (m, p) => (p === "/api/notices" ? { notices } : p === "/api/novels" ? { novels: [{ id: "wtr-lab:5", title: "Watched Novel" }] } : null) };
   // your novels' chapters: { novel: last chapter number }
   let mine = { "My Novel": 10 };
@@ -72,8 +71,8 @@ const NoticeHost = require(path.join(__dirname, "..", "src", "shared", "notice-h
   assert.deepStrictEqual(shown, [], "nothing told again after a restart");
   assert.ok(h.list().length >= 2, "the list shown is kept (the site's bell takes it in)");
 
-  // ---- not in a library: nothing ----
-  st.state = "none";
+  // ---- no library (it could not be opened): nothing ----
+  lib = null;
   mine = { "My Novel": 30, "Uploaded": 300 };
   await h.look("all");
   assert.deepStrictEqual(shown, []);

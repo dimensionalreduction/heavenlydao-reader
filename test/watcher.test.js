@@ -128,16 +128,6 @@ const watch = (over = {}) => ({ id: "wtr-lab:1|wtr-lab.com", novel: "wtr-lab:1",
   assert.strictEqual(saved[0].lastResult, "1 new chapter · not fetched: the extension's page did not answer", "a chapter that could not be asked for is said, and the look still counts");
   assert.strictEqual(saved[0].from, "https://www.uuread.tw/chapter/1/11.html");
 
-  // ---- one extension does the triggers: the library's triggerDevice; with none, or one taken off the library, every one ----
-  const me = (id, others = []) => ({ device: { id }, devices: [{ id }, ...others.map((x) => ({ id: x }))] });
-  assert.strictEqual(W.mayRun({}, me("aa")), true, "none chosen: every extension");
-  assert.strictEqual(W.mayRun({ triggerDevice: { id: "aa" } }, me("aa", ["bb"])), true, "the one chosen");
-  assert.strictEqual(W.mayRun({ triggerDevice: { id: "bb" } }, me("aa", ["bb"])), false, "another one chosen: not this one");
-  assert.strictEqual(W.mayRun({ triggerDevice: { id: "cc" } }, me("aa", ["bb"])), true, "the one chosen is no longer in the library: every one");
-  let looked = 0;
-  const notMine = await W.tick({ ...deps, settings: async () => ({ triggerDevice: { id: "bb" } }), me: async () => me("aa", ["bb"]), listWatches: async () => { looked++; return []; } }, T);
-  assert.deepStrictEqual([notMine.notMine, looked], [true, 0], "an extension that does not do the triggers looks at nothing");
-
   // ---- then: "all": every chapter of the list that is not here, a batch each pass, whether or not the watch is due ----
   const lists = { "wtr-lab:5045": list(644), "key:chapter/9": [[1, "Chapter 1: One", "https://www.uuread.tw/chapter/9/100.html"], [2, "Chapter 2: Two", "https://www.uuread.tw/chapter/9/101.html"]] };
   const asksAll = [];

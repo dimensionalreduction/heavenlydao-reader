@@ -1,6 +1,6 @@
-// The library's records over the sync protocol (p2p-core.js with opts.library, library.js): the library site's tab (the main device) and
-// the extension in its browser, linked directly as site-bridge.js links them. The extension joins at once, as the popup's Detect does (the
-// tab takes its request and lets it in: app.js answerExtension "letIn"), then every record crosses the link both ways.
+// The library's records over the sync protocol (p2p-core.js with opts.library, library.js): the library site's tab and the extension in its
+// browser, linked directly as site-bridge.js links them. Each came with a library of its own (the page used before the extension was
+// installed, the extension used on its own): linked, they hold one library, every record crossing the link both ways.
 // Run: node test/p2p-library.test.js
 const assert = require("assert");
 const path = require("path");
@@ -31,9 +31,9 @@ function chapterAdapter() {
 }
 
 (async () => {
-  // A device: its library, and its side of the sync protocol, telling the other end what its library writes.
+  // One end: its copy of the library, and its side of the sync protocol, telling the other end what its copy writes.
   async function device(name, role) {
-    const lib = await Library.open({ adapter: Library.memoryAdapter(), deviceName: name });
+    const lib = await Library.open({ adapter: Library.memoryAdapter() });
     const core = createP2P({ adapter: chapterAdapter(), log: () => {}, role, library: Library.roomLink(lib) });
     lib.on("records", (rs) => core.announceRecords(rs));
     await core.start();
@@ -49,23 +49,19 @@ function chapterAdapter() {
 
   const tab = await device("Tab", "site");
   const ext = await device("Chrome on Windows (extension)", "extension");
-  await tab.lib.create();
   const G = "wtr-lab:8053";
   const enc = encodeURIComponent(G);
   await tab.lib.api("POST", `/api/glossaries/${enc}/import`, { name: "wizard", terms: [["科雷", "Corey"], ["希恩", "Sheen"]] });
   await tab.lib.api("PUT", "/api/novels/" + enc, { title: "Synthesis Wizard" });
+  await ext.lib.api("PUT", "/api/novels/" + encodeURIComponent("wtr-lab:9"), { title: "Imported in the popup" });
   link(tab, ext);
 
-  // ---- the extension joins at once: the tab takes its request and lets it in; it gets the library over the link ----
-  const asked = await ext.lib.joinMessage();
-  assert.ok(await tab.lib.joinAsked(asked), "the main device takes the request");
-  const { keys } = await tab.lib.allow(asked.id);
-  assert.ok(await ext.lib.receiveKeys(keys), "the keys are the extension's");
-  ext.core.libraryChanged();
-  assert.strictEqual(ext.lib.status().state, "member", "the extension is in the library");
-  await waitFor(async () => (await ext.lib.api("GET", "/api/novels")).novels.length === 1, "the library's records to reach the extension");
+  // ---- linked: what each had reaches the other, nothing asked ----
+  const titles = async (d) => (await d.lib.api("GET", "/api/novels")).novels.map((n) => n.title).sort();
+  await waitFor(async () => (await titles(ext)).length === 2 && (await titles(tab)).length === 2, "each end's novels to reach the other");
+  assert.deepStrictEqual(await titles(ext), ["Imported in the popup", "Synthesis Wizard"]);
+  assert.deepStrictEqual(await titles(tab), await titles(ext), "one library at both ends");
   assert.deepStrictEqual(norev(await ext.lib.api("GET", "/api/glossaries/" + enc)), norev(await tab.lib.api("GET", "/api/glossaries/" + enc)));
-  assert.deepStrictEqual(ext.lib.status().devices.map((d) => d.name).sort(), ["Chrome on Windows (extension)", "Tab"]);
 
   // ---- a change at either end reaches the other ----
   await ext.lib.api("POST", `/api/glossaries/${enc}/edit`, { set: [["密林", "Deep Forest"]] });
@@ -90,16 +86,7 @@ function chapterAdapter() {
   const views = await Promise.all([tab, ext].map(async (d) => JSON.stringify(norev(await d.lib.api("GET", "/api/glossaries/" + enc)))));
   assert.ok(views.every((v) => v === views[0]), "and the two agree");
 
-  // ---- another library at the other end of a link: none of its records are taken ----
-  const other = await device("Other", "site");
-  await other.lib.create();
-  await other.lib.api("PUT", "/api/novels/" + enc, { title: "Not yours" });
-  link(other, ext);
-  await sleep(500);
-  assert.deepStrictEqual((await ext.lib.api("GET", "/api/novels")).novels.map((n) => n.title), ["Synthesis Wizard"], "another library's records are not taken");
-  assert.deepStrictEqual((await other.lib.api("GET", "/api/novels")).novels.map((n) => n.title), ["Not yours"], "nor are this one's given to it");
-
-  for (const d of [tab, ext, other]) d.core.stop();
+  for (const d of [tab, ext]) d.core.stop();
   console.log("OK — library over the sync protocol passed");
   process.exit(0);
 })().catch((e) => {

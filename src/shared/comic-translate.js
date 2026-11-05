@@ -799,10 +799,12 @@ Also list "terms": names of people, places, skills, items, organisations and tit
     let toDraw = items;
     if (tiers) {
       toDraw = [];
+      loaded = new Set();
       for (const f of opts.fonts || []) {
         try {
           const face = new FontFace(f.family, "url(" + f.url + ")", { weight: String(f.weight || 400) });
           (typeof document !== "undefined" ? document.fonts : self.fonts).add(await face.load());
+          loaded.add(f.family);
         } catch (e) { /* the fallback fonts letter it */ }
       }
       const pen = new OffscreenCanvas(8, 8).getContext("2d");
@@ -871,7 +873,15 @@ Also list "terms": names of people, places, skills, items, organisations and tit
     return m;
   }
 
-  const FONT = { speech: [700, '"Comic Neue", "Comic Sans MS", sans-serif'], thought: [700, '"Comic Neue", "Comic Sans MS", sans-serif'], narration: [400, '"Comic Neue", "Comic Sans MS", sans-serif'], screen: [400, "Arial, Helvetica, sans-serif"] };
+  // Komika Text Bold (Apostrophic Labs, freeware) letters speech and thought in capitals when the caller gave it (opts.fonts, weight 700) and it loaded; without
+  // it they are lettered in Comic Neue as the table below says
+  const CAPS = "Komika Text", CAPS_KINDS = ["speech", "thought"];
+  let loaded = new Set(); // the families translate() loaded
+  const faceOf = (kind) => {
+    const [weight, family] = FONT[kind] || FONT.speech;
+    return loaded.has(CAPS) && CAPS_KINDS.includes(kind) ? { weight: 700, family: '"' + CAPS + '", ' + family, caps: true } : { weight, family, caps: false };
+  };
+  const FONT = { speech: [400, '"Comic Neue", "Comic Sans MS", sans-serif'], thought: [400, '"Comic Neue", "Comic Sans MS", sans-serif'], narration: [400, '"Comic Neue", "Comic Sans MS", sans-serif'], screen: [400, "Arial, Helvetica, sans-serif"] };
   // One plain item lettered here: its letters painted over with the paper's colour and the English written in the bubble's shape. -> a drawn piece (layer 1:
   // over the image model's), its mask the pixels that changed; or null when it is not plain or the English does not fit (the image model draws it then).
   // A part the image model did not draw (refused, or drawing could not be paid for) and that letterHere could not letter (its paper is mixed with something: a site's watermark
@@ -894,11 +904,11 @@ Also list "terms": names of people, places, skills, items, organisations and tit
     const dark = 0.299 * paper[0] + 0.587 * paper[1] + 0.114 * paper[2] < 128;
     x.fillStyle = "rgb(" + paper.join(",") + ")";
     x.fillRect(0, 0, w, h);
-    const [weight, family] = FONT[it.kind] || FONT.speech;
+    const { weight, family, caps } = faceOf(it.kind);
     const measure = (t, size) => { pen.font = weight + " " + size + "px " + family; return pen.measureText(t).width; };
     const lines = Math.max(1, it.text.split("\n").length);
     const area = new Uint8Array(w * h).fill(1);
-    const fit = layout(area, w, h, { x: w / 2, y: h / 2 }, it.en.replace(/\n+/g, " ").split(/\s+/).filter(Boolean), measure,
+    const fit = layout(area, w, h, { x: w / 2, y: h / 2 }, (caps ? it.en.toUpperCase() : it.en).replace(/\n+/g, " ").split(/\s+/).filter(Boolean), measure,
       { maxSize: Math.min(48, ((it.y1 - it.y0) / lines) * 0.95), minSize: 8, maxWidth: w });
     if (!fit) return null;
     x.font = weight + " " + fit.size + "px " + family;
@@ -920,16 +930,22 @@ Also list "terms": names of people, places, skills, items, organisations and tit
     const before = x.getImageData(0, 0, w, h);
     const found = letters(before.data, w, h, { x0: it.x0 - r.x0, y0: it.y0 - r.y0, x1: it.x1 - r.x0, y1: it.y1 - r.y0 });
     if (!found.plain || found.lines < it.text.split("\n").filter((l) => l.trim()).length) return null; // (fewer lines than the text has: some are on other paper)
-    const [weight, family] = FONT[it.kind] || FONT.speech;
+    const { weight, family, caps } = faceOf(it.kind);
     const measure = (t, size) => { pen.font = weight + " " + size + "px " + family; return pen.measureText(t).width; };
     const b = found.bbox, lines = Math.max(1, it.text.split("\n").length);
     const was = Math.min(48, ((b.y1 - b.y0) / lines) * 0.95); // (about the old letters' size)
-    const fit = layout(found.area, w, h, { x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2 }, it.en.replace(/\n+/g, " ").split(/\s+/).filter(Boolean), measure,
+    const fit = layout(found.area, w, h, { x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2 }, (caps ? it.en.toUpperCase() : it.en).replace(/\n+/g, " ").split(/\s+/).filter(Boolean), measure,
       { maxSize: was, minSize: 9, maxWidth: found.open ? Math.max(b.x1 - b.x0, (it.x1 - it.x0)) * 1.15 : Infinity, lines: it.kind === "screen" ? lines : 0 }); // (a screen's rows as many as they were)
     if (!fit || fit.size < was * 0.55) return null; // (far smaller than the old letters: the area is not what it seems)
     // erase: the paper's colour over the letters
     const after = new ImageData(new Uint8ClampedArray(before.data), w, h), d = after.data;
-    for (let p = 0; p < w * h; p++) if (found.mask[p]) { d[p * 4] = found.paper[0]; d[p * 4 + 1] = found.paper[1]; d[p * 4 + 2] = found.paper[2]; }
+    // (the letters' soft edges, a JPEG's ringing, are within the ink's tolerance of the paper and not in the mask: left alone they show as a ghost of the old
+    // text, so everything near the paper's colour round the letters goes to it)
+    const gx0 = Math.max(0, b.x0 - 8), gx1 = Math.min(w, b.x1 + 8), gy0 = Math.max(0, b.y0 - 8), gy1 = Math.min(h, b.y1 + 8);
+    for (let p = 0; p < w * h; p++) {
+      const px = p % w, py = (p - px) / w;
+      if (found.mask[p] || (px >= gx0 && px < gx1 && py >= gy0 && py < gy1 && near(before.data, p * 4, found.paper, INK))) { d[p * 4] = found.paper[0]; d[p * 4 + 1] = found.paper[1]; d[p * 4 + 2] = found.paper[2]; }
+    }
     x.putImageData(after, 0, 0);
     x.font = weight + " " + fit.size + "px " + family;
     x.textAlign = "center";

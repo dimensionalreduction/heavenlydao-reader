@@ -132,12 +132,11 @@ for (const target of targets) {
   for (const [dir, from, files] of [
     ["ort", path.join(root, "vendor", "ort"), ["ort.wasm.min.js", "ort-wasm-simd-threaded.mjs", "ort-wasm-simd-threaded.wasm", "README.md"]],
     ["models", path.join(root, "models"), ["ch_PP-OCRv4_det_infer.onnx", "README.md"]],
-    ["fonts", path.join(root, "fonts"), ["comic-neue-400.woff2", "comic-neue-700.woff2", "OFL-comic-neue.txt"]]
+    ["fonts", path.join(root, "fonts"), ["comic-neue-400.woff2", "comic-neue-700.woff2", "OFL-comic-neue.txt", "komika-text-bold.ttf", "Apostrophic-Labs-License.txt"]]
   ]) {
     fs.mkdirSync(path.join(distDir, dir), { recursive: true });
     for (const f of files) copyFile(path.join(from, f), path.join(distDir, dir));
   }
-
   console.log(`Built dist/${target} (${hosts.length} source sites)` + (DEV ? " with the site on localhost:3000" : ""));
 }
 

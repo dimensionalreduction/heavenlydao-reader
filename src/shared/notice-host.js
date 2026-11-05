@@ -21,8 +21,10 @@
     let settings = load("noticeSettings", { on: true, until: 0, kinds: {}, ext: true });
     const seen = new Set(load("noticeSeen", []));
     let list = load("noticeList", []);
-    const ownKnown = load("noticeOwn", {}); // library id -> { at, last: { novel: its last chapter's number } }
-    const based = new Set(load("noticeBased", [])); // what was looked at once: "wn:<lib>"
+    // (what is known of your novels is kept under OWN: a library's id, when a library had one)
+    const OWN = "library";
+    const ownKnown = load("noticeOwn", {}); // OWN -> { at, last: { novel: its last chapter's number } }
+    const based = new Set(load("noticeBased", [])); // what was looked at once: "wn:" + OWN
 
     async function tell(n, quiet) {
       if (n.key && seen.has(n.key)) return null;
@@ -39,9 +41,9 @@
     const base = (what) => { if (based.has(what)) return false; based.add(what); save("noticeBased", [...based]); return true; };
 
     // ----- what a "New chapters" watch found on a source site -----
-    async function lookWatches(l, st) {
+    async function lookWatches(l) {
       const notices = ((await l.api("GET", "/api/notices").catch(() => null)) || {}).notices || [];
-      const first = base("wn:" + st.libId);
+      const first = base("wn:" + OWN);
       const fresh = notices.filter((x) => !x.seen);
       if (!fresh.length) return;
       const records = ((await l.api("GET", "/api/novels").catch(() => null)) || {}).novels || [];
@@ -54,7 +56,7 @@
     }
 
     // ----- your novels: chapters past the last one each had -----
-    async function lookChapters(st) {
+    async function lookChapters() {
       const ch = chapters && chapters();
       if (!ch || !novelsOf) return;
       const index = (await ch.getIndex()) || {};
@@ -66,18 +68,18 @@
         for (const r of n.chapters) if (!r.indexedOnly && Number.isFinite(r.num) && r.num > last) last = r.num;
         next[n.name] = last;
       }
-      const was = ownKnown[st.libId];
+      const was = ownKnown[OWN];
       const news = was && now() - was.at > SETTLE_MS ? N().newChapters(was.last, next) : [];
       const last = Object.assign({}, was && was.last);
       for (const [name, n] of Object.entries(next)) last[name] = Math.max(last[name] || 0, n);
-      ownKnown[st.libId] = { at: was ? was.at : now(), last };
+      ownKnown[OWN] = { at: was ? was.at : now(), last };
       save("noticeOwn", ownKnown);
       for (const e of news.slice(0, 5)) {
         const nv = novels.get(e.name);
         const added = nv ? nv.chapters.filter((r) => !r.indexedOnly && r.num > e.from && r.num <= e.to).length : e.to - e.from;
-        await tell({ key: "ch:" + st.libId + ":" + e.name + ":" + e.to, kind: "chapters", lib: N().OWN, title: e.name + ": " + plural(added || 1, "new chapter"), text: "Up to chapter " + e.to + ".", href: "#/n/" + encodeURIComponent(e.name) });
+        await tell({ key: "ch:" + OWN + ":" + e.name + ":" + e.to, kind: "chapters", lib: N().OWN, title: e.name + ": " + plural(added || 1, "new chapter"), text: "Up to chapter " + e.to + ".", href: "#/n/" + encodeURIComponent(e.name) });
       }
-      if (news.length > 5) await tell({ key: "ch:" + st.libId + ":more:" + now(), kind: "chapters", lib: N().OWN, title: "New chapters in " + (news.length - 5) + " more novels", text: "The Latest tab of your library lists them.", href: "#/" });
+      if (news.length > 5) await tell({ key: "ch:" + OWN + ":more:" + now(), kind: "chapters", lib: N().OWN, title: "New chapters in " + (news.length - 5) + " more novels", text: "The Latest tab of your library lists them.", href: "#/" });
     }
 
     // what: "all" (every few minutes), "chapters" (after chapters were saved here)
@@ -87,10 +89,9 @@
       busy = true;
       try {
         const l = await lib();
-        const st = l && l.status();
-        if (!st || st.state !== "member") return;
-        if (what === "chapters" || what === "all") await lookChapters(st);
-        if (what === "all") await lookWatches(l, st);
+        if (!l) return;
+        if (what === "chapters" || what === "all") await lookChapters();
+        if (what === "all") await lookWatches(l);
       } finally {
         busy = false;
       }

@@ -27,7 +27,7 @@
   textarea.edit-input { font-size: 12px; min-height: 120px; resize: vertical; line-height: 1.4; }
 
   /* cards (.np-card) */
-  .card, #header, #lock { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
+  .card, #header { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
   .card { margin-top: 10px; }
   .section { padding: 0; }
   /* small capitals, as the About tab's keys (.np-dk) */
@@ -114,16 +114,6 @@
   .linkish { background: none; border: 0; padding: 0; color: var(--muted); font-size: 12px; text-decoration: underline; }
   .pane .label.warn { border-left-color: #c9871f; }
 
-  /* the lock screen */
-  #lock .lock-input { margin: 8px 0; }
-  #lock .lock-text { color: var(--muted); line-height: 1.5; margin: 0 0 6px; }
-  #lock .lock-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
-  #lock .lock-row button { flex: 1; }
-  #lockPassRow .lock-row { margin-top: 0; }
-  #lockFound { margin-top: 8px; }
-  #lockFound .work button { flex: none; }
-  #lockSite { display: block; margin: 8px 0 0; font-weight: 600; }
-
   /* a phone (Firefox for Android shows the popup full width): fill the screen, bigger things to tap, inputs at 16px so the browser does not zoom */
   @media (hover: none) and (pointer: coarse) {
     body { width: auto; padding: 12px; font-size: 15px; }
@@ -139,19 +129,7 @@
 </style>
 </head>
 <body>
-  <!-- Until this extension is a device of your library, only this shows (popup-lock.js) -->
-  <div id="lock" hidden>
-    <div class="label">JOIN YOUR LIBRARY</div>
-    <p class="lock-text" id="lockText"></p>
-    <div id="lockDetectRow" class="lock-row">
-      <button class="btn-primary" id="lockDetect">Detect library</button>
-    </div>
-    <div id="lockFound" class="box" hidden></div>
-    <a id="lockSite" target="_blank" rel="noopener" hidden></a>
-    <p class="lock-text" id="lockNote" style="margin-top:8px;"></p>
-  </div>
-
-  <div id="app" hidden>
+  <div id="app">
   <!-- sites the browser has not let the extension read yet (popup.js, site-access.js): one Allow button each -->
   <div class="section" id="accessBar" hidden></div>
   <!-- the page in front of you: which novel, which chapter (popup.js) -->
@@ -209,22 +187,8 @@
   <div class="pane section" id="pane-library" hidden>
     <div class="label-row">
       <span class="label" style="margin:0;">Your library</span>
-      <span class="subtitle" id="myLibCode" style="margin:0;"></span>
     </div>
     <div id="libStats" class="box muted" style="margin-top:6px;">Loading…</div>
-    <div class="subtitle" id="myLibText" style="margin-top:8px;">Checking…</div>
-    <div class="label">Leave</div>
-    <div id="leaveBox" class="box">
-      <div class="work">
-        <div class="what"><b>Leave this library</b><span>To join another</span></div>
-        <button class="btn-secondary" id="leaveBtn">Leave</button>
-      </div>
-      <div class="work" id="leaveAsk" hidden>
-        <div class="what"><span id="leaveAskText"></span></div>
-        <button class="btn-primary" id="leaveYes">Leave</button>
-        <button class="btn-secondary" id="leaveNo">Cancel</button>
-      </div>
-    </div>
     <div class="label">Comic pictures</div>
     <div class="work">
       <div class="what"><b>Keep at most</b><span>GB of pictures in this browser</span></div>
@@ -235,7 +199,6 @@
   </div>
   </div>
 
-  <script src="popup-lock.js"></script>
   <script src="gemini.js"></script>
   <script src="raw-sources.js"></script>
   <script src="image-chapter.js"></script>
@@ -243,7 +206,6 @@
   <script src="user-rules.js"></script>
   <script src="popup.js"></script>
   <script src="picture-limit.js"></script>
-  <script src="popup-library.js"></script>
   <script src="popup-pictures.js"></script>
 </body>
 </html>

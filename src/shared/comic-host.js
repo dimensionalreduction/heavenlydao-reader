@@ -12,7 +12,9 @@
   // (a dev build, whose library site is this computer, may be told to ask a stand-in on this computer instead: the e2e tests)
   const DEV = typeof SITE_BRIDGE_MATCHES !== "undefined" && SITE_BRIDGE_MATCHES.some((x) => /localhost|127\.0\.0\.1/.test(x));
   const GEMINI = "https://generativelanguage.googleapis.com/v1beta/openai";
-  const FONTS = [400, 700].map((weight) => ({ family: "Comic Neue", weight, url: ext.runtime.getURL("fonts/comic-neue-" + weight + ".woff2") }));
+  // (Komika Text Bold letters speech and thought in capitals; Comic Neue the rest, and those too when the Komika file is missing)
+  const FONTS = [400, 700].map((weight) => ({ family: "Comic Neue", weight, url: ext.runtime.getURL("fonts/comic-neue-" + weight + ".woff2") }))
+    .concat([{ family: "Komika Text", weight: 700, url: ext.runtime.getURL("fonts/komika-text-bold.ttf") }]);
   // to the tab: Firefox's background page has tabs; Chrome's offscreen page has only runtime, so the background passes it on
   const toTab = (tabId, msg) => (ext.tabs && ext.tabs.sendMessage ? ext.tabs.sendMessage(tabId, msg) : ext.runtime.sendMessage({ type: "comic:toTab", tabId, msg })).catch(() => {});
   const jobs = new Map(); // tab -> AbortController of the chapter being translated there

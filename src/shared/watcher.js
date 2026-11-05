@@ -16,9 +16,6 @@
 //          chapter when "fetch" was chosen) are fetched; "all": every chapter of the source's list not on this device is fetched. Both a batch
 //          at a time, each batch once the one before it is done (looked at every pass, so a batch a minute at most), so what you open yourself
 //          waits behind a few chapters at most. (A source followed page by page has no list: what a look finds is fetched, FETCH_MAX at most.)
-//
-// One extension does all this: the library's triggerDevice (settings), the one in the browser where the triggers were last changed; with none
-// chosen, or one no longer in the library, every extension of the library does (mayRun).
 //   name   the novel's name in the library, which the chapters fetched are saved under
 (function (root) {
   const MINUTE = 60 * 1000;
@@ -79,14 +76,6 @@
 
   let running = false;
 
-  // Does this extension do the triggers? settings: the library's (/api/settings); me: this device's library status (library.js status()).
-  function mayRun(settings, me) {
-    const t = settings && settings.triggerDevice;
-    if (!t || !t.id || !me || !me.device) return true;
-    if (t.id === me.device.id) return true;
-    return !(me.devices || []).some((d) => d.id === t.id); // (the one chosen was taken off the library)
-  }
-
   // One pass. `deps` exists so tests can stand in for the library and the page that does the looking.
   async function tick(deps, now = Date.now()) {
     if (running) return { skipped: true };
@@ -94,7 +83,6 @@
     const out = [];
     const filling = [];
     try {
-      if (deps.settings && deps.me && !mayRun(await deps.settings(), await deps.me())) return { checked: out, filling, notMine: true };
       const all = await deps.listWatches();
       for (const w of all.filter((x) => isDue(x, now))) {
         let update = { ...w, lastCheck: now };
@@ -250,7 +238,7 @@
     return { known: top[0], from: top[2], lastResult: fresh.length + " new chapter" + (fresh.length === 1 ? "" : "s") }; // (fetched, when it is to be, by fill)
   }
 
-  const api = { isDue, nextDue, lastScheduled, tick, apply, splitTitle, composeTitle, cachedTitles, FETCH_MAX, BATCH, BATCH_TRANSLATED, listKey, mayRun };
+  const api = { isDue, nextDue, lastScheduled, tick, apply, splitTitle, composeTitle, cachedTitles, FETCH_MAX, BATCH, BATCH_TRANSLATED, listKey };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.Watcher = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);
