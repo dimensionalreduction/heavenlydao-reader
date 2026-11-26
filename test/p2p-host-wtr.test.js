@@ -13,6 +13,7 @@ const store = new Map();
 let onConnect = null; // the host's listener for links from the library site's tab
 const sent = []; // runtime messages that are not storage calls: the translator and the glossary binding
 let calls = [];
+let posts = [];
 let finalUrl = "https://www.69shuba.com/txt/77582/38804612";
 const html = '<div class="txtnav"><h1>t</h1>第一章<br><br>x<br>y</div><a href="/txt/77582/38804613">下一章</a>';
 const gb = (s) => {
@@ -32,8 +33,20 @@ const ctx = {
       querySelectorAll: (sel) => (sel === 'meta[property^="og:"]' ? [...text.matchAll(/<meta property="([^"]*)" content="([^"]*)">/g)].map((m) => ({ getAttribute: (n) => (n === "property" ? m[1] : m[2]) })) : sel === "#pg option" ? [...text.matchAll(/<option data-url="([^"]*)"/g)].map((m) => ({ getAttribute: () => m[1], textContent: "" })) : sel === "a" || sel === "ul#newlist li a" || sel === "ul.chapters a" || sel === "ul.paged a" ? [...text.matchAll(/<a href="([^"]*)">([^<]*)<\/a>/g)].map((m) => ({ textContent: m[2], getAttribute: () => m[1] })) : [])
     });
   },
-  fetch: async (url) => {
+  fetch: async (url, opts) => {
     calls.push(String(url));
+    if (opts && opts.method === "POST") posts.push(String(url)); // (what was asked with a POST)
+    // a built-in rule's site whose book page comes without its list (a script fills it in): the list is asked for elsewhere, toc.orAt
+    if (/^https:\/\/madtheme\.example\/manga\/moon\/$/.test(url)) return { ok: true, status: 200, url: String(url), headers: { get: () => "text/html" }, arrayBuffer: async () => new TextEncoder().encode('<h1>Moon</h1><div id="manga-chapters-holder" data-id="7"></div>').buffer };
+    if (/^https:\/\/madtheme\.example\/manga\/moon\/ajax\/chapters\/$/.test(url)) {
+      if (!(opts && opts.method === "POST")) return { ok: false, status: 405, url: String(url), headers: { get: () => null }, arrayBuffer: async () => new ArrayBuffer(0) };
+      return { ok: true, status: 200, url: String(url), headers: { get: () => "text/html" }, arrayBuffer: async () => new TextEncoder().encode('<ul class="chapters"><a href="/manga/moon/chapter-2/">Chapter 2</a><a href="/manga/moon/chapter-1/">Chapter 1</a><a href="/manga/moon/chapter-0/">Prologue</a></ul>').buffer };
+    }
+    // a site of the Madara theme: its list is the answer to a POST to <book>/ajax/chapters/ (a GET there is refused, as the theme's are)
+    if (/^https:\/\/madara\.example\/manga\/moon-river\/ajax\/chapters\/$/.test(url)) {
+      if (!(opts && opts.method === "POST")) return { ok: false, status: 405, url: String(url), headers: { get: () => null }, arrayBuffer: async () => new ArrayBuffer(0) };
+      return { ok: true, status: 200, url: String(url), headers: { get: () => "text/html" }, arrayBuffer: async () => new TextEncoder().encode('<ul class="chapters"><a href="/manga/moon-river/chapter-3/">Chapter 3</a><a href="/manga/moon-river/chapter-2/">Chapter 2</a><a href="/manga/moon-river/chapter-1/">Chapter 1</a></ul>').buffer };
+    }
     if (/api\/reader\/get/.test(url)) (ctx.readerAt = ctx.readerAt || []).push(Date.now());
     if (/api\/reader\/get/.test(url) && ctx.wtrDown) return { ok: false, status: 500, json: async () => ({ error: "down" }) };
     // The site's bot check, as it answers after a few dozen chapters at once
@@ -586,6 +599,35 @@ const SOURCE = "https://www.69shuba.com/txt/77582/38804612";
   const ownList = sent.find((m) => m.type === "list:apply");
   assert.deepStrictEqual(Array.from(ownList.found.chapters, (c) => c[0]), [1, 2, 3], "its chapters, in order");
   assert.strictEqual(ownList.found.tocUrl, "https://fixture.example/book/1");
+
+  // ---- a list the site's page asks for with a POST (the Madara theme's <book>/ajax/chapters/, saved by Detect as toc.post) ----
+  const madara = ctx.UserRules.validate({ host: "madara.example", toc: { list: "ul.chapters a", reverse: true, post: true, listUrl: { match: "^https://(?:www\\.)?madara\\.example/manga/([^/?#]+)(?:[/?#]|$)", to: "https://madara.example/manga/$1/ajax/chapters/" } } });
+  assert.ok(madara.ok && madara.spec.toc.post === true, "a rule keeps post with its list's address: " + JSON.stringify(madara.errors));
+  assert.ok(!ctx.UserRules.validate({ host: "madara.example", toc: { list: "ul.chapters a", post: true } }).spec.toc.post, "and not without one (it would POST the chapter's page)");
+  ctx.RawSources.setUserRules({ "madara.example": ctx.UserRules.toRule(madara.spec) });
+  sent.length = 0;
+  calls = [];
+  posts = [];
+  await onRawRequest("translation:https://madara.example/manga/moon-river/#list", { ...meta });
+  assert.deepStrictEqual([calls, posts], [["https://madara.example/manga/moon-river/ajax/chapters/"], ["https://madara.example/manga/moon-river/ajax/chapters/"]], "the list's address is asked once, with a POST");
+  const posted = sent.find((m) => m.type === "list:apply");
+  assert.deepStrictEqual(Array.from(posted.found.chapters, (c) => [c[0], c[2]]), [[1, "https://madara.example/manga/moon-river/chapter-1/"], [2, "https://madara.example/manga/moon-river/chapter-2/"], [3, "https://madara.example/manga/moon-river/chapter-3/"]], "its chapters, turned round to the first first");
+  calls = [];
+  posts = [];
+  const fromChapter = await ctx.__checkWatch({ source: "madara.example", from: "https://madara.example/manga/moon-river/chapter-2/" });
+  assert.deepStrictEqual([fromChapter.kind, calls, posts], ["toc", ["https://madara.example/manga/moon-river/ajax/chapters/"], ["https://madara.example/manga/moon-river/ajax/chapters/"]], "a watch from a chapter asks the same way");
+  ctx.RawSources.setUserRules({});
+
+  // ---- a built-in rule's book page sent without its list (the Madara theme's empty #manga-chapters-holder): the list is asked where the rule says, toc.orAt ----
+  vm.runInContext('RawSources.register("madtheme.example", { selector: "div.c", toc: { list: "ul.chapters a", reverse: true, orAt: (a) => (/\\/manga\\/moon\\//.test(a) ? { url: "https://madtheme.example/manga/moon/ajax/chapters/", post: true } : null) } })', ctx);
+  sent.length = 0;
+  calls = [];
+  posts = [];
+  await onRawRequest("translation:https://madtheme.example/manga/moon/#list", { ...meta });
+  assert.deepStrictEqual([calls, posts], [["https://madtheme.example/manga/moon/", "https://madtheme.example/manga/moon/ajax/chapters/"], ["https://madtheme.example/manga/moon/ajax/chapters/"]], "the book's page, then, finding no list on it, the address its script asks with a POST");
+  const elsewhereList = sent.find((m) => m.type === "list:apply");
+  assert.deepStrictEqual(Array.from(elsewhereList.found.chapters, (c) => c[2]), ["https://madtheme.example/manga/moon/chapter-0/", "https://madtheme.example/manga/moon/chapter-1/", "https://madtheme.example/manga/moon/chapter-2/"], "its chapters, the first first");
+  assert.strictEqual(elsewhereList.found.tocUrl, "https://madtheme.example/manga/moon/", "tied to the book's page");
 
   // ---- a site whose pages a script fills in: a rule the person made (Detect with AI) reads its data instead ----
   const dataSpec = ctx.UserRules.validate({

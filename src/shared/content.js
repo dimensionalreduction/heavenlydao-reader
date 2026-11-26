@@ -9,10 +9,27 @@
   const GLOSSARY_KEY = "glossary";
   // Translate from the popup on a chapter's page (docs/ADD-BOOK.md): nothing is kept (no saved translation, no chapters ahead, no terms offered), paid as picked there
   const KEEP_NOTHING = window.__P2PREAD_KEEP_NOTHING__ === true;
-  const PAY = window.__P2PREAD_PAY__ === "tickets" ? "tickets" : "key";
+  // ("rules": by the Translation rule's rows, Settings › Model rules, as the popup asks now)
+  const PAY = ["tickets", "openrouter", "rules"].includes(window.__P2PREAD_PAY__) ? window.__P2PREAD_PAY__ : "key";
+  // Translate ahead (the popup's switch, translate-ahead.js): count, the next pages translated before they are opened; auto, a page the tab went on to (translated only
+  // when it has a chapter's text, not a book's page or the site's home)
+  const AHEAD_OPTS = window.__P2PREAD_AHEAD__ || {};
+  const AHEAD = KEEP_NOTHING ? Math.max(0, Math.min(5, Number(AHEAD_OPTS.count) || 0)) : 0;
+  const AUTO = AHEAD > 0 && !!AHEAD_OPTS.auto;
+  // From the popup (nothing kept): the page shows how it goes in the same pill as a comic's (comic-page.js, put in first: its status, Show original / translated, Listen,
+  // Stop, ✕), and the popup follows it as it follows a comic ("text:status", and window.__p2preadText.state() when it opens again). The library's own: the bar at the top.
+  const PAGE = KEEP_NOTHING && window.__p2preadComicPage && typeof window.__p2preadComicPage.text === "function" ? window.__p2preadComicPage : null;
 
-  if (document.getElementById("gemini-translate-toolbar")) {
-    return; // already active on this page — use its buttons
+  if (document.getElementById("gemini-translate-toolbar") || (window.__p2preadText && window.__p2preadTextAt === location.href)) {
+    // already active on this page — use its buttons (Translate ahead turned on after it was translated: the next pages now). From the popup: one that failed or was
+    // stopped is translated again (its pill has no Translate: the popup's Translate is pressed again)
+    if (!AHEAD || window.__p2preadTextAt === location.href) {
+      if (window.__p2preadText) window.__p2preadText.wake(AHEAD);
+      else if (AHEAD && window.__p2preadTextAhead) window.__p2preadTextAhead(AHEAD);
+      return;
+    }
+    // (a site that shows its next chapter in the same page, at another address: this one's translation starts over)
+    for (const el of document.querySelectorAll("[data-p2pread-text]")) el.remove();
   }
 
   const RAW_TEXT_VAR_CANDIDATES = ["txt_content"];
@@ -88,6 +105,10 @@
 
   const target = findTarget();
   const isBodyFallback = target === document.body;
+  if (AUTO && isBodyFallback && !getRawSourceText()) return; // (a page of the site with no chapter's text on it)
+  window.__p2preadTextAt = location.href;
+  // the chapter's own text as the page had it (a translation shown in its place is not what is translated again, or kept as its original)
+  const originalText = (getRawSourceText() || target.innerText || "").slice(0, 20000);
 
   function currentHostname() {
     return location.hostname.replace(/^www\./, "");
@@ -134,6 +155,7 @@
   // Works on both the live document and a detached DOMParser doc (fetched chapters aren't rendered,
   // so this only ever looks at href/textContent, never layout-dependent properties like innerText).
   function findNextChapterUrl(doc, baseUrl) {
+    if (typeof NextPage !== "undefined") return NextPage.find(doc, baseUrl) || null; // (next-page.js: the same, and a link with the page's number one more, a "next" class, an arrow)
     if (typeof RawSources !== "undefined") {
       const rule = RawSources.ruleFor(baseUrl);
       if (rule) {
@@ -468,7 +490,52 @@
   );
 
   toolbar.append(primaryBtn, retranslateBtn, glossaryBtn);
-  document.body.appendChild(toolbar);
+  toolbar.dataset.p2preadText = "1";
+  if (!PAGE) document.body.appendChild(toolbar);
+
+  // ----- how it goes, said in one place: the bar's line, or the pill (PAGE), and to the popup -----
+  // step: "finding" | "translating" | "done" | "failed" | "stopped"; showing: "made" (the translation) | "original"
+  const textState = { step: "finding", status: "", error: "", words: 0, tickets: 0, showing: "original", made: false };
+  let textRun = 0; // (each translation has a number: Stop, or another one begun, makes the one going on stale)
+  function say(status, o = {}) {
+    Object.assign(textState, o, { status });
+    statusEl.textContent = textState.error ? "Error: " + textState.error : status;
+    if (PAGE) PAGE.text({ status: textState.error ? "" : status, error: textState.error, made: textState.made, showing: textState.showing, running: /^(finding|translating)$/.test(textState.step), hooks: { toggle: showText, stop: stopText } });
+    ext.runtime.sendMessage({ type: "text:status", ...textState }).catch(() => {});
+  }
+  // the translation or the page's own text, shown in place (the side panel of a page with no chapter's box: shown or not)
+  function showText(which) {
+    const want = which || (textState.showing === "made" ? "original" : "made");
+    if (want === "made" && !lastTranslatedText) return;
+    if (panelContentEl) panelContentEl.hidden = want !== "made";
+    else if (want === "original" && target.__geminiOriginal) target.replaceChildren(...target.__geminiOriginal.map((n) => n.cloneNode(true)));
+    else if (want === "made") displayTranslation(lastTranslatedText, lastSuggestions).catch(() => {});
+    say(textState.status, { showing: want });
+  }
+  function stopText() {
+    if (!/^(finding|translating)$/.test(textState.step)) return;
+    textRun++;
+    retranslateBtn.disabled = false;
+    say("Stopped", { step: "stopped" });
+  }
+  window.__p2preadText = {
+    state: () => ({ ...textState }),
+    // the popup's Translate pressed again on this page (it injects this again): one that failed or was stopped is translated again; Translate ahead turned on: the next pages now
+    wake: (ahead) => { if (/^(failed|stopped)$/.test(textState.step)) runTranslation(false); else if (ahead && window.__p2preadTextAhead) window.__p2preadTextAhead(ahead); },
+    again: () => runTranslation(true),
+    // what the popup's Save to library keeps: the page's text and its translation
+    saved: () => ({ original: originalText, translated: lastTranslatedText, model: textState.model || "", lang: textState.lang || pageLang }),
+    show: showText,
+    stop: stopText
+  };
+  // the popup's buttons: Show original / translated, Translate again, Stop (to this page's translator: not one of a page the site showed before in place)
+  const textAt = location.href;
+  ext.runtime.onMessage.addListener((m) => {
+    if (!m || location.href !== textAt || window.__p2preadTextAt !== textAt) return;
+    if (m.type === "text:toggle") showText();
+    else if (m.type === "text:again") runTranslation(true);
+    else if (m.type === "text:stop") stopText();
+  });
 
   // --- Fallback side panel (only used when no specific content container was found) ---
   let panelContentEl = null;
@@ -480,6 +547,7 @@
       "background:" + UI.bg + ";color:" + UI.text + ";z-index:2147483646;overflow-y:auto;" +
       "padding:56px 20px 20px;box-shadow:-6px 0 24px rgba(20,25,35,0.16);" +
       "font-family:" + UI.font + ";font-size:14px;line-height:1.65;white-space:pre-wrap;";
+    panel.dataset.p2preadText = "1";
     document.body.appendChild(panel);
     panelContentEl = panel;
   }
@@ -503,6 +571,7 @@
     "background:" + UI.bg + ";color:" + UI.text + ";border:1px solid " + UI.border + ";border-radius:" + UI.radius + ";" +
     "box-shadow:" + UI.shadow + ";padding:14px;font-size:12.5px;" +
     "z-index:2147483647;font-family:" + UI.font + ";white-space:normal;";
+  glossaryPanel.dataset.p2preadText = "1";
   document.body.appendChild(glossaryPanel);
 
   glossaryBtn.onclick = () => {
@@ -712,6 +781,7 @@
     "transition:background .15s;";
   addTermFloatBtn.onmouseenter = () => (addTermFloatBtn.style.background = UI.primaryDark);
   addTermFloatBtn.onmouseleave = () => (addTermFloatBtn.style.background = UI.primary);
+  addTermFloatBtn.dataset.p2preadText = "1";
   document.body.appendChild(addTermFloatBtn);
 
   document.addEventListener("mouseup", (e) => {
@@ -914,6 +984,7 @@
     "position:fixed;z-index:2147483647;width:250px;background:" + UI.bg + ";color:" + UI.text + ";" +
     "border:1px solid " + UI.border + ";border-radius:" + UI.radius + ";box-shadow:" + UI.shadow + ";" +
     "padding:12px;font-family:" + UI.font + ";font-size:12.5px;white-space:normal;";
+  termPopup.dataset.p2preadText = "1";
   document.body.appendChild(termPopup);
 
   document.addEventListener("mousedown", (e) => {
@@ -1098,18 +1169,27 @@
     });
   }
 
-  function highlightParagraph(pElement, text, terms) {
+  // The terms found in the translation as the library's reader finds them (terms.js, the site's own code: at a word's edges, as the rendering is written, a plural ending
+  // on a longer one, none shorter than 3 letters). Matched anywhere, "ore" lit up inside "more" and "Qi" inside "Qiong", and the page marked what the library did not.
+  // -> the matcher, or null (no terms; or no terms.js, an older injection: every place the rendering is, as before)
+  function termMatcher(terms) {
+    if (typeof Terms === "undefined" || !terms.length) return null;
+    return Terms.buildMatcher(terms.map((t) => ({ english: String(t.translation || ""), term: t })));
+  }
+  function highlightParagraph(pElement, text, terms, matcher) {
     if (terms.length === 0) {
       pElement.textContent = text;
       return;
     }
-    const sorted = [...terms].sort((a, b) => b.translation.length - a.translation.length);
-    const pattern = sorted.map((t) => escapeRegExp(t.translation)).join("|");
-    const re = new RegExp("(" + pattern + ")", "g");
-    const parts = text.split(re);
-    parts.forEach((part) => {
+    let parts;
+    if (typeof Terms !== "undefined") parts = Terms.split(text, matcher === undefined ? termMatcher(terms) : matcher).map((seg) => ({ text: seg.text, match: seg.entries ? seg.entries[0].term : null }));
+    else {
+      const sorted = [...terms].sort((a, b) => b.translation.length - a.translation.length);
+      const re = new RegExp("(" + sorted.map((t) => escapeRegExp(t.translation)).join("|") + ")", "g");
+      parts = text.split(re).map((part) => ({ text: part, match: sorted.find((t) => t.translation === part) || null }));
+    }
+    parts.forEach(({ text: part, match }) => {
       if (!part) return;
-      const match = sorted.find((t) => t.translation === part);
       if (match) {
         const mark = document.createElement("mark");
         mark.textContent = part;
@@ -1142,12 +1222,13 @@
       .filter((s) => !knownTerms.has(s.term))
       .map((s) => normalizeEntry({ terms: [s.term], translation: s.translation, scope: "site", source: "pending" }));
     const forHighlight = [...glossary, ...pendingTerms];
+    const matcher = termMatcher(forHighlight); // (built once for the chapter)
 
     if (panelContentEl) {
       panelContentEl.textContent = "";
       const p = document.createElement("p");
       p.style.margin = "0";
-      highlightParagraph(p, displayText, forHighlight);
+      highlightParagraph(p, displayText, forHighlight, matcher);
       panelContentEl.appendChild(p);
       return;
     }
@@ -1161,47 +1242,71 @@
       .filter(Boolean);
     for (const para of paragraphs) {
       const p = document.createElement("p");
-      highlightParagraph(p, para, forHighlight);
+      highlightParagraph(p, para, forHighlight, matcher);
       target.appendChild(p);
     }
   }
 
+  // how many words a text has, as the popup counts them (a Chinese or Japanese character is a word)
+  const wordsIn = (text) => (String(text).match(/[\p{L}\p{N}]+/gu) || []).reduce((n, w) => n + (/\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}/u.test(w) ? Array.from(w).length : 1), 0);
   async function runTranslation(forceRefresh) {
-    statusEl.textContent = "Translating…";
+    const mine = ++textRun; // (Stop, or Translate again meanwhile: what comes back to this one is not shown)
+    const stale = () => mine !== textRun;
     retranslateBtn.disabled = true;
+    say("Finding text…", { step: "finding", error: "", tickets: 0 });
 
     await langReady;
     if (!forceRefresh) {
       const cached = await ext.storage.local.get(keyIn(cacheKey, pageLang));
       const entry = cached[keyIn(cacheKey, pageLang)];
-      if (entry) {
+      if (entry && !stale()) {
         await displayTranslation(entry.translated, entry.suggestions);
-        statusEl.textContent = "Cached · " + new Date(entry.savedAt).toLocaleTimeString();
         retranslateBtn.disabled = false;
+        window.__P2PREAD_TRANSLATED__ = entry.translated; // (before it is said: the pill offers Listen for it)
+        say("Cached · " + new Date(entry.savedAt).toLocaleTimeString(), { step: "done", made: true, showing: "made" });
         renderSuggestions(entry.suggestions);
-        window.__P2PREAD_TRANSLATED__ = entry.translated;
         if (!KEEP_NOTHING) prefetchAhead().catch(() => {});
+        if (AHEAD) textAhead(AHEAD);
         return;
+      }
+      // Translate ahead: this page made before it was opened (or being made: waited for)
+      if (AHEAD) {
+        const made = await ext.runtime.sendMessage({ type: "ahead:textGet", url: location.href }).catch(() => null);
+        if (stale()) return;
+        if (made && made.translated) {
+          await displayTranslation(made.translated, made.suggestions);
+          retranslateBtn.disabled = false;
+          window.__P2PREAD_TRANSLATED__ = made.translated;
+          say("Translated ahead", { step: "done", made: true, showing: "made" });
+          textAhead(AHEAD);
+          return;
+        }
       }
     }
 
     const nextLink = nextChapterLink();
-    const text = (getRawSourceText() || target.innerText).slice(0, 20000);
+    const text = (getRawSourceText() || originalText).slice(0, 20000);
+    say("Translating…", { step: "translating", words: wordsIn(text) });
     await freshenGlossary();
     const glossary = effectiveGlossary(await loadGlossary());
     // "replace" entries are output-side corrections (old AI wording -> fixed wording), not source-language
     // translation hints, so they're applied locally in displayTranslation rather than sent to Gemini.
     const glossaryForPrompt = glossary.filter((e) => e.source !== "replace");
-    const response = await ext.runtime.sendMessage({ type: "translate", text, glossary: glossaryForPrompt, url: location.href, title: document.title, keepNothing: KEEP_NOTHING, pay: PAY });
+    // (Translate ahead: through the same place as the pages ahead, so a page asked for twice is translated once)
+    const response = (AHEAD
+      ? await ext.runtime.sendMessage({ type: "ahead:text", text, glossary: glossaryForPrompt, url: location.href, title: document.title, wait: true, fresh: !!forceRefresh })
+      : await ext.runtime.sendMessage({ type: "translate", text, glossary: glossaryForPrompt, url: location.href, title: document.title, keepNothing: KEEP_NOTHING, pay: PAY })) || { error: "the extension did not answer" };
+    if (stale()) return;
     retranslateBtn.disabled = false;
     if (response.error) {
-      statusEl.textContent = "Error: " + response.error;
+      say("", { step: "failed", error: String(response.error) });
       return;
     }
     await displayTranslation(response.translated, response.suggestions);
-    statusEl.textContent = "Translated" + (response.tickets ? " · " + Math.round(response.tickets) + " tickets" : "");
+    window.__P2PREAD_TRANSLATED__ = response.translated; // (the popup's Listen and the pill's read it)
+    say("Translated" + (response.tickets ? " · " + Math.round(response.tickets) + " tickets" : ""), { step: "done", made: true, showing: "made", tickets: response.tickets || 0, model: response.model || "", lang: response.language || pageLang });
     renderSuggestions(response.suggestions);
-    window.__P2PREAD_TRANSLATED__ = response.translated; // (the popup's Listen reads it)
+    if (AHEAD) textAhead(AHEAD);
     if (KEEP_NOTHING) return;
     const [pageTitle, novelName] = await Promise.all([englishLabel(document.title), englishLabel(resolveNovelName())]);
     await ext.storage.local.set({
@@ -1217,6 +1322,43 @@
     });
     prefetchAhead().catch(() => {});
   }
+
+  // Translate ahead (translate-ahead.js): the next `count` pages after this one (each page's Next link, fetched as the tab would), translated before they are opened and
+  // kept for the session by the background; the toolbar says how many are ready. A page with no chapter's text ends it.
+  let aheadRun = 0;
+  async function textAhead(count) {
+    const mine = ++aheadRun;
+    const n = Math.max(0, Math.min(5, Number(count) || 0));
+    if (!n) return;
+    await freshenGlossary();
+    const glossaryForPrompt = effectiveGlossary(await loadGlossary()).filter((e) => e.source !== "replace");
+    const asked = [];
+    let doc = document;
+    let url = location.href;
+    for (let i = 0; i < n && mine === aheadRun; i++) {
+      const next = findNextChapterUrl(doc, url);
+      if (!next) break;
+      const have = await ext.runtime.sendMessage({ type: "ahead:textGet", url: next, peek: true }).catch(() => null);
+      const nextDoc = typeof NextPage !== "undefined" ? await NextPage.fetchDoc(next) : await fetchHtml(next).then((h) => (h ? new DOMParser().parseFromString(h, "text/html") : null), () => null);
+      if (!nextDoc) break;
+      if (have && (have.translated || have.state === "running")) asked.push(ext.runtime.sendMessage({ type: "ahead:textGet", url: next }).catch(() => null));
+      else {
+        const text = extractTextFromDoc(nextDoc, new URL(next).hostname.replace(/^www\./, ""));
+        if (!text) break;
+        asked.push(ext.runtime.sendMessage({ type: "ahead:text", text: text.slice(0, 20000), glossary: glossaryForPrompt, url: next, title: nextDoc.title || "", wait: true }).catch((e) => ({ error: e.message })));
+      }
+      doc = nextDoc;
+      url = next;
+    }
+    if (!asked.length || mine !== aheadRun) return;
+    const said = textState.status.replace(/ · Next .*$/, "");
+    let ready = 0;
+    let failed = "";
+    const tell = () => { if (mine === aheadRun && textState.step === "done") say(said + " · Next " + asked.length + ": " + (ready >= asked.length ? "ready" : ready ? ready + " ready" : "translating…") + (failed ? " (" + failed + ")" : "")); };
+    tell();
+    await Promise.all(asked.map((p) => p.then((r) => { if (r && r.translated) ready++; else failed = (r && r.error) || "not translated"; tell(); })));
+  }
+  window.__p2preadTextAhead = (count) => textAhead(count);
 
   retranslateBtn.onclick = () => runTranslation(true);
 

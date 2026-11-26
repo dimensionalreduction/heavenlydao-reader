@@ -197,6 +197,11 @@ const selectors = { c1: 'meta[property="og:image"]', c2: "h1.title", c3: "a.auth
   assert.strictEqual(D.titleDropFor([entryWith("Chapter 3 3 days ago", [fakeEl("TIME", "3 days ago")])]), "time", "a time element too");
   assert.strictEqual(D.titleDropFor([entryWith("Chapter 3", [fakeEl("SPAN", "Chapter 3")])]), "", "a link with no date has nothing to leave out");
   assert.strictEqual(D.titleDropFor([entryWith("Chapter 2000 The Return", [fakeEl("SPAN", "2000")])]), "", "a bare tag is never a part to leave out (the title could go with it)");
+  // novelfire.net: <span class="chapter-no">1</span><strong class="chapter-title">Chapter 1: The Black Hole</strong><time class="chapter-update">2 days ago</time>
+  const fire = (n) => entryWith(n + "Chapter " + n + ": The Black Hole2 days ago", [fakeEl("SPAN", String(n), ["chapter-no"]), fakeEl("STRONG", "Chapter " + n + ": The Black Hole", ["chapter-title"]), fakeEl("TIME", "2 days ago", ["chapter-update"])]);
+  assert.strictEqual(D.titleDropFor([1, 2, 3].map(fire)), "span.chapter-no, time.chapter-update", "the number in its own element goes when the title says it too (it was glued on: 1Chapter 1)");
+  assert.strictEqual(D.titleDropFor([entryWith("12The Black Hole", [fakeEl("SPAN", "12", ["chapter-no"]), fakeEl("STRONG", "The Black Hole", ["chapter-title"])])]), "", "a title with no number keeps it");
+  assert.strictEqual(D.titleDropFor([entryWith("1Chapter 10: Ten", [fakeEl("SPAN", "1", ["chapter-no"]), fakeEl("STRONG", "Chapter 10: Ten", ["chapter-title"])])]), "", "(10 is not 1)");
 
   // saving the whole list rule
   let full = UR.withDetected({}, "empirenovel.com", { toc: { list: "ul.row a", reverse: true, pages: { kind: "numbered", selector: "ul.pagination a" }, titleDrop: "div.small", listUrl: UR.listUrlRule(book, book + "/2334") } }, 11);
@@ -232,6 +237,21 @@ const selectors = { c1: 'meta[property="og:image"]', c2: "h1.title", c3: "a.auth
   assert.deepStrictEqual([dl.partial, dl.shown, dl.count, dl.json.count], [true, 10, 202, undefined], "ten of 202, and no way to ask for more: partial");
   assert.strictEqual(D.listFromData({ items: [{ name: "Action" }, { name: "Drama" }, { name: "Fantasy" }] }, listUrl0, shownList), null, "data that is not the list the page shows is no list");
   assert.strictEqual(D.listFromData(listData, listUrl0, []), null, "(nothing shown, nothing to match)");
+
+  // data asked for with the book's path inside its query (manhuatop.org's /api/reader?resource=chapters&path=%2Fmanhua%2F<book>%2F), each chapter with its own path,
+  // shown on the page with its date run into its title ("Chapter 2152 days ago"): paired by address, the title is the field each entry starts with; the data
+  // says it is page 1 of 221 chapters, but its address names no page: partial, with the page's name to try
+  const mt = "https://manhuatop.org", mtBook = "the-heavenly-demon";
+  const mtItems = [5, 4, 3, 2, 1].map((n) => ({ id: String(900 + n), slug: "chapter-" + n, title: "Chapter " + n, path: "/manhua/" + mtBook + "/chapter-" + n + "/" }));
+  const mtUrl = mt + "/api/reader?resource=chapters&path=%2Fmanhua%2F" + mtBook + "%2F%3Ftab%3Dchapters";
+  dl = D.listFromData({ items: mtItems, page: 1, hasMore: true, total: 221 }, mtUrl, mtItems.map((c) => ({ url: mt + c.path, text: c.title + "2 days ago" })));
+  assert.ok(dl, "the list in data that names the book in its query's path");
+  assert.deepStrictEqual([dl.json.title, dl.json.link, dl.reverse], ["title", mt + "/manhua/$1/{slug}/", true], "paired by address: the title field, each chapter's address");
+  assert.deepStrictEqual(dl.listUrl, { match: "^https://(?:www\\.)?manhuatop\\.org/manhua/([^/?#]+)(?:[/?#]|$)", to: mt + "/api/reader?resource=chapters&path=%2Fmanhua%2F$1%2F%3Ftab%3Dchapters" }, "the data's address from a chapter's: the book inside the query");
+  assert.deepStrictEqual([dl.partial, dl.pageGuess && dl.pageGuess.name, dl.pageGuess && dl.pageGuess.count], [true, "page", "total"], "part of it, with its page's name to try (listFromLoaded asks page 2 before believing it)");
+  // after "Load more chapters" the page asked with chapter_page=2 (a page's name, never per_page, a size)
+  dl = D.listFromData({ items: mtItems, page: 2, total: 221 }, mtUrl + "&chapter_page=2", mtItems.map((c) => ({ url: mt + c.path, text: c.title + "2 days ago" })));
+  assert.deepStrictEqual([dl.partial, dl.json.page, dl.json.count], [false, "chapter_page", "total"], "a page named chapter_page is the list's page");
 
   // the rule made of it, as the engine runs it
   const dataSpec = UR.validate({ host: "chikari.moe", toc: { json: D.listFromData(listData, listUrl0, shownList).json, listUrl: D.listFromData(listData, listUrl0, shownList).listUrl, reverse: true } });
@@ -302,6 +322,80 @@ const selectors = { c1: 'meta[property="og:image"]', c2: "h1.title", c3: "a.auth
   ts = UR.withDetected(ts, "plain.example", { nav: { next: "a.next" } }, 31);
   assert.strictEqual(ts["plain.example"].spec.selector, "main > div.text", "a later detection that found no text place keeps it");
   assert.deepStrictEqual(D.asRuleParts({ next: "a.n" }, null, { dataList: { json: { title: "t", link: "/c/{id}" }, listUrl: { match: "^a", to: "b" }, reverse: true }, dataText: { match: "^a", to: "b", text: "body" } }), { nav: { next: "a.n" }, toc: { json: { title: "t", link: "/c/{id}" }, listUrl: { match: "^a", to: "b" }, reverse: true }, json: { match: "^a", to: "b", text: "body" } }, "the parts read from the data, as the parts of a rule");
+
+  // no Gemini key: the OpenRouter key or the tickets the library's page handed over answer instead (ProfileTranslate.ask), in the same shape
+  let paidBy = "";
+  let asked = null;
+  let modelSays = { text: "" };
+  const ctx2 = {
+    console, JSON, Array, String, Object, Set,
+    chrome: { storage: { local: { get: async () => ({}) } } },
+    fetch: async () => { throw new Error("Gemini must not be asked"); },
+    ProfileTranslate: { payer: async () => paidBy, ask: async (prompt) => { asked = prompt; return modelSays; } }
+  };
+  vm.createContext(ctx2);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "src", "shared", "gemini.js"), "utf8") + "\n;globalThis.geminiDetectBook = geminiDetectBook;", ctx2);
+  const detect2 = async (...a) => JSON.parse(JSON.stringify(await ctx2.geminiDetectBook(...a)));
+  assert.ok(/No Gemini API key/.test((await detect2(candidates, {})).error), "no key, no OpenRouter key, no tickets: the old reason");
+  paidBy = "key";
+  modelSays = { text: 'Here you go:\n```json\n{"title":"c2","author":null,"description":"c4","cover":"c1","genre":"c5","chapterList":"c7","pager":"c99","next":null,"prev":null,"listOrder":"desc"}\n```' };
+  r = await detect2(candidates, { host: "example.com", title: "Reverend Insanity" });
+  assert.deepStrictEqual(r.picks, { title: "c2", author: null, description: "c4", cover: "c1", genre: "c5", chapterList: "c7", pager: null, next: null, prev: null, listOrder: "desc" }, "the JSON in the model's words, an id that is not on the page dropped");
+  assert.ok(asked.includes(JSON.stringify(candidates)) && /JSON object only/.test(asked), "the candidates go in, and it is asked for JSON");
+  paidBy = "tickets";
+  modelSays = { text: "not an answer" };
+  assert.ok((await detect2(candidates, {})).error, "words with no JSON are an error, not a crash");
+  modelSays = { error: "No tickets left" };
+  assert.deepStrictEqual(await detect2(candidates, {}), { error: "No tickets left" }, "the reason why it could not be paid");
+
+  // no Gemini (no key, no answer): a book's page with no metadata still gives its title, cover, synopsis and genres (wfwf532.com), so Import to library has a title to wait for
+  const wolf = [
+    { id: "c1", kind: "list", tag: "div", count: 96, first: ["96화", "95화", "94화"], last: ["2화", "1화"], hrefs: ["/view?toon=1&num=96", "/view?toon=1&num=1"] },
+    { id: "c2", kind: "img", tag: "img", src: "https://ads.example/b.gif", alt: "광고" },
+    { id: "c3", kind: "img", tag: "img", src: "https://cdn.example/1/0.jpg", alt: "시한부 천재가 살아남는 법" },
+    { id: "c4", kind: "group", tag: "div", texts: ["#액션", "#무협"] },
+    { id: "c5", kind: "text", tag: "h1", text: "시한부 천재가 살아남는 법" },
+    { id: "c6", kind: "text", tag: "div", text: "스물을 넘기지 못하고 단명할 운명을 타고난 정연신. 집안사람들 모두 연신을 홀대하지만, 직접 무공을 만들 정도로 그의 실력은 대단했다." }
+  ];
+  const wolfSel = { c1: "div.list-sec a.ep-item", c2: "div.ad > img", c3: "div.thumb-wrap > img", c4: "div.genre-tags > a", c5: "h1.w-title", c6: "#summary" };
+  const page = (title, meta) => ({ title, querySelector: (s) => (meta && /book_name/.test(s) ? {} : null), querySelectorAll: () => [] });
+  let g = D.guessPicks(wolf, wolfSel, page("시한부 천재가 살아남는 법 - 늑대닷컴"));
+  assert.deepStrictEqual(g, { chapterList: "c1", title: "c5", cover: "c3", description: "c6", genre: "c4" }, "the h1 the page's title carries, its picture, the summary and the genre links");
+  assert.deepStrictEqual(Object.keys(D.interpret(g, wolf, wolfSel).found).sort(), ["chapterList", "cover", "description", "genre", "title"], "and each is a part the rule can keep");
+  assert.deepStrictEqual(D.guessPicks(wolf, wolfSel, page("Another book - Site")), { chapterList: "c1" }, "an h1 the page's title does not carry is not the book's title");
+  assert.deepStrictEqual(D.guessPicks(wolf, wolfSel, page("시한부 천재가 살아남는 법 - 늑대닷컴", true)), { chapterList: "c1" }, "a page whose metadata names the book is left to the popup");
+  assert.deepStrictEqual(D.guessPicks([wolf[4]], wolfSel, page("시한부 천재가 살아남는 법 - 늑대닷컴")), {}, "no chapter list and nothing else of a book: a chapter's page, whose h1 is the chapter's, is not read as a book");
+  // lists that are not the chapters, though they have the most links: genres picked in the query (woopread.com: /browse?genres=Comedy), links that go nowhere a fetch can
+  // follow (novelhi.com: javascript:void(0)), a list with no number anywhere (sort tabs): none of them is taken; the chapters are, when they are there
+  const genres = { id: "g1", kind: "list", tag: "div", count: 40, first: ["Comedy", "Drama", "Fantasy"], last: ["Wuxia", "Yuri"], hrefs: ["/browse?genres=Comedy", "/browse?genres=Yuri"] };
+  const nowhere = { id: "g2", kind: "list", tag: "ul", count: 30, first: ["Chapter 1", "Chapter 2", "Chapter 3"], last: ["Chapter 30"], hrefs: ["javascript:void(0);", "javascript:void(0);"] };
+  const tabs = { id: "g3", kind: "list", tag: "nav", count: 6, first: ["Newest", "Popular", "Rating"], last: ["Completed", "Ongoing"], hrefs: ["/novels/newest", "/novels/ongoing"] };
+  const sel3 = { g1: "div.genres a", g2: "ul.chapters a", g3: "nav.sort a", c1: "div.list-sec a.ep-item" };
+  assert.deepStrictEqual(D.guessPicks([genres, nowhere, tabs], sel3, page("Another book - Site")), {}, "no chapter list among genres, links to nowhere and sort tabs");
+  assert.strictEqual(D.guessPicks([genres, nowhere, tabs, wolf[0]], sel3, page("Another book - Site")).chapterList, "c1", "the chapters, when they are there");
+  assert.strictEqual(D.guessPicks([{ ...genres, hrefs: ["/novels/?genre=Fantasy", "/novels/?genre=Yuri"] }], sel3, page("x")).chapterList, undefined, "(wuxiaworld.com's: ?genre=)");
+  g = D.guessPicks(wolf.slice(1), wolfSel, page("시한부 천재가 살아남는 법 - 늑대닷컴"));
+  assert.deepStrictEqual(g, { title: "c5", cover: "c3", description: "c6", genre: "c4" }, "no chapter list, but a cover, a synopsis and genres with the title: a book's page all the same (a gallery)");
+  // an h1 dressed up with a circle and a language (nhentai.net): the part of it the page's title carries is the title; links to tags and people are not chapters
+  const gallery = [
+    { id: "c1", kind: "list", tag: "div", count: 38, first: ["original 160.1k", "big breasts 240.3k"], last: ["G1vMEE"], hrefs: ["/parody/original/", "/users/3476506/g1vmee/"] },
+    { id: "c2", kind: "text", tag: "h1", text: "[Nyan Kotatsu] Oyashiki ni Tsukaeru Elf [English] [LKK Scans]" },
+    { id: "c3", kind: "text", tag: "span", text: "[Nyan Kotatsu]" },
+    { id: "c4", kind: "text", tag: "span", text: "Oyashiki ni Tsukaeru Elf" },
+    { id: "c5", kind: "group", tag: "span", texts: ["big breasts 240.3k", "sole female 208.6k"] }
+  ];
+  const gallerySel = { c1: "#content a", c2: "h1.title", c3: "span.before", c4: "span.pretty", c5: "span.tags > a" };
+  const galleryPage = { title: "Oyashiki ni Tsukaeru Elf » nhentai", querySelector: (s) => (s === "span.pretty" ? { closest: (t) => (t === "h1" ? {} : null) } : null), querySelectorAll: () => [] };
+  assert.deepStrictEqual(D.guessPicks(gallery, gallerySel, galleryPage), { title: "c4", genre: "c5" }, "no list of chapters among tags and people; the title is the span of the h1 the page's title carries");
+  const tagList = { id: "c6", kind: "list", tag: "span", count: 14, first: ["big breasts 240.3k", "sole female 208.6k"], last: ["wholesome 2.0k"], hrefs: ["/tag/big-breasts/", "/tag/wholesome/"] };
+  assert.strictEqual(D.guessPicks([tagList, ...gallery.slice(1)], gallerySel, galleryPage).chapterList, undefined, "a list of tags (same section, numbers in the texts) is not a chapter list either");
+  assert.deepStrictEqual(D.guessPicks(gallery.slice(0, 4), gallerySel, galleryPage), {}, "(and without genres, a title alone is not enough)");
+  assert.strictEqual(D.guessPicks(gallery.slice(0, 4), gallerySel, galleryPage, { gallery: true }).title, D.guessPicks(gallery, gallerySel, galleryPage).title, "with links to its own pages (a book of one chapter) the title alone is a book's page");
+  // a book of one chapter, a picture on each of its pages: the links to its pages (and where a page's picture is) are the rule's list
+  assert.deepStrictEqual(D.asRuleParts({ title: "h1 span.pretty" }, null, { images: "#image-container > a > img", gallery: { selector: "#thumbnail-container a[href]", count: 26, listUrl: { match: "^m", to: "t" } } }), { book: { title: "h1 span.pretty" }, toc: { gallery: "#thumbnail-container a[href]", listUrl: { match: "^m", to: "t" } }, images: "#image-container > a > img" });
+  assert.strictEqual(D.asRuleParts({}, null, { gallery: { selector: "#t a", count: 3 } }).toc.listUrl, null, "(no address rule that holds up: an older one goes)");
+  // the classes a framework makes up (svelte-iec8wt) change when the site is built again: never in a selector
+  assert.deepStrictEqual(D.stableClasses({ classList: ["gallerythumb", "svelte-iec8wt", "css-x7k2", "fit-both"] }), ["gallerythumb", "fit-both"]);
 
   console.log("OK — book-detect checks passed");
 })().catch((e) => { console.error("FAIL:", e); process.exit(1); });

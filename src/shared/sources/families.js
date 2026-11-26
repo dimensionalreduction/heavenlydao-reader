@@ -158,16 +158,17 @@
     }
   });
 
-  // ---- LightNovelWorldParser.js: lightnovelpub.com, novelpub.com, lightnovelcave.com, webnovelpub.*, findnovel.net ... ----
-  // The list is <book>/chapters, and runs over ?page=N pages; a title without the word "chapter" gets its number put in front.
-  R.extend(R.hostsOf(["LightNovelWorldParser", "LightNovelPubParser", "FindNovelParser"]), {
+  // ---- LightNovelWorldParser.js: lightnovelpub.com, novelpub.com, lightnovelcave.com, webnovelpub.*, findnovel.net, novelfire.net ... ----
+  // The list is <book>/chapters, and runs over ?page=N pages; a title without the word "chapter" gets its number put in front. (NovelfireParser, novelfire.net and
+  // boxnovel.art, asks the site's /listChapterDataAjax for the whole list first and reads these pages when that fails; its books are /book/<name>, not /novel/<name>.)
+  R.extend(R.hostsOf(["LightNovelWorldParser", "LightNovelPubParser", "FindNovelParser", "NovelfireParser"]), {
     toc: {
       url: (address) => {
         try {
           const u = new URL(address);
           const parts = u.pathname.split("/").filter(Boolean);
-          if (parts[0] !== "novel" || !parts[1]) return null;
-          return u.origin + "/novel/" + parts[1] + "/chapters";
+          if ((parts[0] !== "novel" && parts[0] !== "book") || !parts[1]) return null;
+          return u.origin + "/" + parts[0] + "/" + parts[1] + "/chapters";
         } catch (e) {
           return null;
         }
@@ -365,4 +366,17 @@
       reverse: true
     }
   });
+
+  // MadaraParser.js (and ManhwatopParser.js, which reads the same list): WordPress sites on the Madara theme. The theme can send a book's page without its
+  // chapters (an empty #manga-chapters-holder) and fill them in with a POST to <book>/ajax/chapters/, which answers with the list's own elements. WebToEpub reads
+  // the tab after that; the extension fetches the page, so where the page holds no list it asks that address itself (p2p-host.js readList, toc.orAt). Each
+  // site keeps its own list selector. <book> is the address's first two parts: /manga/<slug>/, /novel/<slug>/, /webtoon/<slug>/.
+  const madaraAjax = (address) => {
+    const m = /^(https?:\/\/[^/]+\/[^/?#]+\/[^/?#]+\/?)/.exec(String(address));
+    return m ? { url: m[1].replace(/\/?$/, "/") + "ajax/chapters/", post: true } : null;
+  };
+  for (const h of R.hostsOf(["MadaraParser", "MadaraVariantParser", "ManhwatopParser"])) {
+    const own = R.rawRule(h);
+    if (own && own.toc) R.extend(h, { toc: { ...own.toc, orAt: madaraAjax } });
+  }
 })(RawSources);

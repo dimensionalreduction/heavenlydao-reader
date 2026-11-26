@@ -70,14 +70,21 @@ const NOVEL_JSON = { pageProps: { serie: { serie_data: {
 // A chapter as the site's reader renders it.
 function fakeTracker({ no, rawId = RAW, title, paragraphs, model = "gemini-3.5-flash-lite", dupTitle = false }) {
   const lines = (dupTitle ? [title, title, ...paragraphs] : [title, ...paragraphs]).map((t) => ({ innerText: t }));
+  let growing = false; // (a chapter still streaming in: a paragraph more each time its lines are read, however slowly the checks run)
+  let more = 0;
   const container = {
-    querySelectorAll: (sel) => (sel === ".wtr-line" ? lines : []),
+    querySelectorAll: (sel) => {
+      if (sel !== ".wtr-line") return [];
+      if (growing) lines.push({ innerText: longPara(100 + ++more) });
+      return lines;
+    },
     querySelector: (sel) => (sel === ".separator" ? { innerText: model } : null)
   };
   return {
     getAttribute: (n) => ({ "data-chapter-no": String(no), "data-raw-id": String(rawId) })[n] || null,
     querySelector: (sel) => (sel === ".chapter-container" ? container : null),
-    setParagraphs: (p) => lines.splice(1, lines.length, ...p.map((t) => ({ innerText: t })))
+    setParagraphs: (p) => lines.splice(1, lines.length, ...p.map((t) => ({ innerText: t }))),
+    grow: (on) => { growing = on; }
   };
 }
 const longPara = (n) => ("Paragraph " + n + " of the chapter, long enough to count as real text. ").repeat(3);
@@ -139,6 +146,7 @@ function runContentScript({ href, storage, wtrBase, G, page, clock, calls }) {
     if (m.type === "wtr:rawhost") return { host: "uuread.tw", first: "https://www.uuread.tw/chapter/1878627/2213453.html" }; // the background finds where the site's Raw link leads
     if (m.type === "chapterindex:save") return G.saveChapterIndex(m.record);
     if (m.type === "novel:save") return G.saveNovel(m.info);
+    if (m.type === "novel:get") return { novel: page.imported === false ? null : { id: m.id } }; // (imported by the popup's Import to library, unless the test says not)
     return null;
   };
   class FakeDate extends Date {
@@ -173,6 +181,33 @@ function runContentScript({ href, storage, wtrBase, G, page, clock, calls }) {
   const requested = () => Object.keys(wtr.state.requests).sort();
   const resetRequests = () => { Object.keys(wtr.state.requests).forEach((k) => delete wtr.state.requests[k]); wtr.state.order.length = 0; };
   const DAY = 24 * 60 * 60 * 1000;
+
+  // ============ 0. a novel not imported: nothing of it is sent or kept, until Import to library adds it ============
+  {
+    const storage0 = fakeStorage();
+    const G0 = loadClient(storage0);
+    const calls0 = {};
+    const clock0 = { t: Date.now() };
+    const trackers = [fakeTracker({ no: 1, title: "Chapter 1 Synthesis Cube", paragraphs: [longPara(1), longPara(2), longPara(3)] })];
+    const page0 = { terms: [], trackers, imported: false };
+    const before = { list: wtr.state.listFetches || 0, novel: wtr.state.novelFetches || 0, config: wtr.state.configFetches || 0 };
+    const script0 = runContentScript({ href, storage: storage0, wtrBase: wtr.base, G: G0, page: page0, clock: clock0, calls: calls0 });
+    await sleep(400);
+    await script0.click("科雷");
+    await sleep(200);
+    const sent = ["glossary:import", "wtr:myterms", "novel:save", "chapterindex:save", "glossary:votes", "wtr:rawhost"].filter((t) => calls0[t]);
+    assert.deepStrictEqual(sent, [], "nothing goes to the library for a novel not imported");
+    assert.deepStrictEqual([wtr.state.listFetches || 0, wtr.state.novelFetches || 0, wtr.state.configFetches || 0, wtr.state.order.length], [before.list, before.novel, before.config, 0], "and nothing is asked of the site");
+    assert.ok(!Object.keys(storage0.data).some((k) => k.startsWith("translation:")), "the chapter on the page is not kept");
+    page0.imported = true; // Import to library: the next look after the half minute sees it
+    clock0.t += 31 * 1000;
+    await until(() => calls0["novel:save"] && calls0["chapterindex:save"] && calls0["glossary:import"], "the details, the list and the glossaries once it is imported", 20000);
+    await until(() => Object.keys(storage0.data).some((k) => k.startsWith("translation:")), "and the chapter read here", 20000);
+    script0.stop();
+    await settle();
+    resetRequests();
+    delete wtr.state.listFetches; delete wtr.state.novelFetches; delete wtr.state.configFetches; // (the scenarios below count from nothing)
+  }
 
   // ============ 1. reading a chapter: glossaries go up with origins; counts only for the terms you click ============
   const storage = fakeStorage();
@@ -265,11 +300,10 @@ function runContentScript({ href, storage, wtrBase, G, page, clock, calls }) {
   const streaming = fakeTracker({ no: 4, title: "Chapter 4: Streaming", paragraphs: [longPara(11), longPara(12), longPara(13)] });
   const KEY4 = KEY1.replace("chapter-1", "chapter-4");
   page.trackers.push(streaming);
-  let n = 0;
-  const grow = setInterval(() => streaming.setParagraphs([longPara(11), longPara(12), longPara(13), longPara(100 + ++n)]), 5);
+  streaming.grow(true); // (each look finds it longer: on a timer, a slow run could look twice between two changes and take it for settled)
   await settle();
   assert.ok(!storage.data[KEY4], "not saved while its text keeps changing");
-  clearInterval(grow);
+  streaming.grow(false);
   await until(async () => storage.data[KEY4], "the settled chapter to be saved");
   page.trackers = [];
 

@@ -71,18 +71,23 @@
   }
 
   function putProfiles(next, body) {
-    // Translation profiles (docs/PROFILES.md), the settings' part of them: a model and a prompt saved in the playground, which the library's page translates chapters with.
+    // Translation profiles (docs/PROFILES.md), the settings' part of them: a prompt saved in the playground (or written in Settings), which the library's page translates chapters with;
+    // the model and who pays come from Settings › Model rules (the Translation card), not from the profile.
     // Changes `next` (the settings) by what `body` says; the site's waiting copy (site/profiles.js) is kept by the same rules.
-    // translateProfiles: the whole list ({ id, name, model, prompt, pay: "tickets" | "key" | "extension" (translated by the extension, with its own Gemini key), base: the provider's address, for a key; never the key });
+    // translateProfiles: the whole list ({ id, name, prompt }; a profile from before them may also have model, pay: "tickets" | "key" | "extension" and base: the provider's address, for a key; never the key);
     // (expressionProfiles below.) translateProfile: the library's default, one of their ids (blank or null: Gemini through the extension); novelProfiles: { <book>: <id> | "gemini" },
     // a novel's own choice (null: the library's default again). A choice whose profile is gone goes with it.
-    // A list of profiles as it is kept: a bad one (short id, no model, a way to pay not in `pays`, a key with no address, the same id twice) is dropped.
+    // A list of profiles as it is kept: a bad one (short id, the same id twice) is dropped; a model, a way to pay not in `pays` or a key with no address is left out of the profile (not the profile).
     const cleanProfiles = (src, pays) => {
       const seen = new Set();
       return src
-        .filter((p) => p && /^[A-Za-z0-9_-]{3,24}$/.test(String(p.id)) && typeof p.model === "string" && /^[A-Za-z0-9][\w.:/@+-]{0,119}$/.test(p.model.trim()) && pays.includes(p.pay) && !seen.has(String(p.id)) && seen.add(String(p.id)))
-        .map((p) => ({ id: String(p.id), name: clean(p.name, 60) || "Profile", model: p.model.trim(), prompt: typeof p.prompt === "string" ? p.prompt.slice(0, 20000) : "", pay: p.pay, base: p.pay === "key" && typeof p.base === "string" && /^https?:\/\/[^\s"'<>]{3,200}$/.test(p.base.trim()) ? p.base.trim().replace(/\/+$/, "") : "", ...(["fish", "gemini", "openai"].includes(p.voice) ? { voice: p.voice } : {}) }))
-        .filter((p) => p.pay !== "key" || p.base)
+        .filter((p) => p && /^[A-Za-z0-9_-]{3,24}$/.test(String(p.id)) && !seen.has(String(p.id)) && seen.add(String(p.id)))
+        .map((p) => {
+          const model = typeof p.model === "string" && /^[A-Za-z0-9][\w.:/@+-]{0,119}$/.test(p.model.trim()) ? p.model.trim() : "";
+          const base = p.pay === "key" && typeof p.base === "string" && /^https?:\/\/[^\s"'<>]{3,200}$/.test(p.base.trim()) ? p.base.trim().replace(/\/+$/, "") : "";
+          const pays1 = model && pays.includes(p.pay) && (p.pay !== "key" || base);
+          return { id: String(p.id), name: clean(p.name, 60) || "Profile", prompt: typeof p.prompt === "string" ? p.prompt.slice(0, 20000) : "", ...(pays1 ? { model, pay: p.pay, base } : {}), ...(["fish", "gemini", "openai"].includes(p.voice) ? { voice: p.voice } : {}) };
+        })
         .slice(0, 60);
     };
     if (Array.isArray(body.translateProfiles)) {
@@ -416,11 +421,20 @@
       if (typeof body.sharePool === "boolean" && body.sharePool !== next.sharePool) { next.sharePool = body.sharePool; if (body.sharePool) next.sharePoolAt = Date.now(); else delete next.sharePoolAt; }
       // Gemini's requests a minute, for every device of the library together (each extension keeps to it: gemini.js); none kept: 12
       if (Number.isFinite(body.geminiRate)) next.geminiRate = Math.max(1, Math.min(120, Math.floor(body.geminiRate)));
-      // how titles and details that are not in English are put into English (gemini.js translateByMode, and the site): Google Translate,
-      // Gemini, Gemini with Google Translate when Gemini can't, or not at all
-      if (["google", "gemini", "gemini-google", "off"].includes(body.titleTranslate)) next.titleTranslate = body.titleTranslate;
-      // the Gemini model chapters are translated with (Settings › Translation › Gemini model, a chapter's footer, the extension's popup: the same on every device;
-      // blank: the extension's own default)
+      // how titles and details that are not in English are put into English (gemini.js translateByMode, and the site): Google Translate (Gemini while it refuses),
+      // Google Translate alone, Gemini, Gemini with Google Translate when Gemini can't, or not at all
+      if (["google", "google-only", "gemini", "gemini-google", "off"].includes(body.titleTranslate)) next.titleTranslate = body.titleTranslate;
+      // the rows of Settings › Model rules › Titles and details when they are more than Google Translate and Gemini can say (another model, who pays for it): [{ model, kind, base? }]
+      // in the order they are tried (gemini.js translateByMode, and the site); null: titleTranslate says it all
+      if (body.titleRules === null) delete next.titleRules;
+      else if (Array.isArray(body.titleRules)) {
+        const rows = body.titleRules.slice(0, 8).filter((r) => r && typeof r.model === "string" && /^[\w.:/@+-]{1,200}$/.test(r.model) && ["free", "gemini", "openrouter", "tickets", "other"].includes(r.kind)
+          && (r.kind !== "other" || (typeof r.base === "string" && /^https?:\/\/[^\s"'<>]{3,200}$/.test(r.base)))).map((r) => (r.kind === "other" ? { model: r.model, kind: r.kind, base: r.base } : { model: r.model, kind: r.kind }));
+        if (rows.length) next.titleRules = rows;
+        else delete next.titleRules;
+      }
+      // the Gemini model titles are translated with, and chapters when no profile is picked (the site's Settings › Model rules › Titles and details, the extension's
+      // popup: the same on every device; blank: the extension's own default)
       if (typeof body.geminiModel === "string") {
         const m = body.geminiModel.trim();
         if (!m) delete next.geminiModel;
@@ -431,7 +445,7 @@
         if (body.targetLanguage === "en") delete next.targetLanguage;
         else next.targetLanguage = body.targetLanguage;
       }
-      // the Gemini prompts the person changed in Settings › Translation ({ translate, notes, detect }; a name set to blank or null: the built-in one
+      // the Prompts the person changed in Settings › Translation ({ translate, notes, detect }; a name set to blank or null: the built-in one
       // again). Every extension of the library sends these (gemini.js geminiPrompt); none kept: the built-in ones
       if (body.geminiPrompts && typeof body.geminiPrompts === "object") {
         const all = Object.assign({}, next.geminiPrompts);
@@ -444,12 +458,13 @@
         if (Object.keys(all).length) next.geminiPrompts = all;
         else delete next.geminiPrompts;
       }
-      // the prompts of each of translate, notes and detect (Settings › Translation › Gemini prompts): { active, mine: [{ id, name, text }] }: the one in use (the
-      // id of one that comes with the extension, gemini.js GEMINI_PROMPT_PRESETS, or of one of the person's own) and the ones the person saved. What is sent
-      // for a kind replaces its whole entry; a kind left out is as it was; null: the extension's own default again
+      // the prompts of each of translate, notes and detect (Settings › Translation › Prompts) and of comicFind, comicRead and comicDraw (Settings › Translation › Comics):
+      // { active, mine: [{ id, name, text }] }: the one in use (the id of one that comes with the extension, gemini.js GEMINI_PROMPT_PRESETS or comic-translate.js
+      // PROMPT_PRESETS, or of one of the person's own) and the ones the person saved. What is sent for a kind replaces its whole entry; a kind left out is as it was;
+      // null: the extension's own default again
       if (body.promptSets && typeof body.promptSets === "object") {
         const all = Object.assign({}, next.promptSets);
-        for (const name of ["translate", "notes", "detect"]) {
+        for (const name of ["translate", "notes", "detect", "comicFind", "comicRead", "comicDraw"]) {
           if (!(name in body.promptSets)) continue;
           const v = body.promptSets[name];
           if (v === null) { delete all[name]; continue; }

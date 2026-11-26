@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "heavenlydao.com Reader",
-  "version": "1.0.8",
+  "version": "1.1.0",
   "browser_specific_settings": {
     "gecko": {
       "id": "reader@heavenlydao.com",
@@ -10,7 +10,7 @@
     },
     "gecko_android": { "strict_min_version": "142.0" }
   },
-  "description": "Fetch web-novel chapters, translate them with Gemini, and keep them in your heavenlydao.com library on all your devices.",
+  "description": "Fetch web-novel and comic chapters, translate them with AI, and keep them in your heavenlydao.com library.",
   "icons": {
     "16": "icon-16.png",
     "32": "icon-32.png",
@@ -50,6 +50,7 @@
   "background": {
     "scripts": [
       "ort/ort.wasm.min.js",
+      "pay.js",
       "comic-translate.js",
       "site-matches.js",
       "comic-host.js",
@@ -62,6 +63,7 @@
       "picture-limit.js",
       "glossary-server.js",
       "term-match.js",
+      "google-chapter.js",
       "gemini.js",
       "wtr-terms.js",
       "raw-sources.js",
@@ -77,6 +79,7 @@
       "original-translate.js",
       "watcher.js",
       "book-visit.js",
+      "translate-ahead.js",
       "background.js",
       "book-capture.js",
       "library-api.js",

@@ -82,13 +82,38 @@
     return m ? "wtr-lab:" + m[1] : null;
   }
 
-  // "69shuba.com/txt/77582" for a chapter key: the same site + URL-directory key the extension uses to bind a glossary to a novel.
+  // A site that names its books in the query ("view?toon=7968&num=1"): the query's numbers that are not the chapter's name the book ("?toon=7968"), when the
+  // path names none and the query numbers the chapter too. The same as WtrTerms.bookQuery in the extension (wtr-terms.js), which keys the chapter lists with it.
+  const CHAPTER_FIELD = /^(?:n|no|num|number|c|ch|chap|chapters?|chapters?_?(?:id|no|num|number)|cid|ep|epi|episodes?|episodes?_?(?:id|no|num|number)|eid|wr_id|seq|idx|index)$/i;
+  const NOT_BOOK_FIELD = /^(?:p|pg|page|page_?(?:no|num|size)|part|vol|volume|sort|order|limit|offset|size|t|v|ver|ts|time|_|lang|hl|ref|from|utm_\w+)$/i;
+  function bookQuery(u, chapter) {
+    if (/\d{3,}/.test(u.pathname)) return "";
+    const book = [];
+    let numbered = false;
+    u.searchParams.forEach((v, k) => {
+      if (!/^\d{1,15}$/.test(v)) return;
+      if (CHAPTER_FIELD.test(k)) numbered = true;
+      else if (!NOT_BOOK_FIELD.test(k) && !book.some((f) => f[0] === k)) book.push([k, v]);
+    });
+    if (!book.length || (chapter && !numbered)) return "";
+    return "?" + book.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map((f) => encodeURIComponent(f[0]) + "=" + f[1]).join("&");
+  }
+
+  // A chapter's folder is its book's, except a folder that ends in the chapter's own number (royalroad.com/fiction/<id>/<name>/chapter/<chapter id>/<chapter name>):
+  // the book is the folder above "chapter", when that is two parts or more. The same as WtrTerms.bookDir in the extension.
+  function bookDir(pathname) {
+    const dir = String(pathname).replace(/\/[^/]*$/, "") || "/";
+    const up = /^(\/[^/]+(?:\/[^/]+)+)\/chapters?\/\d+$/i.exec(dir);
+    return up ? up[1] : dir;
+  }
+
+  // "69shuba.com/txt/77582" for a chapter key: the same site + URL-directory key the extension uses to bind a glossary to a novel (WtrTerms.bindingKey).
   function bindingKeyOfChapter(key) {
     const up = uploadOf(key);
     if (up) return "upload:" + up.id;
     try {
       const u = new URL(key.replace(/^translation:/, ""));
-      return u.hostname.replace(/^www\./, "") + (u.pathname.replace(/\/[^/]*$/, "") || "/");
+      return u.hostname.replace(/^www\./, "") + bookDir(u.pathname) + bookQuery(u, true);
     } catch (e) {
       return null;
     }

@@ -15,12 +15,32 @@ const metas = {
 
 const book = B.readBook(page(metas), href);
 assert.strictEqual(book.id, "69shuba.com/book/74649", "the site and the book's path, without the extension");
+// a site whose books are all at one path, named in the query (wftoon): each book its own record, the title and page numbers not in it
+assert.strictEqual(B.bookIdOf("https://wftoon236.com/list?toon=75724&title=%BD%CE%C0%CC"), "wftoon236.com/list?toon=75724");
+assert.notStrictEqual(B.bookIdOf("https://wftoon236.com/list?toon=7968&title=x"), B.bookIdOf("https://wftoon236.com/list?toon=75724&title=x"));
+assert.strictEqual(B.bookIdOf("https://example.com/book.php?id=55&page=2"), "example.com/book?id=55");
+assert.strictEqual(B.bookIdOf("https://www.69shuba.com/book/74649.htm?from=1"), "69shuba.com/book/74649", "a path that names the book: the query is not read");
 assert.deepStrictEqual([book.source, book.rawTitle, book.authorRaw, book.category, book.status, book.cover, book.listUrl], ["69shuba.com", "仙工开物", "蛊真人", "修真武侠", "Ongoing", "https://cdn.example/74649s.jpg", "https://www.69shuba.com/book/74649/"]);
 assert.deepStrictEqual(book.synopsis, ["火山中，先贤大能遗留的机关仙宫。", "母亲舍命争取。", "我佛心魔印！"], "the synopsis as paragraphs, <br /> tags gone");
 
 // a page without the metadata is not a book's page, and sends nothing
 assert.strictEqual(B.readBook(page({ "og:title": "Home" }), "https://www.69shuba.com/"), null);
 assert.strictEqual(B.readBook(page({ "og:novel:book_name": "x" }), href), null, "a name alone is not enough");
+
+// the web's standard data, for a page with no og:novel tags: a schema.org Book in its JSON-LD (novelfull.net's, in a @graph), else og:type "book"
+const withLd = (blocks, metas2 = {}) => ({
+  querySelectorAll: (sel) => (sel === 'script[type="application/ld+json"]' ? blocks.map((t) => ({ textContent: t })) : sel === 'meta[property^="og:"]' ? Object.entries(metas2).map(([k, v]) => ({ getAttribute: (n) => (n === "property" ? k : v) })) : [])
+});
+const nf = "https://novelfull.net/bringing-the-nations-husband-home.html";
+const ld = JSON.stringify({ "@context": "https://schema.org", "@graph": [{ "@type": "WebPage", name: "Bringing the Nation's Husband Home | NovelFull" }, { "@type": "Book", "@id": nf + "#book", name: "Bringing the Nation's Husband Home", author: [{ "@type": "Person", name: "Ye Fei Ye" }], description: "Qiao Anhao and Lu Jinnian...", image: { "@type": "ImageObject", url: "/uploads/thumbs/b.jpg" }, genre: ["Romance", "Drama"] }] });
+assert.deepStrictEqual(B.standardBook(withLd(["not json", ld])), { title: "Bringing the Nation's Husband Home", author: "Ye Fei Ye", description: "Qiao Anhao and Lu Jinnian...", cover: "/uploads/thumbs/b.jpg", genres: ["Romance", "Drama"] }, "a Book in the JSON-LD's @graph, its author and picture as objects");
+const nfBook = B.readBook(withLd([ld]), nf);
+assert.deepStrictEqual([nfBook.rawTitle, nfBook.authorRaw, nfBook.cover, nfBook.category, nfBook.id], ["Bringing the Nation's Husband Home", "Ye Fei Ye", "https://novelfull.net/uploads/thumbs/b.jpg", "Romance / Drama", "novelfull.net/bringing-the-nations-husband-home"], "a book's page read from it, the picture's address made whole");
+assert.strictEqual(B.standardBook(withLd([JSON.stringify({ "@type": "Article", name: "Chapter 3" })])), null, "an article (a chapter) is not a book");
+assert.deepStrictEqual(B.standardBook(withLd([], { "og:type": "book", "og:title": "Black Apron | Royal Road", "og:site_name": "Royal Road", "og:image": "https://c.example/x.jpg" })), { title: "Black Apron", author: "", description: "", cover: "https://c.example/x.jpg", genres: [] }, "og:type book: its og:title, the site's name taken off");
+assert.strictEqual(B.standardBook(withLd([], { "og:type": "website", "og:title": "Home" })), null, "a page that is not a book's");
+const html = '<html><script type="application/ld+json">' + ld + "</script></html>";
+assert.strictEqual(B.standardBook(withLd([]), html).title, "Bringing the Nation's Husband Home", "from the page's text when its scripts were taken out of the document (p2p-host.js)");
 
 // the list's address from a link when the metadata has none; a non-https one is dropped
 const noRead = { ...metas };

@@ -144,22 +144,6 @@
     return "Chapter " + num + (body ? ": " + body : "");
   }
 
-
-  // Titles in English, each translated once: `cache` (an extension storage area) remembers them, so a list that is looked at again only
-  // asks for the titles it has not seen. `translate` is the extension's own batch translator (texts in, same-length array out).
-  async function cachedTitles(cache, translate, texts) {
-    const stored = (await cache.get("titleCache")).titleCache || {};
-    const missing = [...new Set(texts.filter((t) => t && !(t in stored)))];
-    if (missing.length) {
-      const out = await translate(missing);
-      missing.forEach((t, i) => { stored[t] = (out && out[i]) || t; });
-      const keys = Object.keys(stored);
-      if (keys.length > 20000) for (const k of keys.slice(0, keys.length - 20000)) delete stored[k]; // the oldest go first
-      await cache.set({ titleCache: stored });
-    }
-    return texts.map((t) => stored[t] || t);
-  }
-
   // A source followed page by page (it has no list for fill): the new chapters a look found, fetched when the watch says so (then: "fetch" or
   // "all"): [{ num, title, url }], the first FETCH_MAX. `deps.fetchChapters` only asks for them (the extension fetches them one after another,
   // and translates them in Gemini's turn): the look does not wait for that. What it adds to the result: " · fetching them", or why not.
@@ -238,7 +222,7 @@
     return { known: top[0], from: top[2], lastResult: fresh.length + " new chapter" + (fresh.length === 1 ? "" : "s") }; // (fetched, when it is to be, by fill)
   }
 
-  const api = { isDue, nextDue, lastScheduled, tick, apply, splitTitle, composeTitle, cachedTitles, FETCH_MAX, BATCH, BATCH_TRANSLATED, listKey };
+  const api = { isDue, nextDue, lastScheduled, tick, apply, splitTitle, composeTitle, FETCH_MAX, BATCH, BATCH_TRANSLATED, listKey };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.Watcher = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

@@ -258,6 +258,19 @@ assert.deepStrictEqual(tools.dataFiles().map((f) => path.basename(f))[0], "_gene
     assert.strictEqual(typeof RSF.SOURCES[h].toc.list, "function", h + " reads a chapter list");
     assert.ok(RSF.SOURCES[h].selector, h + " keeps its text selector when the list is added");
   }
+  // novelfire.net: NovelfireParser, a class of the same file the family's list was not given to; its books are /book/<name>
+  for (const h of ["novelfire.net", "boxnovel.art"]) assert.strictEqual(typeof RSF.SOURCES[h].toc.list, "function", h + " reads a chapter list");
+  assert.strictEqual(RSF.SOURCES["novelfire.net"].toc.url("https://novelfire.net/book/the-insane-regressor-throne-of-pride"), "https://novelfire.net/book/the-insane-regressor-throne-of-pride/chapters", "the list page from the book's page");
+  assert.strictEqual(RSF.SOURCES["novelfire.net"].toc.url("https://novelfire.net/book/the-insane-regressor-throne-of-pride/chapter-12"), "https://novelfire.net/book/the-insane-regressor-throne-of-pride/chapters", "and from a chapter's");
+  assert.strictEqual(RSF.SOURCES["lightnovelpub.com"].toc.url("https://lightnovelpub.com/novel/x/chapter-1"), "https://lightnovelpub.com/novel/x/chapters", "(the family's /novel/ books as before)");
+  const fireLink = (no, title) => ({ getAttribute: () => "/book/x/chapter-" + no, querySelector: (s) => (s === ".chapter-title" ? { textContent: title } : s === ".chapter-no" ? { textContent: String(no) } : null) });
+  const fireList = { querySelectorAll: (s) => (s === "ul.chapter-list a" ? [fireLink(1, "Chapter 1: The Black Hole"), fireLink(2, "Prologue")] : []) };
+  assert.deepStrictEqual(Array.from(RSF.SOURCES["novelfire.net"].toc.list(fireList, "https://novelfire.net/book/x/chapters"), (c) => c.title), ["Chapter 1: The Black Hole", "2: Prologue"], "titles as the site shows them, the number only before one without it");
+  // the Madara theme's sites (wuxiaworld.site, manhwatop.com): each keeps its own list, and where the book's page holds none its list is asked for with a POST
+  // to <book>/ajax/chapters/, from the book's address or a chapter's
+  for (const h of ["wuxiaworld.site", "manhwatop.com"]) assert.ok(/wp-manga-chapter/.test(RSF.rawRule(h).toc.list), h + " keeps its list");
+  assert.deepStrictEqual({ ...RSF.SOURCES["wuxiaworld.site"].toc.orAt("https://wuxiaworld.site/novel/a-book/chapter-12/") }, { url: "https://wuxiaworld.site/novel/a-book/ajax/chapters/", post: true }, "the list's address, from a chapter's");
+  assert.deepStrictEqual({ ...RSF.SOURCES["manhwatop.com"].toc.orAt("https://manhwatop.com/manga/a-book") }, { url: "https://manhwatop.com/manga/a-book/ajax/chapters/", post: true }, "and from the book's");
   RSF.register("extend.example", { selector: "div.t", book: { title: "h1" }, parser: "ExampleParser" });
   RSF.extend(RSF.hostsOf("ExampleParser"), { toc: { list: "ul a" } });
   RSF.extend("not-registered.example", { toc: { list: "ul a" } });
@@ -324,6 +337,36 @@ assert.deepStrictEqual(tools.dataFiles().map((f) => path.basename(f))[0], "_gene
   const inCatalog = [lo(632, "/txt/53042/39600339"), lo(7, "/txt/53042/34489976"), lo(1, "/txt/53042/34489970")];
   const withBookcase = { querySelectorAll: (sel) => (sel === "#catalog li[data-num]" ? inCatalog : sel === "li[data-num]" ? [lo(7, "/txt/53042/39600339", "bookcase"), ...inCatalog] : []) };
   assert.deepStrictEqual(Array.from(shu.toc.list(withBookcase, "https://www.69shuba.com/book/53042/"), (c) => c.title), ["第1章", "第7章", "第632章"], "第632章 in its own place");
+})();
+
+// royalroad.com: the generated entry's selector found the site's logo first (its "img" part), and it had no list; the list is the fiction page's window.chapters
+(() => {
+  const rr = reg["royalroad.com"];
+  assert.strictEqual(rr.selector, "div.chapter-inner", "the chapter's text only (no img, no page wrapper)");
+  assert.strictEqual(reg["royalroadl.com"].selector, "div.chapter-inner", "the old name too");
+  const fiction = "https://www.royalroad.com/fiction/201243/black-apron-max-level-archmaid";
+  assert.strictEqual(rr.toc.url(fiction + "?utm_source=home&utm_medium=rising-stars"), fiction, "from the fiction's page, its query left out");
+  assert.strictEqual(rr.toc.url(fiction + "/chapter/4282802/chapter-zero-king-breaker"), fiction, "from one of its chapters");
+  assert.strictEqual(rr.toc.url("https://www.royalroad.com/fiction/201243"), "https://www.royalroad.com/fiction/201243", "from its short address");
+  assert.strictEqual(rr.toc.url("https://www.royalroad.com/fictions/rising-stars"), null);
+  const html = '<script>window.fictionId = 201243;\n window.chapters = [{"id":4259603,"title":"Art","slug":"art","url":"/fiction/201243/black-apron-max-level-archmaid/chapter/4259603/art"},' +
+    '{"id":4282802,"title":"Chapter Zero - \\"King\\" [Breaker]","slug":"chapter-zero-king-breaker","url":null}];\n window.volumes = [];</script>';
+  const none = { querySelectorAll: () => [] };
+  assert.deepStrictEqual(Array.from(rr.toc.list(none, fiction, html), (c) => [c.title, c.url]), [
+    ["Art", fiction + "/chapter/4259603/art"],
+    ['Chapter Zero - "King" [Breaker]', fiction + "/chapter/4282802/chapter-zero-king-breaker"]
+  ], "every chapter from the data (quotes and brackets in a title do not end it; an address made from the id and slug when the entry has none)");
+  const a = (href, text) => ({ getAttribute: () => href, textContent: text });
+  const table = { querySelectorAll: (sel) => (sel === "table#chapters a[href*='/chapter/']" ? [a("/fiction/1/x/chapter/1/one", " One "), a("/fiction/1/x/chapter/1/one", "2 days ago"), a("/fiction/1/x/chapter/2/two", "Two")] : []) };
+  assert.deepStrictEqual(Array.from(rr.toc.list(table, "https://www.royalroad.com/fiction/1/x", "<html></html>"), (c) => [c.title, c.url]), [["One", "https://www.royalroad.com/fiction/1/x/chapter/1/one"], ["Two", "https://www.royalroad.com/fiction/1/x/chapter/2/two"]], "without the data: the page's table, each chapter once (its date links to it too)");
+  // the hidden line: a <span> whose made-up class a <style> of the page sets to display: none
+  const removed = [];
+  const box = {
+    ownerDocument: { querySelectorAll: () => [{ textContent: "\n .cmRkODY4OGNm{\n display: none;\n speak: never;\n }\n .shown { color: red }" }] },
+    querySelectorAll: (sel) => (sel === ".cmRkODY4OGNm" ? [{ remove: () => removed.push(sel) }] : sel === ".shown" ? [{ remove: () => removed.push(sel) }] : [])
+  };
+  rr.clean(box);
+  assert.deepStrictEqual(removed, [".cmRkODY4OGNm"], "the hidden line is taken out, nothing else");
 })();
 
 // tomatomtl.com: the text is encrypted in the page; the list is JSON; a fanqienovel chapter is mirrored there

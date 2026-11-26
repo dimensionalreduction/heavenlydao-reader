@@ -60,7 +60,14 @@ const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 
   assert.deepStrictEqual(Object.keys(saved.promptSets).sort(), ["notes", "translate"], "a kind left out is as it was");
   saved = await A.api("PUT", "/api/settings", { promptSets: { translate: null, notes: null } });
   assert.strictEqual(saved.promptSets, undefined, "none left: none kept");
-  // translation profiles: a bad one (short id, no model, an unknown way to pay, a key with no address, the same id twice) is dropped, a key is never kept;
+  // the comics' three prompts are kept as the others are
+  saved = await A.api("PUT", "/api/settings", { promptSets: { comicFind: { active: "cfind", mine: [{ id: "cfind", name: "Boxes", text: "Box the text." }] }, comicRead: { active: "default", mine: [] }, comicDraw: { active: "default", mine: [] } } });
+  assert.deepStrictEqual(Object.keys(saved.promptSets).sort(), ["comicDraw", "comicFind", "comicRead"]);
+  assert.strictEqual(saved.promptSets.comicFind.mine[0].text, "Box the text.");
+  saved = await A.api("PUT", "/api/settings", { promptSets: { comicFind: null, comicRead: null, comicDraw: null } });
+  assert.strictEqual(saved.promptSets, undefined, "none left: none kept");
+  // translation profiles (a prompt with a name; a model and a way to pay from before them are kept only when whole): a bad one (short id, the same id twice) is dropped, a model that is
+  // not a name, an unknown way to pay or a key with no address is left out of the profile, and a key is never kept;
   // the library's default and a novel's choice must be one of them (or "gemini" for a novel), and go when their profile does
   saved = await A.api("PUT", "/api/settings", { translateProfiles: [
     { id: "pro1", name: " Haiku plain ", model: "anthropic/claude-haiku-5.5", prompt: "Translate to {language}.", pay: "tickets", key: "sk-secret" },
@@ -71,8 +78,14 @@ const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 
   assert.deepStrictEqual(JSON.parse(JSON.stringify(saved.translateProfiles)), [
     { id: "pro1", name: "Haiku plain", model: "anthropic/claude-haiku-5.5", prompt: "Translate to {language}.", pay: "tickets", base: "" },
     { id: "pro2", name: "Mine", model: "gpt-5-mini", prompt: "", pay: "key", base: "https://api.example.com/v1" },
+    { id: "pro4", name: "Profile", prompt: "" }, { id: "pro5", name: "Profile", prompt: "" }, { id: "pro6", name: "Profile", prompt: "" },
     { id: "pro7", name: "By the extension", model: "gemini-3.5-flash", prompt: "Translate.", pay: "extension", base: "" }
   ]);
+  saved = await A.api("PUT", "/api/settings", { translateProfiles: [{ id: "only1", name: " Just words ", prompt: "Translate to {language}.", key: "sk-secret", pay: "tickets" }, { id: "only2", prompt: "Plain." }] });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(saved.translateProfiles)), [{ id: "only1", name: "Just words", prompt: "Translate to {language}." }, { id: "only2", name: "Profile", prompt: "Plain." }], "a profile is a name and a prompt: no model needed");
+  saved = await A.api("PUT", "/api/settings", { translateProfiles: [
+    { id: "pro1", name: " Haiku plain ", model: "anthropic/claude-haiku-5.5", prompt: "Translate to {language}.", pay: "tickets", key: "sk-secret" },
+    { id: "pro2", name: "Mine", model: "gpt-5-mini", prompt: "", pay: "key", base: "https://api.example.com/v1/", key: "sk-secret" }], translateProfile: "pro2", novelProfiles: { "wtr-lab:1": "pro1", "record:up-x": "gemini" } });
   assert.strictEqual(saved.translateProfile, "pro2");
   assert.deepStrictEqual(saved.novelProfiles, { "wtr-lab:1": "pro1", "record:up-x": "gemini" });
   saved = await A.api("PUT", "/api/settings", { novelProfiles: { "wtr-lab:1": null } });
@@ -82,7 +95,7 @@ const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 
   assert.deepStrictEqual(saved.novelProfiles, { "record:up-x": "gemini" }, "a novel's choice of a deleted profile goes");
   saved = await A.api("PUT", "/api/settings", { translateProfiles: [], novelProfiles: { "record:up-x": null } });
   assert.ok(saved.translateProfiles === undefined && saved.novelProfiles === undefined, "none left: none kept");
-  // expression profiles (Listen › Expression): the same fields, but never paid by the extension, and kept apart from the translation ones
+  // expression profiles (Listen › Expression): the same fields (the voice they are for too), a way to pay never the extension, and kept apart from the translation ones
   saved = await A.api("PUT", "/api/settings", { translateProfiles: [{ id: "tr1", name: "Plain", model: "m1", pay: "tickets" }], expressionProfiles: [
     { id: "ex1", name: " Cues ", model: "anthropic/claude-haiku-5.5", prompt: "Add cues.", pay: "tickets", key: "sk-secret" },
     { id: "ex2", name: "Mine", model: "gpt-5-mini", pay: "key", base: "https://api.example.com/v1/" },
@@ -90,13 +103,14 @@ const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 
   ] });
   assert.deepStrictEqual(JSON.parse(JSON.stringify(saved.expressionProfiles)), [
     { id: "ex1", name: "Cues", model: "anthropic/claude-haiku-5.5", prompt: "Add cues.", pay: "tickets", base: "" },
-    { id: "ex2", name: "Mine", model: "gpt-5-mini", prompt: "", pay: "key", base: "https://api.example.com/v1" }
+    { id: "ex2", name: "Mine", model: "gpt-5-mini", prompt: "", pay: "key", base: "https://api.example.com/v1" },
+    { id: "ex3", name: "Profile", prompt: "" }, { id: "ex4", name: "Profile", prompt: "" }
   ]);
   assert.deepStrictEqual(saved.translateProfiles.map((p) => p.id), ["tr1"], "the translation ones are not mixed with them");
   saved = await A.api("PUT", "/api/settings", { novelProfiles: { "wtr-lab:9": "ex1" }, translateProfile: "ex1" });
   assert.ok(saved.novelProfiles === undefined && saved.translateProfile === undefined, "and a translation choice cannot be an expression profile");
   saved = await A.api("PUT", "/api/settings", { translateProfiles: [] });
-  assert.strictEqual(saved.expressionProfiles.length, 2, "a field left out is as it was");
+  assert.strictEqual(saved.expressionProfiles.length, 4, "a field left out is as it was");
   saved = await A.api("PUT", "/api/settings", { expressionProfiles: [] });
   assert.strictEqual(saved.expressionProfiles, undefined, "none left: none kept");
   // a person's own terms from the site (origin "yours"): kept when an import could not read them (keepYours), gone when the site no longer has them,
@@ -121,6 +135,10 @@ const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 
   assert.strictEqual((await A.api("PUT", "/api/settings", { geminiModel: " gemini-3.5-flash " })).geminiModel, "gemini-3.5-flash");
   assert.strictEqual((await A.api("PUT", "/api/settings", { geminiModel: "bad model!" })).geminiModel, "gemini-3.5-flash", "not a model name: ignored");
   assert.strictEqual((await A.api("PUT", "/api/settings", { geminiModel: "" })).geminiModel, undefined, "none kept");
+  // the titles' rows when they are more than titleTranslate can say: models and who pays, in order; a row that is not one is dropped; null removes them
+  const titleRows = [{ model: "google/translate", kind: "free" }, { model: "anthropic/claude-haiku-5.5", kind: "tickets", extra: 1 }, { model: "qwen3:8b", kind: "other", base: "http://localhost:11434/v1" }, { model: "x", kind: "nope" }, { model: "bad model!", kind: "openrouter" }, { model: "y", kind: "other" }];
+  assert.deepStrictEqual((await A.api("PUT", "/api/settings", { titleRules: titleRows })).titleRules, [{ model: "google/translate", kind: "free" }, { model: "anthropic/claude-haiku-5.5", kind: "tickets" }, { model: "qwen3:8b", kind: "other", base: "http://localhost:11434/v1" }], "the rows that are rows, as rows");
+  assert.strictEqual((await A.api("PUT", "/api/settings", { titleRules: null })).titleRules, undefined, "null: none kept");
   // agreeing to add one's terms to a public pool: off until the person says so, and when they did is kept
   assert.strictEqual((await A.api("GET", "/api/settings")).sharePool, false, "off by default");
   let sp = await A.api("PUT", "/api/settings", { sharePool: true });

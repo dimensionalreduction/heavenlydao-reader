@@ -17,6 +17,10 @@
 //     illustrations  true to keep the pictures between a text chapter's paragraphs (they are fetched with the chapter and shown where they are)
 //     images    for a site whose chapters are pictures (a comic): the pictures' <img> elements, or the box that holds them. A chapter is then kept as
 //               its pictures (image-chapter.js) and `selector` is not needed
+//     scriptPictures  { name: "chapterImages", base64: true, prefix: "https://img.example.com" }   for a comic whose chapter page has no <img> for its pictures
+//               until a script draws them from a list in the page itself (a Chinese comic CMS's qTcms_S_m_murl_e): the script variable that holds the list
+//               (a string, or a [...] / {...}), whether that string is base64, and what goes before an address in it that starts with "/" (the picture server
+//               the site's script puts there; left out: the page's own site). Read as `images` is, and with it `selector` is not needed
 //     junk      elements inside it to drop (optional; script, style, ins and iframe always go)
 //     charset   only when the site does not say its encoding ("gbk", "big5"...)
 //     toc       { list: "ul.chapters a" | boxes: "div.lists", pick: "first"|"last"|"2", reverse: true,
@@ -25,15 +29,21 @@
 //                 titleDrop: ".small, time",                                  parts of a chapter link that are not its title (the date)
 //                 gap: 2000,                                                                       ms between those pages
 //                 listUrl: { match: "^https://example\\.com/book/(\\d+)", to: "https://example.com/list/$1" },  the list page from any address of the novel
+//                 post: true,                                                                     that address is asked with a POST (a list a page's script asks for so:
+//                        the Madara theme's <book>/ajax/chapters/); only with listUrl
 //                 json: { items: "items", title: "title", link: "https://example.com/novel/$1/{number}", page: "offset", count: "total" | pages: "last_page" } }
 //                        the list is the site's data (JSON) at listUrl, not a page: where the chapters are in it ("" or left out: the data is the list), each one's
 //                        title and address ($1 as in listUrl.to, {field} a field of the chapter), the address part that moves through the list (offset, skip,
 //                        start, from: by the chapters one part holds; any other, like page: by one) and the field that says how many chapters (count) or parts
 //                        (pages) there are
+//                 gallery: "#thumbnail-container a"     a book that is one chapter of pictures, each on a page of its own (a doujin gallery, nhentai.net/g/<id>/ and
+//                        its pages /g/<id>/1/ ... /26/): the links on the book's page to its pages, in order. The list is then that one chapter, the book's page
+//                        itself, and its pictures are the picture on each page (`images` says where it is on them); list, boxes and json are not used
 //     json      { match: "^https://example\\.com/novel/([^/?#]+)/(\\d+)", to: "https://example.com/api/novel/$1/chapters/$2", text: "body", next: "https://example.com/novel/$1/{next_number}" }
 //               a chapter's text from the site's data (JSON) instead of its page, for a site whose pages a script fills in: the data's address from the chapter's,
 //               where the text is in it, and (optional) the next chapter's address ($1 as in match, {field} a field of the data)
-//     book      { title, author, description, cover, genre }      where a book's page says what the book is (selectors)
+//     book      { title, author, description, cover, genre }      where a book's page says what the book is (selectors); titleDrop: parts inside the
+//               title to leave out of it (a badge: "span.manga-title-badges")
 //     nav       { next, prev }                                    the links to the next and previous chapter on a chapter's page (selectors)
 //   }
 (function (root) {
@@ -180,6 +190,30 @@
       }
       if (back && back.split(/[?#]/)[0] === page.origin + page.pathname) return { match, to };
     }
+    // ... or, for the site's data (withQuery), the book is inside a query value that is a path of the site: /api/reader?resource=chapters&path=%2Fmanhua%2F<book>%2F
+    // (manhuatop.org); the same book's part of the chapter's address, a slug or an id, becomes $1 there
+    if (withQuery) {
+      const sameQuery = (a, b) => [...a.searchParams].length === [...b.searchParams].length && [...a.searchParams].every(([k, v]) => b.searchParams.get(k) === v);
+      for (const [k, v] of page.searchParams) {
+        const inside = v.split(/[/?#&=]/);
+        for (const part of chapterParts.filter(sluglike)) {
+          if (!inside.includes(part)) continue;
+          const at = chapterParts.indexOf(part);
+          const match = "^https://(?:www\\.)?" + esc(bare(page.hostname)) + "/" + chapterParts.slice(0, at).map((x) => esc(x) + "/").join("") + "([^/?#]+)(?:[/?#]|$)";
+          const u = new URL(page.href);
+          u.searchParams.set(k, v.split("/" + part + "/").join("/\u0000/").split("/" + part + "?").join("/\u0000?").replace(new RegExp("/" + esc(part) + "$"), "/\u0000"));
+          const to = u.href.split("%00").join("$1");
+          if (!to.includes("$1")) continue;
+          try {
+            const m = new RegExp(match).exec(chapter.href);
+            const back = m ? new URL(expand(to, m, chapter.href)) : null;
+            if (back && back.origin + back.pathname === page.origin + page.pathname && sameQuery(back, page)) return { match, to };
+          } catch (e) {
+            // not this part
+          }
+        }
+      }
+    }
     return null;
   }
 
@@ -246,10 +280,33 @@
     // (the chapter text selector is needed for a site with nothing built in, unless the spec is for the chapter list: "Detect with AI" on a book's page saves the
     // list before any chapter's page has been looked at, and the list must work without waiting for the text selector; or the text is read from the site's data)
     const hasJson = raw.json && typeof raw.json === "object" && !!(str(raw.json.match) || str(raw.json.to) || str(raw.json.text));
-    const selector = selectorField("selector", raw.selector, !base && !(raw.toc && typeof raw.toc === "object") && !hasJson && !str(raw.images));
+    const sp = raw.scriptPictures && typeof raw.scriptPictures === "object" && (str(raw.scriptPictures.name) || str(raw.scriptPictures.prefix)) ? raw.scriptPictures : null;
+    const selector = selectorField("selector", raw.selector, !base && !(raw.toc && typeof raw.toc === "object") && !hasJson && !str(raw.images) && !sp);
     if (selector) spec.selector = selector;
     const images = selectorField("images", raw.images, false);
     if (images) spec.images = images;
+    if (sp) {
+      // the chapter's pictures from a list in the page's script: a variable's name (never run: the page's text is only looked through for it), and the server
+      // its addresses are on
+      const name = str(sp.name);
+      const scriptPictures = {};
+      if (/^[A-Za-z_$][\w$]{0,79}$/.test(name)) scriptPictures.name = name;
+      else bad("scriptPictures.name", "The name of a variable in the page's script, like chapterImages.");
+      if (sp.base64 === true) scriptPictures.base64 = true;
+      const prefix = str(sp.prefix).replace(/\/+$/, "");
+      if (prefix) {
+        let ok = false;
+        try {
+          const u = new URL(prefix);
+          ok = u.protocol === "https:" && !u.search && !u.hash && !u.username && !u.password && prefix.length <= 200;
+        } catch (e) {
+          ok = false;
+        }
+        if (ok) scriptPictures.prefix = prefix;
+        else bad("scriptPictures.prefix", "An https address with no ? or #, like https://img.example.com.");
+      }
+      if (scriptPictures.name) spec.scriptPictures = scriptPictures;
+    }
     if (raw.slugSuffix === true) spec.slugSuffix = true;
     if (raw.illustrations === true) spec.illustrations = true;
     const junk = selectorField("junk", raw.junk, false);
@@ -271,9 +328,11 @@
       const t = raw.toc;
       const toc = {};
       const j = t.json && typeof t.json === "object" && (str(t.json.link) || str(t.json.title) || str(t.json.items)) ? t.json : null;
-      const list = j ? "" : selectorField("toc.list", t.list, false);
-      const boxes = j ? "" : selectorField("toc.boxes", t.boxes, false);
-      if (j) {
+      const gallery = j ? "" : selectorField("toc.gallery", t.gallery, false);
+      const list = j || gallery ? "" : selectorField("toc.list", t.list, false);
+      const boxes = j || gallery ? "" : selectorField("toc.boxes", t.boxes, false);
+      if (gallery) toc.gallery = gallery; // (one chapter, the book's page: no list of links, no order, no pages of the list)
+      else if (j) {
         // the list is the site's data
         const json = {};
         const items = pathField("toc.json.items", j.items, false, "data.chapters");
@@ -297,11 +356,11 @@
         const pick = str(t.pick).toLowerCase() || "first";
         if (pick === "first" || pick === "last" || /^\d{1,3}$/.test(pick)) toc.pick = pick;
         else bad("toc.pick", 'Use "first", "last" or a number.');
-      } else if (str(t.list) === "" && str(t.boxes) === "") bad("toc.list", "The chapter list needs the links' selector, like ul.chapters a.");
-      if (t.reverse) toc.reverse = true;
-      const titleDrop = j ? "" : selectorField("toc.titleDrop", t.titleDrop, false); // (the parts of a page's links; data has none)
+      } else if (str(t.list) === "" && str(t.boxes) === "" && str(t.gallery) === "") bad("toc.list", "The chapter list needs the links' selector, like ul.chapters a.");
+      if (t.reverse && !gallery) toc.reverse = true;
+      const titleDrop = j || gallery ? "" : selectorField("toc.titleDrop", t.titleDrop, false); // (the parts of a page's links; data has none)
       if (titleDrop) toc.titleDrop = titleDrop;
-      if (!j && t.pages && typeof t.pages === "object" && str(t.pages.selector)) {
+      if (!j && !gallery && t.pages && typeof t.pages === "object" && str(t.pages.selector)) {
         const selector2 = selectorField("toc.pages", t.pages.selector, false);
         const kind = t.pages.kind === "options" ? "options" : t.pages.kind === "numbered" ? "numbered" : "links";
         if (selector2) toc.pages = { kind, selector: selector2, ...(kind === "options" ? { attr: str(t.pages.attr) || "value" } : {}) };
@@ -325,6 +384,8 @@
         else if (host && !sameSite(expand(to, [], "https://" + host + "/"), host)) bad("toc.listUrl", "The list must be on " + host + ".");
         else toc.listUrl = { match, to };
       }
+      // (the list's address is asked with a POST, as the page's own script asks it: the Madara theme's <book>/ajax/chapters/)
+      if (t.post === true && toc.listUrl && !toc.json && !gallery) toc.post = true;
       if (Object.keys(toc).length) spec.toc = toc;
     }
 
@@ -358,6 +419,8 @@
         const v = selectorField("book." + f, raw.book[f], false);
         if (v) book[f] = v;
       }
+      const drop = selectorField("book.titleDrop", raw.book.titleDrop, false); // (parts inside the title to leave out of it: a badge)
+      if (drop && book.title) book.titleDrop = drop;
       if (Object.keys(book).length) spec.book = book;
     }
     return { ok: errors.length === 0, errors, spec };
@@ -370,6 +433,167 @@
     } catch (e) {
       return "";
     }
+  }
+
+  // A gallery's pages (toc.gallery): the addresses the links lead to, in the page's order, each once, on the rule's own site; at most 400 (a chapter's pictures).
+  function galleryPages(doc, base, selector, host) {
+    let links = [];
+    try {
+      links = [...doc.querySelectorAll(selector)];
+    } catch (e) {
+      return [];
+    }
+    const out = [];
+    for (const a of links) {
+      const u = expand(a.getAttribute("href") || "", [], base).split("#")[0];
+      if (u && u !== String(base).split("#")[0] && sameSite(u, host) && !out.includes(u)) out.push(u);
+      if (out.length >= 400) break;
+    }
+    return out;
+  }
+
+  // ---------- a comic's pictures listed in the page's script (scriptPictures) ----------
+  // What a script variable is set to in a page's text: `name = "…"`, `name: '…'`, `"name": "…"`, or a [...] / {...} after it; its first value that is not empty, with the
+  // script's escapes read (\/ é \x41). "" when the page has none. Only looked through: nothing of the page is run.
+  function scriptValue(html, name) {
+    const text = String(html || "");
+    if (!/^[A-Za-z_$][\w$]{0,79}$/.test(String(name || ""))) return "";
+    const re = new RegExp("(?:^|[^\\w$.])[\"']?" + name.replace(/\$/g, "\\$") + "[\"']?\\s*[:=](?!=)\\s*", "g");
+    const unescape = (s) => s.replace(/\\(?:u([0-9a-fA-F]{4})|x([0-9a-fA-F]{2})|([\s\S]))/g, (_, u, x, c) => (u || x ? String.fromCharCode(parseInt(u || x, 16)) : c === "n" ? "\n" : c === "t" ? "\t" : c === "r" ? "\r" : c));
+    let m;
+    while ((m = re.exec(text))) {
+      const at = m.index + m[0].length;
+      const c = text[at];
+      let end = -1;
+      if (c === '"' || c === "'" || c === "`") {
+        for (let i = at + 1; i < text.length && i < at + 2000000; i++) {
+          if (text[i] === "\\") i++;
+          else if (text[i] === c) { end = i; break; }
+        }
+        if (end > at + 1) return unescape(text.slice(at + 1, end));
+      } else if (c === "[" || c === "{") {
+        let depth = 0;
+        let quote = "";
+        for (let i = at; i < text.length && i < at + 2000000; i++) {
+          const d = text[i];
+          if (quote) {
+            if (d === "\\") i++;
+            else if (d === quote) quote = "";
+          } else if (d === '"' || d === "'" || d === "`") quote = d;
+          else if (d === "[" || d === "{") depth++;
+          else if ((d === "]" || d === "}") && --depth === 0) { end = i; break; }
+        }
+        if (end > at + 1) return unescape(text.slice(at, end + 1));
+      }
+    }
+    return "";
+  }
+  // A base64 text as UTF-8 ("" when it is not base64).
+  function fromBase64(s) {
+    const t = String(s || "").replace(/\s+/g, "");
+    if (!t || !/^[A-Za-z0-9+/_-]+={0,2}$/.test(t)) return "";
+    try {
+      const bin = atob(t.replace(/-/g, "+").replace(/_/g, "/"));
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch (e) {
+      return "";
+    }
+  }
+  // The pictures' addresses in a text, as written, in order: whole ones (https://…, //…) and ones from the site's root (/…), each ending in a picture's extension (a query
+  // after it is kept). Not one that starts inside a word ("img/1.jpg" is no address from the root). Whatever separates them ($qingtiandy$, commas, quotes) is not part of them.
+  const PICTURE_ADDRESS = /(?<![\w.%~-])(?:https?:)?\/[^\s"'<>\\|,;()[\]{}]*?\.(?:jpe?g|png|webp|gif|avif|bmp)(?![\w])(?:\?[^\s"'<>\\|,;()[\]{}$]*)?/gi;
+  function pictureAddressesIn(text) {
+    return String(text || "").match(PICTURE_ADDRESS) || [];
+  }
+  // A chapter's pictures from the list in its page's script (rule.scriptPictures: { name, base64, prefix }): absolute https addresses, in order, each once; at most 400.
+  // An address from the site's root goes on the prefix's server (the one the site's script puts it on), else on the page's own.
+  function picturesInScript(html, sp, base) {
+    if (!sp || !sp.name) return [];
+    let value = scriptValue(html, sp.name);
+    if (sp.base64) value = fromBase64(value).replace(/\\\//g, "/");
+    const out = [];
+    for (const raw of pictureAddressesIn(value)) {
+      let a = raw;
+      if (a.startsWith("//")) a = "https:" + a;
+      else if (a.startsWith("/") && sp.prefix) a = sp.prefix + a;
+      let u;
+      try {
+        u = new URL(a, base);
+      } catch (e) {
+        continue;
+      }
+      if (u.protocol !== "https:" || out.includes(u.href)) continue;
+      out.push(u.href);
+      if (out.length >= 400) break;
+    }
+    return out;
+  }
+
+  // Finding such a list (Detect, and the popup over a chapter's page)
+  // A chapter's page with no <img> for its pictures until its script draws them, from a list in the page itself (a Chinese comic CMS keeps it, base64, in
+  // qTcms_S_m_murl_e: addresses from the site's root, put by its script on a picture server it picks). The variables a page's own scripts set to a string or a
+  // [...] / {...} whose text (as it is, or read as base64) lists 3 pictures or more: [{ name, base64, addresses }].
+  function scriptLists(html) {
+    const scripts = [...String(html || "").matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)].filter((m) => !/\bsrc\s*=/i.test(m[1])).map((m) => m[2]);
+    const names = [];
+    for (const s of scripts) for (const m of s.matchAll(/(?:^|[^\w$.])["']?([A-Za-z_$][\w$]{0,79})["']?\s*[:=](?!=)\s*["'`[{]/g)) if (!names.includes(m[1]) && names.length < 300) names.push(m[1]);
+    const out = [];
+    for (const name of names) {
+      const value = scriptValue(html, name);
+      if (!value) continue;
+      for (const base64 of [false, true]) {
+        const addresses = pictureAddressesIn(base64 ? fromBase64(value).replace(/\\\//g, "/") : value);
+        if (addresses.length >= 3) out.push({ name, base64, addresses });
+      }
+    }
+    return out;
+  }
+  // From the page as sent (`html`, its scripts in it) and the pictures it shows once its script has run (`shown`: their addresses, as the browser has them): the list
+  // that names them, and the server they are shown from when its addresses are from the site's root. Nothing is guessed: a rule is kept only when it gives back
+  // pictures the page shows; of several lists, the longest (a chapter's pages, not a few banners). -> { scriptPictures: { name, base64?, prefix? }, count } or null.
+  function scriptPicturesFor(html, shown, pageUrl) {
+    const seen = new Set();
+    for (const s of shown || []) {
+      try {
+        const u = new URL(s, pageUrl);
+        if (u.protocol === "https:") seen.add(u.href);
+      } catch (e) {
+        // not an address
+      }
+    }
+    if (!seen.size) return null;
+    const origins = [...new Set([...seen].map((h) => new URL(h).origin))];
+    let page;
+    try {
+      page = new URL(pageUrl);
+    } catch (e) {
+      return null;
+    }
+    let best = null;
+    for (const list of scriptLists(html)) {
+      const servers = new Map(); // where the list's addresses from the root are shown from: how many
+      for (const a of list.addresses) {
+        if (/^(https?:)?\/\//i.test(a)) continue;
+        for (const o of origins) {
+          let href = "";
+          try {
+            href = new URL(a, o).href;
+          } catch (e) {
+            continue;
+          }
+          if (seen.has(href)) servers.set(o, (servers.get(o) || 0) + 1);
+        }
+      }
+      const server = [...servers.entries()].sort((x, y) => y[1] - x[1])[0];
+      const prefix = server && server[0] !== page.origin ? server[0] : "";
+      const spec = { name: list.name, ...(list.base64 ? { base64: true } : {}), ...(prefix ? { prefix } : {}) };
+      const urls = picturesInScript(html, spec, pageUrl);
+      const back = urls.filter((u) => seen.has(u)).length;
+      if (urls.length >= 3 && back >= 1 && (!best || urls.length > best.count || (urls.length === best.count && back > best.back))) best = { scriptPictures: spec, count: urls.length, back };
+    }
+    return best ? { scriptPictures: best.scriptPictures, count: best.count } : null;
   }
 
   // ---------- the site's data (JSON) ----------
@@ -519,6 +743,12 @@
     const own = {};
     if (spec.selector) own.selector = spec.selector;
     if (spec.images) own.images = spec.images;
+    if (spec.scriptPictures) {
+      // (the chapter's pictures from the list in its page's script: p2p-host.js readChapter hands it the page's text, scripts and all)
+      const sp = spec.scriptPictures;
+      own.scriptPictures = sp;
+      own.picturesFromHtml = (html, url) => picturesInScript(html, sp, url);
+    }
     if (spec.slugSuffix) own.canonical = dropSlugSuffix;
     if (spec.illustrations) own.illustrations = true;
     if (spec.junk || !base) own.junk = (base && base.junk ? base.junk : JUNK) + (spec.junk ? ", " + spec.junk : "");
@@ -553,6 +783,27 @@
           return out;
         };
       } else if (t.list) toc.list = t.list;
+      if (t.gallery) {
+        // one chapter, the book's page itself (named for the book), when the page has its links to its pages; the chapter's pictures are read from those pages
+        // (p2p-host.js readChapter, through galleryPages)
+        const selector = t.gallery;
+        const titleSel = spec.book && spec.book.title;
+        toc.gallery = selector;
+        toc.galleryPages = (doc, base2) => galleryPages(doc, base2, selector, host);
+        toc.list = (doc, base2) => {
+          if (!galleryPages(doc, base2, selector, host).length) return [];
+          const text = (sel) => {
+            try {
+              const e = sel && doc.querySelector(sel);
+              return e ? String(e.textContent || "").replace(/\s+/g, " ").trim() : "";
+            } catch (e) {
+              return "";
+            }
+          };
+          const title = text(titleSel) || text("h1") || String(doc.title || "").trim() || "Chapter 1";
+          return [{ title: title.slice(0, 200), url: String(base2).split("#")[0] }];
+        };
+      }
       if (t.json) {
         // the list is the site's data: read from the response's text (the engine hands it over as the last argument), its other parts named by the first
         const json = t.json;
@@ -603,6 +854,12 @@
           const url = expand(t.listUrl.to, m, address);
           return sameSite(url, host) ? url : null;
         };
+        // a list asked with a POST: post(list address, the address it was found from) says whether this one is (one this rule's own address makes; a
+        // built-in rule's address under it, where this one does not fit, is asked as usual)
+        if (t.post) {
+          const mine = toc.url;
+          toc.post = (listAddress, from) => !!listAddress && mine(from) === listAddress;
+        }
       }
       own.toc = toc;
     }
@@ -690,6 +947,11 @@
     const entry = next[host] || { spec: { host }, enabled: true };
     const book = { ...((entry.spec && entry.spec.book) || {}) };
     for (const f of BOOK_FIELDS) if (picks && typeof picks[f] === "string" && picks[f].trim()) book[f] = picks[f].trim();
+    // (what to leave out of the title, a badge in it, goes with the title: a title set without it drops the one the old title had)
+    if (picks && typeof picks.title === "string" && picks.title.trim()) {
+      if (typeof picks.titleDrop === "string" && picks.titleDrop.trim()) book.titleDrop = picks.titleDrop.trim();
+      else delete book.titleDrop;
+    }
     const spec = { ...entry.spec, host };
     if (Object.keys(book).length) spec.book = book; // (no empty book part is made when nothing about the book was found)
     next[host] = { ...entry, spec, enabled: true, updatedAt: now || Date.now() };
@@ -710,10 +972,18 @@
       for (const k of ["next", "prev"]) if (typeof f.nav[k] === "string" && f.nav[k].trim()) nav[k] = f.nav[k].trim();
       if (Object.keys(nav).length) spec.nav = nav;
     }
-    if (f.toc && f.toc.json && typeof f.toc.json === "object" && f.toc.listUrl && f.toc.listUrl.match && f.toc.listUrl.to) {
+    if (f.toc && typeof f.toc.gallery === "string" && f.toc.gallery.trim()) {
+      // a book of one chapter whose pictures are each on a page of their own: its links to its pages replace any list (only the pause stays)
+      const toc = { ...(spec.toc || {}) };
+      for (const k of ["list", "boxes", "pick", "pages", "titleDrop", "json", "reverse", "post"]) delete toc[k];
+      toc.gallery = f.toc.gallery.trim();
+      if (f.toc.listUrl && f.toc.listUrl.match && f.toc.listUrl.to) toc.listUrl = { match: f.toc.listUrl.match, to: f.toc.listUrl.to };
+      else if ("listUrl" in f.toc) delete toc.listUrl;
+      spec.toc = toc;
+    } else if (f.toc && f.toc.json && typeof f.toc.json === "object" && f.toc.listUrl && f.toc.listUrl.match && f.toc.listUrl.to) {
       // a list that is the site's data replaces a list read from a page, whatever it was (only the pause stays)
       const toc = { ...(spec.toc || {}) };
-      for (const k of ["list", "boxes", "pick", "pages", "titleDrop"]) delete toc[k];
+      for (const k of ["list", "boxes", "pick", "pages", "titleDrop", "gallery", "post"]) delete toc[k];
       toc.json = { ...f.toc.json };
       toc.listUrl = { match: f.toc.listUrl.match, to: f.toc.listUrl.to };
       if (f.toc.reverse === true) toc.reverse = true;
@@ -724,6 +994,7 @@
       delete toc.boxes; // (a list found by its links replaces a list read from a box)
       delete toc.pick;
       delete toc.json; // (and one read from the site's data)
+      delete toc.gallery; // (and a book's pages)
       toc.list = f.toc.list.trim();
       if (f.toc.reverse === true) toc.reverse = true;
       else if (f.toc.reverse === false) delete toc.reverse;
@@ -739,6 +1010,9 @@
       // how to reach the list page from a chapter's address
       if (f.toc.listUrl && f.toc.listUrl.match && f.toc.listUrl.to) toc.listUrl = { match: f.toc.listUrl.match, to: f.toc.listUrl.to };
       else if ("listUrl" in f.toc) delete toc.listUrl; // (the list was tried and no address rule holds up: one saved by an earlier run, that does not, goes)
+      // asked with a POST (the list found in what the page's script asked for that way): only with the address it was found at
+      if (f.toc.post === true && toc.listUrl) toc.post = true;
+      else delete toc.post;
       spec.toc = toc;
     }
     // the chapter's text from the site's data
@@ -747,6 +1021,10 @@
     if (typeof f.selector === "string" && f.selector.trim()) spec.selector = f.selector.trim();
     // where a comic's pictures are: a site whose chapters are pictures has them kept, not their text
     if (typeof f.images === "string" && f.images.trim()) spec.images = f.images.trim();
+    // ... or the list of them in its page's script, and the server they are on
+    if (f.scriptPictures && typeof f.scriptPictures.name === "string" && f.scriptPictures.name.trim()) {
+      spec.scriptPictures = { name: f.scriptPictures.name.trim(), ...(f.scriptPictures.base64 === true ? { base64: true } : {}), ...(typeof f.scriptPictures.prefix === "string" && f.scriptPictures.prefix.trim() ? { prefix: f.scriptPictures.prefix.trim() } : {}) };
+    }
     next[host] = { ...entry, spec };
     return next;
   }
@@ -786,7 +1064,7 @@
     return ready;
   }
 
-  const api = { KEY, JUNK, dropSlugSuffix, BOOK_FIELDS, CHARSETS, cleanHost, baseFor, pagerOf, listUrlRule, validate, toRule, compile, bookTable, withBookSelectors, withDetected, apply, current: () => lastStored, start, sameSite, expand, jsonAt, groupsOf, fillLink, linesOf, ready: Promise.resolve() };
+  const api = { KEY, JUNK, dropSlugSuffix, BOOK_FIELDS, CHARSETS, cleanHost, baseFor, pagerOf, listUrlRule, validate, toRule, compile, bookTable, withBookSelectors, withDetected, apply, current: () => lastStored, start, sameSite, expand, jsonAt, groupsOf, fillLink, linesOf, scriptValue, fromBase64, pictureAddressesIn, picturesInScript, scriptLists, scriptPicturesFor, ready: Promise.resolve() };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.UserRules = api;
   if (root.__USER_RULES__) apply(root.__USER_RULES__); // a script injected into a tab is handed the rules before it runs

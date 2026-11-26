@@ -7,6 +7,8 @@
 //   splitIllustrations(text) / joinIllustrations(text, split) / stripIllustrations(text)   the text without those lines and where they were, put back after the words
 //                                    were translated, and the words alone
 //   urlsFromProps(doc, baseUrl)     the same from the page's own data (an Astro page keeps its list of pictures in an island's props attribute)
+//   livePictures(doc, sel, href, n) a chapter's pictures as the tab lays the page out (the popup's look; a page Translate ahead goes on to) -> { pictures, lone }
+//   whereOf(imgs, doc)               a selector for where those pictures are, to find them on the site's next pages too
 //   fetchPages(urls, fetchOne, opts) the pictures fetched a few at a time, a pause between starts, each retried; a failure keeps the ones fetched
 //   sizeOf(bytes, type)              { w, h } read from the picture's header (no decoding), or null
 //   kindOf(bytes)                    "image/webp" | "image/png" | "image/jpeg" | "image/gif" | "image/avif", from the bytes themselves, else ""
@@ -127,6 +129,59 @@
       if (out.length) return out;
     }
     return [];
+  }
+
+  // The pictures of a chapter's page as it is laid out in the tab (the popup's look at it, and a page the extension goes on to: translate-ahead.js): the rule's selector, the
+  // page's own list of them, else large pictures one under another. -> { pictures, lone } (lone: one or two big pictures on a page with no text, as nhentai.net's reader shows
+  // one picture a page). textChars: how much text the page has (a text chapter with a few pictures is not a comic).
+  function livePictures(doc, selector, href, textChars) {
+    let pictures = [];
+    let lone = [];
+    if (selector) pictures = urlsOf(doc, selector, href);
+    if (!pictures.length) pictures = urlsFromProps(doc, href);
+    if (pictures.length) return { pictures, lone };
+    // a picture of the chapter: a big one that is loaded, or one a lazy loader has not loaded yet (the real address in data-src, a placeholder in src: it is as wide
+    // as the page lays it out, whatever the placeholder is). Of those, the ones that share the nearest container with the most of them (not the page's banners or thumbnails).
+    const wide = (im) => im.getBoundingClientRect().width >= 200;
+    const isBig = (im) => (im.naturalWidth >= 300 && im.naturalHeight >= 300 && wide(im)) || (!!im.getAttribute("data-src") || !!im.getAttribute("data-lazy-src") || !!im.getAttribute("data-original")) && wide(im) && im.naturalWidth < 300 && !!imgUrl(im, href);
+    const cand = [...doc.images].filter(isBig);
+    let best = cand, most = 0;
+    for (const im of cand) {
+      let up = im.parentElement;
+      for (let d = 0; up && d < 3; d++, up = up.parentElement) {
+        const inside = cand.filter((x) => up.contains(x));
+        if (inside.length > most) { most = inside.length; best = inside; }
+      }
+    }
+    const urlOf = (im) => imgUrl(im, href) || (im.currentSrc && /^https:/.test(im.currentSrc) ? im.currentSrc : "");
+    if (best.length >= 3 && textChars < 2000) pictures = best.map(urlOf).filter(Boolean);
+    else if (best.length >= 1 && best.length <= 2 && textChars < 100) lone = best.map(urlOf).filter(Boolean); // (a reader that shows one picture a page: nhentai.net/g/<id>/<page>/)
+    return { pictures, lone };
+  }
+
+  // Where a page's pictures are, as a selector that finds the same place on the site's other pages (fetched, so no layout): the nearest box that holds them all, named
+  // by its id or its tag and classes up to one with an id ("#image-container > a img"). "" when no such selector finds these pictures and little else on this page.
+  function whereOf(imgs, doc) {
+    imgs = (imgs || []).filter(Boolean);
+    if (!imgs.length || !doc) return "";
+    let box = imgs[0].parentElement;
+    while (box && !imgs.every((i) => box.contains(i))) box = box.parentElement;
+    const esc = (s) => (typeof CSS !== "undefined" && CSS.escape ? CSS.escape(s) : String(s).replace(/[^\w-]/g, "\\$&"));
+    // (an id or a class a framework makes up, "svelte-1wapu6c", "css-x7k2", a number: not the same on the next page)
+    const madeUp = (s) => /^(svelte|css|jsx|sc|emotion|tw)-|\d{3,}|^[a-z]{1,3}\d|^_/.test(s);
+    const part = (el) => (el.id && !madeUp(el.id) ? "#" + esc(el.id) : el.tagName.toLowerCase() + [...el.classList].filter((c) => /^[A-Za-z][\w-]*$/.test(c) && !madeUp(c)).slice(0, 2).map((c) => "." + esc(c)).join(""));
+    const chain = [];
+    for (let el = box; el && el !== doc.body && el !== doc.documentElement && chain.length < 5; el = el.parentElement) {
+      chain.unshift(part(el));
+      if (chain[0].startsWith("#")) break;
+    }
+    if (!chain.length) return "";
+    const sel = chain.join(" > ") + " img";
+    try {
+      const found = [...doc.querySelectorAll(sel)];
+      if (imgs.every((i) => found.includes(i)) && found.length <= imgs.length * 2 + 2) return sel;
+    } catch (e) { /* a selector the browser cannot use */ }
+    return "";
   }
 
   // The pictures fetched with fetchOne(url, i) -> { bytes, type, ... }, in order. At most opts.parallel at once (3), two starts at least opts.gap ms apart (the sites ask
@@ -538,7 +593,7 @@
     };
   }
 
-  const api = { VERSION, MAX_PAGES, MAX_PAGE_BYTES, MAX_BUNDLE_BYTES, urlsOf, imgUrl, sizeOf, mark, illustrationNo, splitIllustrations, joinIllustrations, stripIllustrations, urlsFromProps, fetchPages, kindOf, crc32, zip, packBundle, indexBundle, pageBytes, squeeze, toB64, fromB64, planTrim, openStore };
+  const api = { VERSION, MAX_PAGES, MAX_PAGE_BYTES, MAX_BUNDLE_BYTES, urlsOf, imgUrl, livePictures, whereOf, sizeOf, mark, illustrationNo, splitIllustrations, joinIllustrations, stripIllustrations, urlsFromProps, fetchPages, kindOf, crc32, zip, packBundle, indexBundle, pageBytes, squeeze, toB64, fromB64, planTrim, openStore };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.ImageChapter = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

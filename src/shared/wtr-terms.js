@@ -180,7 +180,7 @@
       rawId: String(rawId),
       slug: realSlug,
       url: base && realSlug ? base + "/novel/" + rawId + "/" + realSlug : undefined,
-      title: sd.data.title,
+      title: cleanDescription(sd.data.title), // (a term in the title is written the same way: "%{Soul Land|RG91bHVvIERhbHU}: ..." is shown "Douluo Dalu: ...")
       author: sd.data.author,
       authorRaw: sd.data.raw && sd.data.raw.author,
       synopsis: cleanDescription(sd.data.description),
@@ -221,7 +221,27 @@
     { host: "69shuba.com", path: /^\/book\/(\d+)(?:\.htm|\/)?$/, key: (m) => "/txt/" + m[1] }
   ];
 
-  // One key per "novel on a site": host plus the URL directory (or a rule above), the same heuristic used everywhere.
+  // A site that names its books in the address's query, not its path (wftoon: a chapter "view?toon=7968&num=1&title=…", its book "list?toon=7968&title=…"):
+  // the query's numbers that are not a chapter's or a page's name the book, "?toon=7968". Only when the path names none (no number of 3 or more digits in it, as
+  // sameBookUrl reads a book's number). For a chapter's address (`chapter`), only when the query numbers the chapter too ("num=1"): "chapter.php?id=88123"
+  // is that chapter's number, not its book's. "" when the query names no book. (The same in site/chapters.js and book-capture.js.)
+  const CHAPTER_FIELD = /^(?:n|no|num|number|c|ch|chap|chapters?|chapters?_?(?:id|no|num|number)|cid|ep|epi|episodes?|episodes?_?(?:id|no|num|number)|eid|wr_id|seq|idx|index)$/i;
+  const NOT_BOOK_FIELD = /^(?:p|pg|page|page_?(?:no|num|size)|part|vol|volume|sort|order|limit|offset|size|t|v|ver|ts|time|_|lang|hl|ref|from|utm_\w+)$/i;
+  function bookQuery(u, chapter) {
+    if (/\d{3,}/.test(u.pathname)) return "";
+    const book = [];
+    let numbered = false;
+    u.searchParams.forEach((v, k) => { // (forEach: a Firefox content script cannot iterate the page's URLSearchParams)
+      if (!/^\d{1,15}$/.test(v)) return;
+      if (CHAPTER_FIELD.test(k)) numbered = true;
+      else if (!NOT_BOOK_FIELD.test(k) && !book.some((f) => f[0] === k)) book.push([k, v]);
+    });
+    if (!book.length || (chapter && !numbered)) return "";
+    return "?" + book.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map((f) => encodeURIComponent(f[0]) + "=" + f[1]).join("&");
+  }
+
+  // One key per "novel on a site": host plus the URL directory (or a rule above), the same heuristic used everywhere; plus the book's part of the query
+  // when the path does not name it (bookQuery: every chapter of a site that names its books only in the query is not one book).
   function bindingKey(url) {
     const u = new URL(url);
     const host = u.hostname.replace(/^www\./, "");
@@ -229,8 +249,15 @@
       const m = host === rule.host && rule.path.exec(u.pathname);
       if (m) return host + rule.key(m);
     }
-    const dir = u.pathname.replace(/\/[^/]*$/, "") || "/";
-    return host + dir;
+    return host + bookDir(u.pathname) + bookQuery(u, true);
+  }
+  // A chapter's folder is its book's, except a folder that ends in the chapter's own number (royalroad.com/fiction/<id>/<name>/chapter/<chapter id>/<chapter name>,
+  // scribblehub.com/read/<id>-<name>/chapter/<chapter id>/): there each chapter would be a book of its own, and the book is the folder above "chapter", when that
+  // is two parts or more (/chapter/<book id>/<chapter id>.html names its book by that number). site/chapters.js bookDir does the same.
+  function bookDir(pathname) {
+    const dir = String(pathname).replace(/\/[^/]*$/, "") || "/";
+    const up = /^(\/[^/]+(?:\/[^/]+)+)\/chapters?\/\d+$/i.exec(dir);
+    return up ? up[1] : dir;
   }
 
   const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9㐀-鿿]+/g, "");
@@ -418,7 +445,7 @@
     return result;
   }
 
-  const api = { toLibraryEntry, personalPairs, personalReplacements, toNovelInfo, cleanDescription, parseVotes, bindingIds, parseWtrUrl, bindingKey, search, boundEntries, myTermEntries, myTermRegex, pluralOf, applyReplacements,
+  const api = { toLibraryEntry, personalPairs, personalReplacements, toNovelInfo, cleanDescription, parseVotes, bindingIds, parseWtrUrl, bindingKey, bookQuery, search, boundEntries, myTermEntries, myTermRegex, pluralOf, applyReplacements,
     EVERY, EVERY_DEFAULT, offKey, isListKey, bookOf, glossaryIdsFor, novelLists, pickedRows };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.WtrTerms = api;

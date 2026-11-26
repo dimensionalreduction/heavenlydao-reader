@@ -1,4 +1,4 @@
-importScripts("p2p-core.js", "term-match.js", "gemini.js", "site-matches.js", "site-access.js", "referer.js", "image-chapter.js", "picture-limit.js", "access-offer.js", "fish-speech.js", "glossary-server.js", "wtr-terms.js", "base-glossary.js", "term-pool.js", "pool-hints.js", "pool-share.js", "raw-sources.js", "user-rules.js", "term-notes.js", "profile-model.js", "profile-translate.js", "lang-detect.js", "original-translate.js", "watcher.js", "book-visit.js", "notice-bg.js");
+importScripts("pay.js", "p2p-core.js", "term-match.js", "google-chapter.js", "gemini.js", "site-matches.js", "site-access.js", "referer.js", "image-chapter.js", "picture-limit.js", "access-offer.js", "fish-speech.js", "glossary-server.js", "wtr-terms.js", "base-glossary.js", "term-pool.js", "pool-hints.js", "pool-share.js", "raw-sources.js", "user-rules.js", "term-notes.js", "profile-model.js", "profile-translate.js", "lang-detect.js", "original-translate.js", "watcher.js", "book-visit.js", "notice-bg.js", "translate-ahead.js");
 UserRules.start(chrome); // the rules the person added: read from storage here, handed to the offscreen document below
 
 const RAW_TEXT_VAR_CANDIDATES = ["txt_content"];
@@ -8,7 +8,8 @@ function hostnameOf(url) {
 }
 
 // Note: with a default_popup set, action.onClicked never fires — the popup owns the click.
-// The popup's "Translate this page" button sends {type:"translateTab", tabId} instead. opts: { keepNothing, pay } (a chapter's page: docs/ADD-BOOK.md)
+// The popup's "Translate this page" button sends {type:"translateTab", tabId} instead. opts: { keepNothing, pay } (a chapter's page: docs/ADD-BOOK.md),
+// ahead: { count, auto } (Translate ahead: translate-ahead.js)
 async function translateTab(tabId, opts = {}) {
   const tab = await chrome.tabs.get(tabId);
   const hostname = hostnameOf(tab.url);
@@ -38,23 +39,46 @@ async function translateTab(tabId, opts = {}) {
 
   await chrome.scripting.executeScript({
     target: { tabId },
-    func: (text, contentSel, novelSel, novelName, rules, keepNothing, pay) => {
+    func: (text, contentSel, novelSel, novelName, rules, keepNothing, pay, ahead) => {
       window.__P2PREAD_KEEP_NOTHING__ = keepNothing;
+      if (keepNothing) window.__P2PREAD_COMIC_URLS__ = null; // (the page's pill, comic-page.js, for a text chapter: content.js tells it how it goes)
       window.__P2PREAD_PAY__ = pay;
+      window.__P2PREAD_AHEAD__ = ahead;
       window.__USER_RULES__ = rules;
       window.__GEMINI_PRECOLLECTED_TEXT__ = text;
       window.__GEMINI_CONTENT_SELECTOR_OVERRIDE__ = contentSel;
       window.__GEMINI_NOVEL_SELECTOR_OVERRIDE__ = novelSel;
       window.__GEMINI_NOVEL_NAME_OVERRIDE__ = novelName;
     },
-    args: [rawText, contentSelector, novelSelector, novelNameOverride, userRules || {}, !!opts.keepNothing, opts.pay === "tickets" ? "tickets" : "key"]
+    args: [rawText, contentSelector, novelSelector, novelNameOverride, userRules || {}, !!opts.keepNothing, ["tickets", "openrouter", "rules"].includes(opts.pay) ? opts.pay : "key", opts.ahead ? { count: Number(opts.ahead.count) || 0, auto: !!opts.ahead.auto } : null]
   });
 
   await chrome.scripting.executeScript({
     target: { tabId },
-    files: ["site-selectors.js", "default-glossary.js", "wtr-terms.js", "raw-sources.js", "user-rules.js", "content.js"]
+    files: [...(opts.keepNothing ? ["comic-page.js"] : []), "site-selectors.js", "default-glossary.js", "wtr-terms.js", "raw-sources.js", "user-rules.js", "next-page.js", "terms.js", "content.js"]
   });
 }
+
+// A chapter's text translated as the popup's Translate asks (nothing kept), paid with the Gemini key ("key"), the OpenRouter key, or tickets
+function translatePageText(m, keepNothing) {
+  // (by the Translation rule's rows, Settings › Model rules: the popup no longer picks who pays)
+  if (m.pay === "rules") return GlossaryServer.targetLanguage().catch(() => "en").then((lang) => ProfileTranslate.pageByRules(m.text, m.glossary, lang, m.url));
+  if (m.pay === "tickets" || m.pay === "openrouter") {
+    return GlossaryServer.targetLanguage().catch(() => "en").then((lang) => ProfileTranslate[m.pay === "tickets" ? "pageWithTickets" : "pageWithKey"](m.text, m.glossary, lang));
+  }
+  return chrome.storage.local.get("selectedModel").then(({ selectedModel }) =>
+    TermNotes.translate({ text: m.text, glossary: m.glossary, model: selectedModel, url: m.url, title: m.title, novelName: m.novelName, keepNothing: !!keepNothing }));
+}
+
+// Translate ahead (translate-ahead.js): the next pages translated before they are opened, the tab followed to them
+TranslateAhead.start({
+  translateTab,
+  translateText: (job) => translatePageText(job, true),
+  run: (tabId, func) => chrome.scripting.executeScript({ target: { tabId }, func }).then(([r] = []) => r && r.result),
+  files: (tabId, files) => chrome.scripting.executeScript({ target: { tabId }, files }),
+  // (the comic host is the offscreen page)
+  comic: async (op, msg) => { await ensureOffscreen(); return chrome.runtime.sendMessage(Object.assign({ target: "comic", op }, msg)); }
+});
 
 const bookAdds = new Map(); // tab -> the answer to the popup's Import to library, when the page says it has recorded the book
 // a page of this extension (the popup, also when it is opened in a tab of its own), never a site's page
@@ -129,15 +153,15 @@ function handleMessage(message, sender, sendResponse) {
     bookAdds.get(sender.tab.id)(message);
     return;
   }
+  // Translate ahead (translate-ahead.js): the popup's switch, the pages' requests
+  const ahead = TranslateAhead.answer(message, sender);
+  if (ahead) {
+    ahead.then(sendResponse, (e) => sendResponse({ error: e.message }));
+    return true;
+  }
   if (message.type === "translate") {
     // (keepNothing, pay: the popup's Translate on a chapter's page: nothing kept, paid with the Gemini key or tickets as picked there)
-    if (message.pay === "tickets") {
-      GlossaryServer.targetLanguage().catch(() => "en").then((lang) => ProfileTranslate.pageWithTickets(message.text, message.glossary, lang)).then(sendResponse, (e) => sendResponse({ error: e.message }));
-      return true;
-    }
-    chrome.storage.local.get("selectedModel").then(({ selectedModel }) =>
-      TermNotes.translate({ text: message.text, glossary: message.glossary, model: selectedModel, url: message.url, title: message.title, novelName: message.novelName, keepNothing: !!message.keepNothing }).then(sendResponse)
-    );
+    translatePageText(message, !!message.keepNothing).then(sendResponse, (e) => sendResponse({ error: e.message }));
     return true;
   }
   if (message.type === "original:notes") {
@@ -199,7 +223,8 @@ function handleMessage(message, sender, sendResponse) {
   if (message.type === "startDetect") {
     // the popup's "Detect with AI": the script that asks Gemini is injected into the tab
     // (message.local: no Gemini, the page itself says where the chapter list is)
-    chrome.scripting.executeScript({ target: { tabId: message.tabId }, func: (local) => { window.__P2PREAD_DETECT_LOCAL = !!local; }, args: [!!message.local] })
+    // (message.book: the popup shows the page as a book's, Import to library runs from there: its many covers are not a comic's chapter)
+    chrome.scripting.executeScript({ target: { tabId: message.tabId }, func: (local, book) => { window.__P2PREAD_DETECT_LOCAL = !!local; window.__P2PREAD_DETECT_BOOK = !!book; }, args: [!!message.local, !!message.book] })
       .then(() => chrome.scripting.executeScript({ target: { tabId: message.tabId }, files: ["user-rules.js", "book-detect.js"] })).then(() => sendResponse({ ok: true }), (e) => sendResponse({ error: e.message }));
     return true;
   }
@@ -220,6 +245,11 @@ function handleMessage(message, sender, sendResponse) {
   if (message.type === "book:visit") {
     // "Refresh details" was refused by the site: open the page in a background tab and let the recording script record it
     BookVisit.visit(message.url).then(sendResponse, (e) => sendResponse({ error: e.message }));
+    return true;
+  }
+  if (message.type === "pictures:relearn" && ownPage(sender)) {
+    // a comic's chapter whose site rule no longer finds the list its script draws the pictures from: the chapter is opened in a background tab to find it again
+    BookVisit.relearnPictures(message.url, message.had).then(sendResponse);
     return true;
   }
   if (message.type === "cover:enabled") {
@@ -255,7 +285,13 @@ function handleMessage(message, sender, sendResponse) {
     return true;
   }
   if (message.type === "translateTab") {
-    translateTab(message.tabId, { keepNothing: !!message.keepNothing, pay: message.pay }).then(() => sendResponse({ ok: true }), (e) => sendResponse({ error: e.message }));
+    // (ahead: the popup's Translate ahead switch is on: the tab is followed from here, translate-ahead.js)
+    const pay = message.pay;
+    const begun = message.ahead && ownPage(sender)
+      ? chrome.tabs.get(message.tabId).then((tab) => TranslateAhead.begin(message.tabId, { kind: "text", pay, url: tab.url })).then(() => true, () => false)
+      : Promise.resolve(false);
+    begun.then((on) => translateTab(message.tabId, { keepNothing: !!message.keepNothing, pay, ahead: on ? { count: TranslateAhead.COUNT, auto: false } : null }))
+      .then(() => sendResponse({ ok: true }), (e) => sendResponse({ error: e.message }));
     return true;
   }
   if (message.type === "listModels") {
@@ -394,7 +430,7 @@ const watchDeps = {
   addNotice: (n) => GlossaryServer.addNotice(n),
   saveChapterIndex: (r) => GlossaryServer.putChapterIndex(r),
   bindingKey: (url) => WtrTerms.bindingKey(url), // the site + directory key chapter lists and glossary bindings share
-  translateTitles: (texts) => Watcher.cachedTitles(chrome.storage.local, (t) => translateByMode(t, "titles"), texts),
+  translateTitles: (texts) => translateByMode(texts, "titles"), // (each title once: gemini.js titlesOnce)
   // the page that can reach the source sites does the looking
   check: async (w) => {
     await ensureOffscreen();

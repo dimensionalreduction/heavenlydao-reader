@@ -25,7 +25,10 @@
       { id: "charset", label: "Text encoding", hint: "Leave on automatic unless the text comes out as garbage", select: [["", "Automatic"], ...UR.CHARSETS.map((c) => [c, c])] }
     ]],
     ["Chapter pictures (a comic)", [
-      { id: "images", label: "The chapter's pictures", hint: "The <img> elements or the box that holds them, like #pages img or div.reader", mono: true, wide: true }
+      { id: "images", label: "The chapter's pictures", hint: "The <img> elements or the box that holds them, like #pages img or div.reader", mono: true, wide: true },
+      { id: "scriptPictures.name", label: "…or the list of them in the page's script", hint: "The variable that holds it, like chapterImages", mono: true },
+      { id: "scriptPictures.prefix", label: "Their server", hint: "Put before an address in the list that starts with /, like https://img.example.com", mono: true },
+      { id: "scriptPictures.base64", label: "The list is base64", check: true }
     ]],
     ["Moving between chapters (optional)", [
       { id: "nav.next", label: "The link to the next chapter", hint: "On a chapter's page, like a#next or .nav-next a. Leave empty to let the extension look for it", mono: true },
@@ -35,6 +38,7 @@
       { id: "toc.list", label: "The links to the chapters", hint: "On the list page, like ul.chapters a", mono: true },
       { id: "toc.boxes", label: "…or the box that holds them", hint: "Use this when a page has several lists; then say which one", mono: true },
       { id: "toc.pick", label: "Which box", hint: "first, last, or a number (0 is the first)", select: [["first", "the first"], ["last", "the last"], ["1", "the second"], ["2", "the third"]] },
+      { id: "toc.gallery", label: "…or one chapter: the links to its pages, a picture each", hint: "On the book's page, like #thumbnail-container a", mono: true },
       { id: "toc.reverse", label: "The list shows the newest chapter first", check: true },
       { id: "toc.titleDrop", label: "Leave out of each chapter's title", hint: "Parts of a link that are not the title, like the date: .small, time", mono: true },
       { id: "toc.pagesKind", label: "The list runs over several pages", select: [["", "No"], ["numbered", "Yes: a bar of page numbers (…?page=2 … ?page=76): every page up to the highest"], ["options", "Yes: a page selector names them (<option>)"], ["links", "Yes: links lead to the other pages"]] },
@@ -60,6 +64,7 @@
     ]],
     ["Book page (optional)", [
       { id: "book.title", label: "Title", hint: "On the book's own page", mono: true },
+      { id: "book.titleDrop", label: "Leave out of the title", hint: "Parts inside it that are not the title, like a badge: span.badge", mono: true },
       { id: "book.author", label: "Author", mono: true },
       { id: "book.description", label: "Synopsis", mono: true },
       { id: "book.cover", label: "Cover", hint: "The element that holds the image", mono: true },
@@ -116,17 +121,19 @@
   function specFromForm() {
     const spec = { host: val("host"), name: val("name"), selector: val("selector"), images: val("images"), slugSuffix: val("slugSuffix"), illustrations: val("illustrations"), junk: val("junk"), charset: val("charset") };
     const toc = {
-      list: val("toc.list"), boxes: val("toc.boxes"), pick: val("toc.pick"), reverse: val("toc.reverse"), gap: val("toc.gap"), titleDrop: val("toc.titleDrop"),
+      list: val("toc.list"), boxes: val("toc.boxes"), pick: val("toc.pick"), gallery: val("toc.gallery"), reverse: val("toc.reverse"), gap: val("toc.gap"), titleDrop: val("toc.titleDrop"),
       pages: { kind: val("toc.pagesKind"), selector: val("toc.pagesSelector"), attr: val("toc.pagesAttr") },
       listUrl: { match: val("toc.listMatch"), to: val("toc.listTo") },
       json: { items: val("toc.json.items"), title: val("toc.json.title"), link: val("toc.json.link"), page: val("toc.json.page"), count: val("toc.json.count"), pages: val("toc.json.pages") }
     };
-    if (toc.list || toc.boxes || toc.pages.selector || toc.gap || toc.listUrl.match || toc.listUrl.to || toc.reverse || toc.json.title || toc.json.link || toc.json.items) spec.toc = toc;
+    if (toc.list || toc.boxes || toc.gallery || toc.pages.selector || toc.gap || toc.listUrl.match || toc.listUrl.to || toc.reverse || toc.json.title || toc.json.link || toc.json.items) spec.toc = toc;
     const json = { match: val("json.match"), to: val("json.to"), text: val("json.text"), next: val("json.next") };
     if (json.match || json.to || json.text) spec.json = json;
+    const scriptPictures = { name: val("scriptPictures.name"), prefix: val("scriptPictures.prefix"), base64: val("scriptPictures.base64") };
+    if (scriptPictures.name || scriptPictures.prefix) spec.scriptPictures = scriptPictures;
     const nav = { next: val("nav.next"), prev: val("nav.prev") };
     if (nav.next || nav.prev) spec.nav = nav;
-    const book = { title: val("book.title"), author: val("book.author"), description: val("book.description"), cover: val("book.cover"), genre: val("book.genre") };
+    const book = { title: val("book.title"), titleDrop: val("book.titleDrop"), author: val("book.author"), description: val("book.description"), cover: val("book.cover"), genre: val("book.genre") };
     if (Object.values(book).some(Boolean)) spec.book = book;
     return spec;
   }
@@ -139,6 +146,9 @@
     setVal("name", s.name);
     setVal("selector", s.selector);
     setVal("images", s.images);
+    setVal("scriptPictures.name", s.scriptPictures ? s.scriptPictures.name : "");
+    setVal("scriptPictures.prefix", s.scriptPictures ? s.scriptPictures.prefix : "");
+    setVal("scriptPictures.base64", !!(s.scriptPictures && s.scriptPictures.base64));
     setVal("slugSuffix", s.slugSuffix);
     setVal("illustrations", s.illustrations);
     setVal("junk", s.junk);
@@ -146,6 +156,7 @@
     setVal("toc.list", t.list);
     setVal("toc.boxes", t.boxes);
     setVal("toc.pick", t.pick || "first");
+    setVal("toc.gallery", t.gallery);
     setVal("toc.reverse", t.reverse);
     setVal("toc.titleDrop", t.titleDrop);
     setVal("toc.gap", t.gap);
@@ -157,6 +168,7 @@
     for (const f of ["items", "title", "link", "page", "count", "pages"]) setVal("toc.json." + f, t.json ? t.json[f] : "");
     for (const f of ["match", "to", "text", "next"]) setVal("json." + f, s.json ? s.json[f] : "");
     for (const f of UR.BOOK_FIELDS) setVal("book." + f, s.book ? s.book[f] : "");
+    setVal("book.titleDrop", s.book ? s.book.titleDrop : "");
     setVal("nav.next", s.nav ? s.nav.next : "");
     setVal("nav.prev", s.nav ? s.nav.prev : "");
     showErrors([]);
@@ -335,8 +347,17 @@
         say(read.text.split("\n").length + " paragraphs, " + read.text.length + " characters.\nThe chapter's data: " + page.url + "\nThe next chapter's address: " + (read.next || "not found") + "\n\n" + clip(read.text, 900));
       } else if (kind === "chapter") {
         const page = await fetchForTrial(rule, v.spec.host, address);
-        if (rule.images) {
-          const urls = ImageChapter.urlsOf(page.doc, rule.images, page.url);
+        const pages = rule.toc && rule.toc.galleryPages ? rule.toc.galleryPages(page.doc, page.url) : [];
+        if (pages.length) {
+          // a book of one chapter, a picture on each of its pages: the first page's picture
+          const first = await fetchForTrial(rule, v.spec.host, pages[0]);
+          const pic = rule.images ? ImageChapter.urlsOf(first.doc, rule.images, first.url) : [];
+          return say("One chapter of " + pages.length + " pages.\n\n" + [pages[0], pages.length > 1 ? "…" : "", pages.length > 1 ? pages[pages.length - 1] : ""].filter(Boolean).join("\n") + "\n\nPage 1's picture: " + (pic[0] || (rule.images ? "not found with " + v.spec.images : "no selector for it (The chapter's pictures)")));
+        }
+        if (rule.images || rule.picturesFromHtml) {
+          let urls = rule.images ? ImageChapter.urlsOf(page.doc, rule.images, page.url) : [];
+          if (!urls.length && rule.picturesFromHtml) urls = rule.picturesFromHtml(page.html, page.url);
+          if (!urls.length && !rule.images) return say("Nothing found: the page's script has no list of pictures in " + v.spec.scriptPictures.name + (v.spec.scriptPictures.base64 ? " (read as base64)" : "") + ".\nCheck the name, or whether the site needs you to be logged in.");
           if (!urls.length) return say("Nothing found: the page has no pictures matching " + v.spec.images + ".\nCheck the selector, or whether the site needs you to be logged in.");
           return say(urls.length + " pictures.\n\n" + [...urls.slice(0, 3), urls.length > 6 ? "…" : "", ...urls.slice(3).slice(-3)].filter((u) => u !== "").join("\n"));
         }

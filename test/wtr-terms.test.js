@@ -73,6 +73,9 @@ assert.strictEqual(W.parseWtrUrl("https://example.com/en/novel/8053/x"), null);
 
 // binding key: host (no www) + URL directory, so every chapter of one novel on a site shares it
 assert.strictEqual(W.bindingKey("https://www.69shuba.com/txt/77582/38804615"), "69shuba.com/txt/77582");
+// royalroad.com: the chapter's folder ends in its own number; the book is the folder above "chapter" (as the library's bindingKeyOfChapter)
+assert.strictEqual(W.bindingKey("https://www.royalroad.com/fiction/201243/black-apron-max-level-archmaid/chapter/4282802/chapter-zero-king-breaker"), "royalroad.com/fiction/201243/black-apron-max-level-archmaid");
+assert.strictEqual(W.bindingKey("https://example.com/chapter/12345/67890.html"), "example.com/chapter/12345", "a book named by its number after chapter/ stays one");
 assert.strictEqual(W.bindingKey("https://69shuba.com/txt/77582/38804616?x=1"), "69shuba.com/txt/77582");
 assert.notStrictEqual(W.bindingKey("https://www.69shuba.com/txt/1/2"), W.bindingKey("https://www.69shuba.com/txt/77582/2"));
 
@@ -82,6 +85,16 @@ assert.strictEqual(W.bindingKey("https://www.69shuba.com/book/77582/"), "69shuba
 assert.strictEqual(W.bindingKey("https://www.69shuba.com/book/77582"), "69shuba.com/txt/77582");
 assert.strictEqual(W.bindingKey("https://www.69shuba.com/txt/77582/38804613"), "69shuba.com/txt/77582", "chapter pages are unchanged");
 assert.strictEqual(W.bindingKey("https://example.com/book/77582.htm"), "example.com/book", "other sites keep the directory rule");
+
+// a site that names its books only in the query (wftoon): two books' chapters are two keys, a book's chapters one, the chapter's own number and title not in it
+const WF = (toon, num) => "https://wftoon236.com/view?toon=" + toon + "&num=" + num + "&title=%B0%F8%C0%DB" + num;
+assert.strictEqual(W.bindingKey(WF(7968, 1)), "wftoon236.com/?toon=7968");
+assert.strictEqual(W.bindingKey(WF(7968, 2)), W.bindingKey(WF(7968, 1)));
+assert.notStrictEqual(W.bindingKey(WF(75724, 1)), W.bindingKey(WF(7968, 1)));
+assert.strictEqual(W.bindingKey("https://comic.example.com/webtoon/detail?no=5&titleId=811721"), "comic.example.com/webtoon?titleId=811721");
+assert.strictEqual(W.bindingKey("https://example.com/read.php?bookid=5&chapterid=88&page=2"), "example.com/?bookid=5", "a page number is not the book's");
+assert.strictEqual(W.bindingKey("https://example.com/chapter.php?id=88123"), "example.com/", "an address with only a chapter's id keeps the directory rule");
+assert.strictEqual(W.bindingKey("https://example.com/novel/12345/read?id=5&num=1"), "example.com/novel/12345", "a path that names the book keeps the directory rule");
 
 // search: exact, case/punctuation-insensitive, and tolerant of a typo (the subsequence fallback)
 const lib = { a: { id: "a", name: "synthesis-wizard[wtr-lab]", terms: [] }, b: { id: "b", name: "family-cultivation[wtr-lab]", terms: [] } };
@@ -128,6 +141,7 @@ const full = counted({ raw_status: 0, char_count: 399315, raw_char_count: 400000
 assert.deepStrictEqual([full.chars, full.ratingCount, full.readers, full.votes, full.release], [399315, 6, 109, 9, "released"], "its length, reviews, readers, votes, and that it is released");
 assert.deepStrictEqual([counted({ raw_status: -1, raw_char_count: 268546 }).release, counted({ raw_status: -1, raw_char_count: 268546 }).chars], ["voting", 268546], "a novel still on voting; the raw text's length when the translation site has no other");
 assert.strictEqual(counted({}).chars, undefined, "a length that is not known is not a length of 0");
+assert.strictEqual(counted({ data: { title: "%{Soul Land|RG91bHVvIERhbHU}: My Wish-granting Tree" } }).title, "Douluo Dalu: My Wish-granting Tree", "a term in the title, as the site shows it (not its markup)");
 
 // ---- your terms from the library's reader (/api/my-terms) ----
 const myTerms = [

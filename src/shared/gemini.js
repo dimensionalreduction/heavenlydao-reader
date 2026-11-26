@@ -85,7 +85,7 @@ const GEMINI_PROMPTS = {
     "prev: on a chapter's page, the link to the PREVIOUS chapter (kind link), with the same limits. " +
     "If the page has no such element (a book's page has no next or previous chapter link; a chapter's page has no details), answer null for that field. Never invent an id."
 };
-// The prompts that come with the extension, to pick from in Settings › Translation › Gemini prompts beside the ones the person saves: [{ id, name, about,
+// The prompts that come with the extension, to pick from in Settings › Translation › Prompts beside the ones the person saves: [{ id, name, about,
 // text }] for each of the three. The translation ones are the prompts tried while finding a novel's terms (8 chapters of one novel, gemini-3.5-flash-lite,
 // each chapter given the terms found in the ones before it); what each found is in `about`.
 const GEMINI_TERM_RULES =
@@ -341,7 +341,7 @@ async function geminiTranslateTitles(texts, lang) {
 }
 
 // How titles and details that are not in English are put into English, as the library's setting says (Settings › Translation on the site, for
-// every device): "google" (Google Translate, the default; Gemini, with a key, while Google refuses), "gemini", "gemini-google" (Gemini, and Google Translate for what Gemini can't do:
+// every device): "google" (Google Translate, the default; Gemini, with a key, while Google refuses), "google-only" (Google Translate alone), "gemini", "gemini-google" (Gemini, and Google Translate for what Gemini can't do:
 // no key, no answer), "off" (left as they are). kind "book": a book's [title, author, genre, ...synopsis] (geminiTranslateBook); "titles": a
 // list of titles. Gemini's requests count toward the library's requests a minute. Always the same length as `texts`.
 async function titleModeNow() {
@@ -359,14 +359,122 @@ async function targetLanguageNow() {
     return "en";
   }
 }
+// The rows of the library's Titles and details rule when it has more than Google Translate and Gemini (another model, who pays for it): [{ model, kind, base? }], else null
+async function titleRulesNow() {
+  try {
+    return typeof GlossaryServer !== "undefined" && GlossaryServer.titleRules ? await GlossaryServer.titleRules() : null;
+  } catch (e) {
+    return null;
+  }
+}
 async function translateByMode(texts, kind) {
   if (!Array.isArray(texts) || !texts.length) return Array.isArray(texts) ? texts.slice() : [];
-  const mode = await titleModeNow();
+  const rows = await titleRulesNow();
+  const mode = rows ? "rules" : await titleModeNow();
   if (mode === "off") return texts.slice();
   const lang = await targetLanguageNow();
+  const run = (list) => (rows ? translateByRows(list, kind, rows, lang) : translateNow(list, kind, mode, lang));
+  if (kind === "titles") return titlesOnce(texts, lang, run);
+  return run(texts);
+}
+
+// The rule's rows in order: each is asked for what the ones before it left in another script (Google refusing, no key, a model that failed). Google Translate (free), the
+// extension's Gemini (the library's Gemini model, the Gemini key), or a model of its own paid by the key the library's page handed over or by tickets (modelTranslateTitles).
+async function translateByRows(texts, kind, rows, lang) {
+  const out = texts.slice();
+  for (const row of rows) {
+    const left = out.map((t, i) => (t === texts[i] && NON_LATIN_TEXT.test(String(t || "")) ? i : -1)).filter((i) => i >= 0);
+    if (!left.length) break;
+    const asked = left.map((i) => texts[i]);
+    let got = null;
+    try {
+      if (row.kind === "free") got = await googleTranslateMany(asked, lang);
+      else if (row.kind === "gemini") got = kind === "book" ? await geminiTranslateBook(asked, lang) : (await geminiTranslateTitles(asked, lang)).out;
+      else got = (await modelTranslateTitles(row, asked, lang)).out;
+    } catch (e) {
+      got = null; // (the next row)
+    }
+    if (Array.isArray(got) && got.length === asked.length) left.forEach((i, k) => { if (got[k]) out[i] = got[k]; });
+  }
+  return out;
+}
+
+// A row of the Titles and details rule that is a model of its own: the texts in one prompt per 100, paid by the key the library's page handed over for its address, or tickets
+// (the sign-in it handed over: profile-translate.js keeps both). -> { out, missing } as geminiTranslateTitles; nothing to pay with: all missing
+const TITLE_PLAYGROUND = "https://playground.heavenlydao.com";
+async function modelTranslateTitles(row, texts, lang) {
+  const out = texts.slice();
+  const todo = texts.map((t, i) => i).filter((i) => NON_LATIN_TEXT.test(String(texts[i] || "")));
+  if (!todo.length || typeof ProfileModel === "undefined" || typeof Pay === "undefined") return { out, missing: todo };
+  const ext = typeof browser !== "undefined" ? browser : chrome;
+  const st = await ext.storage.local.get(["profileKeys", "playgroundToken"]).catch(() => ({}));
+  const patron = row.kind === "tickets";
+  const base = row.kind === "other" ? row.base : Pay.BASE[row.kind];
+  const key = patron ? null : { base, key: ((st && st.profileKeys) || {})[base] || "" };
+  if (patron ? !(st && st.playgroundToken) : !base || (!key.key && /openrouter\.ai|googleapis\.com/.test(base))) return { out, missing: todo };
+  const L = geminiLanguageName(lang || "en");
+  const missing = [];
+  for (let at = 0; at < todo.length; at += 100) {
+    const idxs = todo.slice(at, at + 100);
+    const list = idxs.map((i) => String(texts[i]).replace(/\s+/g, " ").trim());
+    const prompt = "You translate the titles of a web novel and its chapters, and its details, into " + L + ". The input is a JSON array of strings. Answer with the same number of " +
+      "strings, in the same order, as JSON: {\"translated\": [...]} and nothing else. A title becomes a " + L + " title that says what it means, the way " + L + " web-novel sites " +
+      "title novels and chapters" + (L === "English" ? " (for example 仙工开物 becomes Immortal Creation, 第十二章 风起 becomes Chapter 12: The Wind Rises)" : "") +
+      ", never pinyin. Keep chapter numbers. Never merge, split, drop or add items.\n\n" + JSON.stringify(list);
+    try {
+      const r = await ProfileModel.runModel({ model: Pay.idFor(row.kind, row.model), prompt, maxTokens: 4000, chars: prompt.length, key, patron, token: patron ? String(st.playgroundToken) : "", server: TITLE_PLAYGROUND });
+      const body = String((r && r.text) || "").replace(/^[\s\S]*?(\{[\s\S]*\})[\s\S]*$/, "$1");
+      const t = (JSON.parse(body) || {}).translated;
+      if (Array.isArray(t) && t.length === list.length) idxs.forEach((i, k) => { out[i] = String(t[k] || "").trim() || texts[i]; });
+      else missing.push(...idxs);
+    } catch (e) {
+      missing.push(...idxs);
+    }
+  }
+  return { out, missing };
+}
+
+// Titles are put into the library's language once: each answer is kept in storage.local (titleCache: the text -> its translation; a language other than
+// English is part of the key), so the popup, the chapters saved from a page, the book recorded from it (its title: book-capture.js), its chapter list, a
+// watch and the site's Gemini titles give the same title the same words, and never ask for it again. A text in another script that comes back as it was
+// (Google refusing, no Gemini key) is not kept, so it is asked again another time; one in Latin letters that comes back as it was is (it is in the language
+// already), unless Google was refusing. While a title is being asked for, another request for it waits for that answer.
+const TITLE_CACHE = "titleCache", TITLE_CACHE_MAX = 20000;
+let titleStore = null; // the promise of storage.local's titleCache, read once (a background started again reads it again)
+const titlesAsked = new Map(); // a title's key -> the batch asking for it
+const titleKey = (lang, t) => (lang && lang !== "en" ? lang + "\u0000" : "") + t;
+async function titlesOnce(texts, lang, ask) {
+  const ext = typeof browser !== "undefined" ? browser : chrome;
+  if (!titleStore) titleStore = ext.storage.local.get(TITLE_CACHE).then((r) => (r && r[TITLE_CACHE]) || {}, () => ({}));
+  const stored = await titleStore;
+  const flat = (t) => String(t == null ? "" : t).replace(/\s+/g, " ").trim();
+  const keeps = (t, v) => !!v && (v !== t || !NON_LATIN_TEXT.test(t));
+  const known = (t) => { const v = stored[titleKey(lang, t)]; return typeof v === "string" && keeps(t, v) ? v : null; };
+  const todo = [...new Set(texts.map(flat).filter((t) => t && !known(t)))];
+  const fresh = todo.filter((t) => !titlesAsked.has(titleKey(lang, t)));
+  if (fresh.length) {
+    const job = ask(fresh).then((out) => {
+      const refused = Date.now() < googlePausedUntil;
+      let added = false;
+      fresh.forEach((t, i) => {
+        const v = flat(out && out[i]);
+        if (keeps(t, v) && (v !== t || !refused)) { stored[titleKey(lang, t)] = v; added = true; }
+      });
+      if (!added) return;
+      const keys = Object.keys(stored);
+      if (keys.length > TITLE_CACHE_MAX) for (const k of keys.slice(0, keys.length - TITLE_CACHE_MAX)) delete stored[k]; // (the oldest go first)
+      return ext.storage.local.set({ [TITLE_CACHE]: stored }).catch(() => {});
+    }, () => {}).finally(() => { for (const t of fresh) titlesAsked.delete(titleKey(lang, t)); });
+    for (const t of fresh) titlesAsked.set(titleKey(lang, t), job);
+  }
+  await Promise.all([...new Set(todo.map((t) => titlesAsked.get(titleKey(lang, t))).filter(Boolean))]);
+  return texts.map((t) => known(flat(t)) || t);
+}
+
+async function translateNow(texts, kind, mode, lang) {
   if (mode !== "gemini" && mode !== "gemini-google") {
     const out = await googleTranslateMany(texts, lang);
-    if (!(Date.now() < googlePausedUntil)) return out;
+    if (!(Date.now() < googlePausedUntil) || mode === "google-only") return out;
     // Google refusing (its "unusual traffic" page, on some networks): Gemini with your key does it instead (nothing changes without a key)
     if (kind === "book") return (await geminiTranslateBook(texts, lang)) || out;
     const left = out.map((t, i) => (t === texts[i] && NON_LATIN_TEXT.test(String(t || "")) ? i : -1)).filter((i) => i >= 0);
@@ -396,23 +504,38 @@ const DETECT_FIELDS = ["title", "author", "description", "cover", "genre", "chap
 async function geminiDetectBook(candidates, page) {
   if (!Array.isArray(candidates) || !candidates.length) return { error: "no candidates on the page" };
   try {
-    const apiKey = await getApiKey();
+    // a Gemini key first; with none, the OpenRouter key or the tickets the library's page handed over (profile-translate.js), asked the same
+    let apiKey = null;
+    try {
+      apiKey = await getApiKey();
+    } catch (e) {
+      if (typeof ProfileTranslate === "undefined" || !(await ProfileTranslate.payer())) throw e;
+    }
     const nullableId = { type: "string", nullable: true };
     const prompt = fillPrompt(await geminiPrompt("detect"), { host: (page && page.host) || "unknown", title: (page && page.title) || "" }) + "\n\n" + JSON.stringify(candidates);
-    await geminiTurn();
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { responseMimeType: "application/json", responseSchema: { type: "object", properties: { ...Object.fromEntries(DETECT_FIELDS.map((f) => [f, nullableId])), listOrder: { type: "string", enum: ["asc", "desc"], nullable: true } }, required: DETECT_FIELDS } }
-      })
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) return { error: (data.error && data.error.message) || "Gemini answered HTTP " + res.status };
-    const raw = ((data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) || []).map((p) => p.text).join("");
-    const parsed = JSON.parse(raw || "null");
-    if (!parsed || typeof parsed !== "object") return { error: "Gemini's answer could not be read" };
+    let parsed;
+    if (!apiKey) {
+      const said = await ProfileTranslate.ask(prompt + "\n\nAnswer with one JSON object only, no other text: { " + [...DETECT_FIELDS, "listOrder"].map((f) => '"' + f + '": id or null').join(", ") + " }.");
+      if (said.error) return { error: said.error };
+      const json = /\{[\s\S]*\}/.exec(said.text);
+      try { parsed = JSON.parse(json ? json[0] : "null"); } catch (e) { parsed = null; }
+      if (!parsed || typeof parsed !== "object") return { error: "The model's answer could not be read" };
+    } else {
+      await geminiTurn();
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { responseMimeType: "application/json", responseSchema: { type: "object", properties: { ...Object.fromEntries(DETECT_FIELDS.map((f) => [f, nullableId])), listOrder: { type: "string", enum: ["asc", "desc"], nullable: true } }, required: DETECT_FIELDS } }
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { error: (data.error && data.error.message) || "Gemini answered HTTP " + res.status };
+      const raw = ((data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) || []).map((p) => p.text).join("");
+      parsed = JSON.parse(raw || "null");
+      if (!parsed || typeof parsed !== "object") return { error: "Gemini's answer could not be read" };
+    }
     const known = new Set(candidates.map((c) => c.id));
     const picks = {};
     for (const f of DETECT_FIELDS) picks[f] = typeof parsed[f] === "string" && known.has(parsed[f]) ? parsed[f] : null; // (an id that is not on the page is no answer)
@@ -539,7 +662,11 @@ async function translateText(text, glossary, model, notes, language, extra) {
       "in this novel, and list each of them in the suggestions with its translation:\n" + wanting.map((e) => (e.terms || [e.term]).join(" / ")).join("\n") + "\n\n";
   }
   const rawPrompt = (extra && extra.prompt) || (await geminiPrompt("translate"));
-  const prompt = fillPrompt(rawPrompt, { language: languageName }) + (languageName !== "English" && !rawPrompt.includes("{language}") ? " Write the translation in " + languageName + "." : "");
+  // A prompt of the person's own (the reader's Custom prompt) often does not say it, and the answer then comes back as one block: the chapter's paragraphs are asked for, one
+  // blank line between them (the built-in prompts say "keeping the original formatting and line breaks")
+  const keepBreaks = extra && extra.prompt && !/line ?breaks?|paragraph|newline/i.test(rawPrompt)
+    ? " Keep the chapter's paragraphs and line breaks as they are in the text: in the \"translated\" field one blank line goes between paragraphs." : "";
+  const prompt = fillPrompt(rawPrompt, { language: languageName }) + (languageName !== "English" && !rawPrompt.includes("{language}") ? " Write the translation in " + languageName + "." : "") + keepBreaks;
 
   const body = {
     contents: [

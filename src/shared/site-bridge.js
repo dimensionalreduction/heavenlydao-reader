@@ -99,7 +99,7 @@
         (e) => post("fish", { id, error: String((e && e.message) || e) })
       );
     } else if (d.type === "access" && d.data && typeof d.data === "object") {
-      Promise.resolve(ext.runtime.sendMessage({ type: "profile:access", keys: d.data.keys, token: d.data.token })).catch(() => {});
+      Promise.resolve(ext.runtime.sendMessage({ type: "profile:access", keys: d.data.keys, token: d.data.token, rules: d.data.rules, comicPrompts: d.data.comicPrompts })).catch(() => {});
     } else if (d.type === "img" && d.data && typeof d.data.op === "string") {
       // A chapter's pictures, kept by the extension (p2p-host.js): { id, op: "info" | "page", args: [chapter key, page] } -> { id, result | error }.
       const { id, op, args } = d.data;

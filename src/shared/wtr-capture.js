@@ -1,4 +1,4 @@
-// Runs on the site. While you read a novel there it:
+// Runs on the site. While you read a novel there that is in your library (added by Import to library in the popup; nothing at all for one that is not) it:
 //  1. sends that novel's glossaries (all three lists) to your library, through the background script, so
 //     they can be searched and imported on other sites (the library works out what changed);
 //  2. sends the novel's display info (cover, synopsis, author, tags) for the site's novel page, once a day, with its full chapter list
@@ -142,9 +142,24 @@
     return !!s && typeof s === "object" && s.v === CAPTURE_VERSION;
   }
 
+  // A novel is added to the library only by Import to library in the popup (docs/ADD-BOOK.md), as on every other site: until it is there, nothing of it is
+  // sent (its glossaries, its details and list, the chapters read here, a term's counts); once it is, all of that goes on. Asked again every half minute,
+  // so an import made while the page is open is followed.
+  const IN_LIBRARY_MS = 30 * 1000;
+  const inLibrary = new Map(); // rawId -> { at, yes }
+  async function imported(rawId) {
+    const known = inLibrary.get(rawId);
+    if (known && Date.now() - known.at < IN_LIBRARY_MS) return known.yes;
+    const r = await Promise.resolve(ext.runtime.sendMessage({ type: "novel:get", id: "wtr-lab:" + rawId })).catch(() => null);
+    const yes = !!(r && r.novel);
+    inLibrary.set(rawId, { at: Date.now(), yes });
+    return yes;
+  }
+
   async function capture() {
     const info = WtrTerms.parseWtrUrl(location.href);
     if (!info || busy) return;
+    if (!(await imported(info.rawId))) return;
     if (lastId === info.rawId && Date.now() - lastTry < RETRY_MS) return;
     lastId = info.rawId;
     lastTry = Date.now();
@@ -221,6 +236,7 @@
   async function saveChapters() {
     const info = WtrTerms.parseWtrUrl(location.href);
     if (!info || !info.slug || savingChapters) return;
+    if (!(await imported(info.rawId))) return;
     savingChapters = true;
     try {
       let novelTitle = null;
@@ -276,6 +292,7 @@
     const lang = (/^https:\/\/wtr-lab\.com\/([^/]+)\//.exec(location.href) || [])[1] || "en";
     counting.add(term); // before any await, so a double click cannot start two requests
     try {
+      if (!(await imported(rawId))) return;
       const done = await loadDone(rawId);
       if (done[term] > Date.now() - COUNT_STALE_MS) return; // counted this week already
       // The library has to hold the glossary before it can take counts for it.

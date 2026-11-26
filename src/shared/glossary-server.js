@@ -193,7 +193,7 @@ var GlossaryServer = (function () {
   }
   // The library's settings (Settings on the site), read at most once a minute and kept in between: how many requests a minute Gemini is sent (gemini.js
   // keeps to it, for everything this extension has Gemini do), how titles and details that are not in English are put into English (gemini.js
-  // translateByMode), and the Gemini prompts the person changed. When the library cannot be reached what was known stays, asked for again in a minute.
+  // translateByMode), and the Prompts the person changed. When the library cannot be reached what was known stays, asked for again in a minute.
   let settingsRead = { at: 0, s: null };
   async function settings(force) {
     if (!force && Date.now() - settingsRead.at < 60 * 1000) return settingsRead.s;
@@ -248,6 +248,11 @@ var GlossaryServer = (function () {
   async function titleMode() {
     const s = await settings();
     return (s && s.titleTranslate) || "google";
+  }
+  // The rows of the library's Titles and details rule when titleTranslate cannot say them (another model, who pays): [{ model, kind, base? }], else null
+  async function titleRules() {
+    const s = await settings();
+    return s && Array.isArray(s.titleRules) && s.titleRules.length ? s.titleRules : null;
   }
   // The language chapters, titles and details are translated into (a code, gemini.js GEMINI_LANGUAGES): the library's setting; English when it has none or
   // cannot be reached
@@ -348,6 +353,6 @@ var GlossaryServer = (function () {
 
   // `api`: any other call of the library's (throws on failure), for what has no function of its own here
   // `wake` (Chrome): set by the service worker, to bring back the offscreen page that keeps the library
-  const api = { api: request, pull, importSnapshot, sendVotes, saveNovel, getNovel, copyCover, copyCoversOn, syncPersonalReplacements, geminiRate, titleMode, targetLanguage, setGeminiModel, promptSettings, profileSettings, saveChapterIndex, setBinding, listWatches, saveWatch, addNotice, putChapterIndex };
+  const api = { api: request, pull, importSnapshot, sendVotes, saveNovel, getNovel, copyCover, copyCoversOn, syncPersonalReplacements, geminiRate, titleMode, titleRules, targetLanguage, setGeminiModel, promptSettings, profileSettings, saveChapterIndex, setBinding, listWatches, saveWatch, addNotice, putChapterIndex };
   return api;
 })();

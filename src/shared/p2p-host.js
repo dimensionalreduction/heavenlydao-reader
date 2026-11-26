@@ -104,7 +104,8 @@
   }
   async function fetchSite(url, options, onCheck) {
     const host = RawSources.hostOf(url);
-    if ((viaTab.get(host) || 0) > Date.now()) {
+    const get = !(options && options.method && options.method !== "GET"); // (the site's tab asks with a GET: a POST is the extension's own, with the pass)
+    if (get && (viaTab.get(host) || 0) > Date.now()) {
       const got = await tabFetch(url);
       if (got.res) return got.res;
       viaTab.delete(host); // the tab did not help this time: the extension asks by itself again
@@ -115,6 +116,7 @@
       const again = await fetch(url, options); // the browser had passed the check: with the pass, the site answers
       if (again.status !== 403) return again;
     }
+    if (!get) return res;
     if (onCheck) await onCheck();
     const got = await tabFetch(url);
     if (got.res) {
@@ -147,9 +149,60 @@
     }
   }
 
+  // A book of one chapter whose pictures are each on a page of their own (a rule's toc.gallery: nhentai.net/g/<id>/, its pages /g/<id>/1/ ... /26/): every page is
+  // fetched, a few at a time and gently, and its picture taken (the rule's `images`, else the page's one big picture). -> the pictures' addresses, in the pages' order.
+  // onProgress(done, all): the pages read so far.
+  async function galleryPictures(pages, rule, onProgress) {
+    const pictureOf = (doc, url) => {
+      if (rule.images) {
+        const urls = ImageChapter.urlsOf(doc, rule.images, url);
+        if (urls.length) return urls;
+      }
+      // (no selector, or it found nothing: the page's biggest picture by its stated size, when it is a page's worth)
+      let best = null;
+      for (const img of doc.querySelectorAll("img")) {
+        const w = Number(img.getAttribute("width")) || 0;
+        const h = Number(img.getAttribute("height")) || 0;
+        const u = ImageChapter.imgUrl(img, url);
+        if (u && w >= 300 && h >= 300 && !/\.svg(\?|$)/i.test(u) && (!best || w * h > best.size)) best = { u, size: w * h };
+      }
+      return best ? [best.u] : [];
+    };
+    const fetchOne = async (u, i) => {
+      const res = await fetchSite(u, { credentials: "include" });
+      if (!res.ok) throw Object.assign(new Error(said(res) + " for page " + (i + 1) + " of " + pages.length), { fatal: res.status === 404 || res.status === 410 });
+      const html = RawSources.decode(new Uint8Array(await res.arrayBuffer()), res.headers && res.headers.get && res.headers.get("content-type"), rule);
+      const urls = pictureOf(new DOMParser().parseFromString(RawSources.stripScripts(html), "text/html"), res.url || u);
+      if (!urls.length) throw new Error("no picture on page " + (i + 1) + " of " + pages.length + " (open it once in the browser to pass the site's check)");
+      return urls;
+    };
+    const got = await ImageChapter.fetchPages(pages, fetchOne, { parallel: 2, gap: PICTURE_GAP_MS, onProgress });
+    const out = [];
+    for (const u of got.flat()) if (!out.includes(u) && out.length < ImageChapter.MAX_PAGES) out.push(u);
+    return out;
+  }
+
+  // A comic whose script draws its pictures from a list in the page (rule.scriptPictures), when the rule no longer finds them: the site lists them in another
+  // variable or encoding now, or has them on another server. The chapter is opened in a background tab, where its script draws them, and the list found again
+  // (BookVisit.relearnPictures, which saves it in the site's rule): { urls: the chapter's pictures, from its tab (else from `html`, the page as the extension
+  // was sent it), why: what went wrong when there are none }. `had`: the rule's list as it was. onNote(text): what is going on, for the site's status line.
+  const relearn = (url, had) => Promise.resolve(direct && typeof BookVisit !== "undefined" ? BookVisit.relearnPictures(url, had) : ext.runtime.sendMessage({ type: "pictures:relearn", url, had })).catch((e) => ({ ok: false, error: (e && e.message) || String(e) }));
+  async function picturesAgain(html, url, had, onNote) {
+    if (onNote) onNote("opening the chapter to find its pictures again");
+    const r = await relearn(url, had);
+    if (!r || !r.ok) return { urls: [], why: (r && r.error) || "the extension did not answer" };
+    const bare = (u) => String(u || "").split("#")[0];
+    const fromTab = bare(r.url) === bare(url) && Array.isArray(r.urls) ? r.urls : []; // (the tab was this chapter's own)
+    const urls = fromTab.length ? fromTab : UserRules.picturesInScript(html, r.scriptPictures, url);
+    return { urls, why: urls.length ? "" : "its page lists them in " + r.scriptPictures.name + " now, and the page the extension was sent does not" };
+  }
+  // What is said when that did not work either: what to do about a site that has changed
+  const changed = (sp, why) => "this chapter's pictures are not where the site's rule says (the list " + sp.name + " in the page's script), and opening the chapter did not find them (" + why + "). If the site has changed, run Detect with AI on the book's page again";
+
   // The text of a chapter, from the response for its first page; follows the "next part" links of sites that split chapters. A chapter that is pictures
-  // (the rule says where they are) comes back as { text: "", urls, next } instead.
-  async function readChapter(res, address) {
+  // (the rule says where they are) comes back as { text: "", urls, next } instead (and again(): the pictures found anew, for a list in the page's script whose
+  // pictures did not come). onProgress(done, all): a gallery's pages read so far (galleryPictures). onNote(text): what is going on.
+  async function readChapter(res, address, onProgress, onNote) {
     const parts = [];
     const illustrations = []; // the addresses of the pictures between the paragraphs (a rule with illustrations), numbered in the text as ImageChapter.mark
     const page = res.url; // the chapter's first page: the Referer its pictures are asked for with
@@ -166,21 +219,51 @@
         return { text: read.text, next: read.next || null };
       }
       const doc = new DOMParser().parseFromString(RawSources.stripScripts(html), "text/html");
-      if (rule.images || rule.pictures || !rule.selector) { // a chapter that is pictures: their addresses, in order (savePictures fetches them)
-        // the rule's own <img> elements first, else the list in the page's own data (an Astro page: ImageChapter.urlsFromProps); a rule with neither a text selector
-        // nor pictures' selector (only a chapter list saved) reads such a page too
+      // a book of one chapter, a picture on each of its pages: this is the book's page, and its links lead to them
+      const gallery = n === 0 && rule.toc && typeof rule.toc.galleryPages === "function" ? rule.toc.galleryPages(doc, url) : [];
+      if (gallery.length) return { text: "", urls: await galleryPictures(gallery, rule, onProgress), next: null, page };
+      const scripted = typeof rule.picturesFromHtml === "function";
+      if (rule.images || rule.pictures || scripted || !rule.selector) { // a chapter that is pictures: their addresses, in order (savePictures fetches them)
+        // the rule's own <img> elements first, else the list in the page's script (rule.scriptPictures, a page whose script draws them), else the list in the page's
+        // own data (an Astro page: ImageChapter.urlsFromProps); a rule with neither a text selector nor pictures' selector (only a chapter list saved) reads such a page too
         let urls = rule.images ? ImageChapter.urlsOf(doc, rule.images, url) : [];
+        let listed = false; // (they are the list in the page's script)
+        if (!urls.length && scripted) listed = (urls = rule.picturesFromHtml(html, url)).length > 0;
         if (!urls.length) urls = ImageChapter.urlsFromProps(doc, url);
-        if (urls.length) return { text: "", urls, next: RawSources.nextChapter(doc, url), page };
+        const pageUrl = url;
+        const again = listed ? () => picturesAgain(html, pageUrl, rule.scriptPictures, onNote) : undefined;
+        if (urls.length) return { text: "", urls, next: RawSources.nextChapter(doc, url), page, again };
         const locked = typeof rule.locked === "function" ? rule.locked(doc) : ""; // (a chapter the site keeps for its members for now)
         if (locked) throw new Error(locked);
+        if (scripted) {
+          // the list its rule names is not in the page: the site lists the pictures another way now. Found again in the chapter's own tab
+          const found = await picturesAgain(html, url, rule.scriptPictures, onNote);
+          if (found.urls.length) return { text: "", urls: found.urls, next: RawSources.nextChapter(doc, url), page };
+          throw new Error(changed(rule.scriptPictures, found.why));
+        }
         if (rule.images || rule.pictures) throw new Error("no pictures on the page (open it once in the browser to pass the site's check)");
       }
       const read = RawSources.readText(doc, rule, url, illustrations.length);
       const text = read.text;
       illustrations.push(...read.urls);
       if (!text) {
-        if (!parts.length && picturesIn(doc, rule)) throw new Error("this chapter is pictures: give its site rule the pictures' selector (Site rule…, \"The chapter's pictures\")");
+        if (!parts.length && picturesIn(doc, rule)) {
+          // a text rule's box that holds the chapter's pictures and no text: a comic on a theme novel sites use too (manhwatop.com, the Madara theme's
+          // div.reading-content): the pictures in that box are the chapter
+          const urls = ImageChapter.urlsOf(doc, String(rule.selector).split(",").map((s) => s.trim() + " img").join(", "), url);
+          if (urls.length) return { text: "", urls, next: RawSources.nextChapter(doc, url), page };
+          throw new Error("this chapter is pictures: give its site rule the pictures' selector (Site rule…, \"The chapter's pictures\")");
+        }
+        if (!parts.length && !rule.selector) {
+          // a rule with only a chapter list (saved before any chapter was looked at, or one an Import reused): nothing reads a chapter. A comic whose script draws its
+          // pictures from a list in the page (it has one, of 3 pictures or more) has that list found in the chapter's own tab and saved in the rule, and goes on
+          if (!scripted && typeof UserRules !== "undefined" && UserRules.scriptLists && UserRules.scriptLists(html).length) {
+            const found = await picturesAgain(html, url, null, onNote);
+            if (found.urls.length) return { text: "", urls: found.urls, next: RawSources.nextChapter(doc, url), page };
+            throw new Error("this site's rule has only its chapter list, and opening the chapter found no pictures from a list in its script (" + found.why + "). Run Detect with AI on the book's page again");
+          }
+          throw new Error("this site's rule has only its chapter list, nothing that reads a chapter's text or pictures: run Detect with AI on the book's page again");
+        }
         if (!parts.length) throw new Error("no chapter text on the page (open it once in the browser to pass the site's check)");
         break;
       }
@@ -300,10 +383,11 @@
   // The library asked for this novel's chapter list now (a new chapter came out, or the list was never read): it goes to the library
   // as the novel's chapter index, where every device's library reads it. Asked by a person (the novel page's "Refresh chapters", or Next
   // at the end of the known list), never on a timer.
+  // (key: a chapter's "...#original" with findNext, or the novel's own address with "#list": the popup's Import to library and Refresh chapters)
   async function refreshWtrList(key, meta) {
-    const m = WTR_KEY.exec(key);
-    const [, lang, rawId] = m;
-    const slug = /\/novel\/\d+\/([^/?#]+)/.exec(key)[1];
+    const lang = (/^translation:https:\/\/wtr-lab\.com\/([a-z-]{2,8})\//.exec(key) || [])[1] || "en";
+    const [, rawId, slug] = /\/novel\/(\d+)\/([^/?#]+)/.exec(key);
+    if (inflight.has(key)) return;
     inflight.add(key);
     try {
       report(key, "downloading", meta);
@@ -551,7 +635,12 @@
   async function englishOf(texts) {
     const usable = (r) => r && Array.isArray(r.texts) && r.texts.length === texts.length;
     const reply = await (direct && typeof translateByMode === "function" ? translateByMode(texts, "book").then((t) => ({ texts: t }), () => null) : ext.runtime.sendMessage({ type: "translateBook", texts }).catch(() => null));
-    return usable(reply) ? reply.texts : texts;
+    const out = (usable(reply) ? reply.texts : texts).slice();
+    // the title as the popup and Import to library name it (each title translated once and kept: gemini.js titlesOnce), not the details' own translation of it
+    const named = await (direct && typeof translateByMode === "function" ? translateByMode([texts[0]], "titles")
+      : ext.runtime.sendMessage({ type: "translateTitles", texts: [texts[0]] }).then((r) => r && r.texts)).catch(() => null);
+    if (Array.isArray(named) && named[0] && named[0] !== texts[0]) out[0] = named[0];
+    return out;
   }
 
   // A book on a source site, from its page: the page's standard metadata completed through the site's selectors (the built-in ones fill what it
@@ -586,7 +675,7 @@
     const builtin = (base && base.book) || null;
     const mine = typeof UserRules !== "undefined" ? UserRules.bookTable(UserRules.current())[host] || null : null;
     const together = { selector: (mine && mine.selector) || (rule && rule.selector), book: { ...(builtin || {}), ...((mine && mine.book) || {}) }, fallback: builtin };
-    const book = BookCapture.fillGaps(BookCapture.readBook(doc, at), doc, at, builtin, mine && mine.book) || BookCapture.readBookByRule(doc, at, together);
+    const book = BookCapture.fillGaps(BookCapture.readBook(doc, at, html), doc, at, builtin, mine && mine.book) || BookCapture.readBookByRule(doc, at, together);
     if (!book) throw new Error("this page does not look like a book's page (it needs a title and an author, a cover or a synopsis)");
     return BookCapture.toNovelInfo(book, await englishOf(BookCapture.textsOf(book)));
   }
@@ -657,6 +746,7 @@
   // A start every PICTURE_GAP_MS and up to 3 at once (Asura's own extension for Mihon allows 2 requests per 2 seconds); each picture is tried again after 2, 4 and 8
   // seconds. A chapter that still fails keeps the pictures it got in memory for a while, so asking again carries on from there.
   const PICTURE_GAP_MS = 1000;
+  const PICTURE_MS = 45 * 1000; // (a picture that has not come in this long is asked for again)
   const PARTIAL_MS = 15 * 60 * 1000;
   const partialPictures = new Map(); // chapter key -> { urls, pages (holes for the ones missing), at }
   async function savePictures(key, urls, meta, referer) {
@@ -665,9 +755,12 @@
     const have = kept && Date.now() - kept.at < PARTIAL_MS && kept.urls.join("\n") === urls.join("\n") ? kept.pages : [];
     let total = have.reduce((n, p) => n + (p ? p.bytes.length : 0), 0);
     const fetchOne = async (url, i) => {
-      const res = await fetchSite(url, { credentials: "include" });
+      // (each picture given PICTURE_MS, its bytes too: a server that holds a request open fails it, and fetchPages asks again, rather than the chapter waiting forever)
+      const timeout = typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(PICTURE_MS) : undefined;
+      const late = (e) => (timeout && timeout.aborted ? new Error("picture " + (i + 1) + " of " + urls.length + " did not come in " + PICTURE_MS / 1000 + " seconds") : e);
+      const res = await fetchSite(url, { credentials: "include", signal: timeout }).catch((e) => { throw late(e); });
       if (!res.ok) throw Object.assign(new Error(said(res) + " for picture " + (i + 1) + " of " + urls.length), { fatal: res.status === 404 || res.status === 410 });
-      const bytes = new Uint8Array(await res.arrayBuffer());
+      const bytes = new Uint8Array(await res.arrayBuffer().catch((e) => { throw late(e); }));
       const type = ImageChapter.kindOf(bytes);
       if (!type) throw new Error("picture " + (i + 1) + " is not a picture (open the chapter on its site once in this browser to pass the site's check)");
       if (bytes.length > ImageChapter.MAX_PAGE_BYTES || (total += bytes.length) > ImageChapter.MAX_BUNDLE_BYTES) throw Object.assign(new Error("this chapter's pictures are too big to keep"), { fatal: true });
@@ -732,7 +825,18 @@
       pages: now.pages, lines, ...(madeWith ? { madeWith } : {}) });
     return { key: baseKey, pages: now.pages };
   }
-  globalThis.P2PHostComic = { save: saveComic };
+  // A text chapter translated in its page from the popup (content.js; the popup's Save to library): its text kept as the chapter's original and the translation as the
+  // chapter (in another language than English: its version in it), the same entries a chapter fetched and translated by the extension has.
+  async function saveText({ url, novelName, pageTitle, lang, original, translated, model }) {
+    const store = direct ? directAdapter : proxyAdapter;
+    const baseKey = PREFIX + String(url).split("#")[0];
+    if (!P2PCore.kindOf(baseKey)) throw new Error("not a chapter's address");
+    if (!String(translated || "").trim()) throw new Error("nothing translated to save: translate it first");
+    if (String(original || "").trim()) await store.setTranslation(baseKey + "#original", { translated: String(original), suggestions: [], savedAt: Date.now(), model: "original", pageTitle, novelName });
+    await store.setTranslation(P2PCore.langKey(baseKey, lang || "en"), { translated: String(translated), suggestions: [], savedAt: Date.now(), model: String(model || ""), pageTitle, novelName });
+    return { key: baseKey };
+  }
+  globalThis.P2PHostComic = { save: saveComic, saveText };
 
   // The library site's tab beside this extension reads a chapter's pictures from here (site-bridge.js, target "img"): info -> { pages, size } or null,
   // page(key, i) -> { b64, type }. One picture a message.
@@ -761,7 +865,7 @@
   async function saveOriginal(key, meta) {
     if (key.endsWith("#notes")) return queueNotes(key, meta);
     if (key.endsWith("#details")) return refreshBookDetails(key, meta);
-    if (key.endsWith("#list")) return refreshSourceList(key, meta);
+    if (key.endsWith("#list")) return /^translation:https:\/\/wtr-lab\.com\/[a-z-]{2,8}\/novel\/\d+\/[^/?#]+/.test(key) ? refreshWtrList(key, meta) : refreshSourceList(key, meta);
     if (WTR_KEY.test(key)) return saveWtrSource(key, meta);
     const baseUrl = key.replace(/^translation:/, "").replace(/#original$/, "");
     if (!key.endsWith("#original") || inflight.has(key)) return;
@@ -801,9 +905,19 @@
         report(key, "queued", meta);
         await turn();
         report(key, "downloading", meta);
-        const read = await readChapter(await fetchChapter(baseUrl), baseUrl);
+        const note = (text) => report(key, "downloading", meta, undefined, undefined, text);
+        const read = await readChapter(await fetchChapter(baseUrl), baseUrl, (done, all) => note("pages " + done + " of " + all), note);
         let made = { count: 0 };
-        if (read.urls) made = await savePictures(key, read.urls, meta, read.page);
+        if (read.urls) {
+          made = await savePictures(key, read.urls, meta, read.page).catch(async (e) => {
+            // not one of the pictures came, from the list a page's script draws them from (read.again): the site may have them elsewhere now (another server, another
+            // list). Found again in the chapter's own tab, and fetched from there; a list that gives the same pictures is no help
+            if (!read.again || (e && e.partial && e.partial.some(Boolean))) throw e;
+            const found = await read.again();
+            if (found.urls.length && found.urls.join("\n") !== read.urls.join("\n")) return savePictures(key, found.urls, meta, read.page);
+            throw Object.assign(new Error(e.message + (found.urls.length ? "" : ". Opening the chapter did not find them elsewhere (" + found.why + "). If the site has changed, run Detect with AI on the book's page again")), { partial: e.partial });
+          });
+        }
         // a text chapter's pictures (a rule with illustrations): kept as a bundle under this key; the text is kept whether or not they come (the reader says which is missing)
         else if (read.illustrations && read.illustrations.length) made = (await savePictures(key, read.illustrations, meta, read.page).catch((e) => log("the chapter's pictures not kept", key, e && e.message))) || made;
         entry = { translated: read.urls ? made.count + " pictures" : read.text, suggestions: [], savedAt: Date.now(), model: read.urls ? "images" : "original", pageTitle: meta.pageTitle, novelName: meta.novelName, next: read.next || undefined };
@@ -881,11 +995,13 @@
     let gap = toc.rule.toc.gap || RAW_GAP_MS; // grows when the site says it is being asked too fast, and stays so for the rest of the list
     let status = { done: 0, total: 1, count: 0, partial: () => [] };
     const halt = () => { if (halted && halted()) throw new Error(STOPPED); };
-    const fetchPage = async (u) => {
+    // (`post`: the list's address is asked as the site's own script asks it, a POST: the Madara theme's <book>/ajax/chapters/, rule toc.post)
+    const fetchPage = async (u, post) => {
       for (let attempt = 0; ; attempt++) {
         await turn(gap);
         halt();
-        const res = await fetchSite(u, { credentials: "include" }, () => progress && progress({ ...status, check: true }));
+        const how = post ? { method: "POST", credentials: "include", headers: { "X-Requested-With": "XMLHttpRequest" } } : { credentials: "include" };
+        const res = await fetchSite(u, how, () => progress && progress({ ...status, check: true }));
         if ((res.status !== 429 && res.status !== 503) || attempt >= MAX_TOC_RETRIES) return res;
         const ms = Math.min(retryAfterMs(res) || 15000 * 2 ** attempt, 180000);
         gap = Math.min(Math.round(gap * 1.5), 10000);
@@ -897,6 +1013,19 @@
         }
       }
     };
+    // A list its page does not hold (the page's script fills it in after it comes), read where the rule says the script asks for it (toc.orAt(address) ->
+    // { url, post }: the Madara theme's POST to <book>/ajax/chapters/, sources/families.js). Tied to the book's page, as a list on it would be. Null when none.
+    const elsewhere = async (from) => {
+      const at = typeof toc.rule.toc.orAt === "function" ? toc.rule.toc.orAt(from) : null;
+      if (!at || !at.url) return null;
+      const res = await fetchPage(at.url, !!at.post);
+      if (!res.ok) return null;
+      const html = await decoded(res);
+      const listed = RawSources.tocChapters(asDoc(html), { rule: toc.rule, url: res.url || at.url }, html);
+      if (!listed.length) return null;
+      listed.tocUrl = listedAt(from);
+      return listed;
+    };
     let tocUrl = toc.url;
     let first = null; // the list's first page, when the address turned out to be the list itself
     if (!tocUrl) {
@@ -904,7 +1033,9 @@
       if (!page.ok) throw new Error("the page answered " + said(page));
       const pageHtml = await decoded(page); // (scripts are taken out of the document, but a list a script holds as data is read from the text)
       const pageDoc = asDoc(pageHtml);
-      tocUrl = RawSources.tocLinkOf(pageDoc, page.url || chapterUrl); // a chapter's own link to the list wins ...
+      // (a book of one chapter, a picture a page: its own page is its list)
+      const gallery = !!toc.rule.toc.gallery;
+      tocUrl = gallery ? null : RawSources.tocLinkOf(pageDoc, page.url || chapterUrl); // a chapter's own link to the list wins ...
       if (!tocUrl) {
         // ... and without one, the page may be the list itself (a book's own page): if the rule finds chapters on it, that is the list
         let own = [];
@@ -913,12 +1044,16 @@
         } catch (e) {
           own = [];
         }
-        if (own.length < 3) throw new Error("the chapter has no link to the chapter list"); // (a chapter page may have a link or two that look like entries; a list has more)
+        if (own.length < (gallery ? 1 : 3)) {
+          const other = gallery ? null : await elsewhere(page.url || chapterUrl);
+          if (other) return other;
+          throw new Error(gallery ? "the book's page has no links to its pages" : "the chapter has no link to the chapter list"); // (a chapter page may have a link or two that look like entries; a list has more)
+        }
         first = { doc: pageDoc, url: page.url || chapterUrl, html: pageHtml };
       }
     }
     if (!first) {
-      const res = await fetchPage(tocUrl);
+      const res = await fetchPage(tocUrl, typeof toc.rule.toc.post === "function" && toc.rule.toc.post(tocUrl, chapterUrl));
       if (!res.ok) throw new Error("the chapter list answered " + said(res));
       const html = await decoded(res);
       if (typeof toc.rule.toc.parse === "function") { // a list that is JSON, not a page
@@ -933,6 +1068,10 @@
     let chapters;
     if (!more.length) {
       chapters = RawSources.tocChapters(first.doc, here, first.html);
+      if (!chapters.length) {
+        const other = await elsewhere(first.url); // (the list page the chapter linked to, sent without its list)
+        if (other) return other;
+      }
     } else {
       const read = toc.rule.toc.read || toc.rule.toc.list;
       const newestFirst = !!toc.rule.toc.reverse;
@@ -1164,6 +1303,16 @@
   self.__fills = fillsNow; // (tests)
   self.__bulkScale = (x) => { bulkScale = x; };
   self.__resumeFill = resumeFill;
+  // (e2e/live-sites.test.js, in the dev browser: what Import to library reads, the same way, with nothing saved: a source's chapter list, and one chapter)
+  self.__readListDry = async (url) => {
+    const toc = RawSources.tocFor(url);
+    if (!toc) throw new Error((RawSources.hostOf(url) || "that site") + " has no chapter list reader in this extension");
+    return (await readList(toc, String(url).split("#")[0])).map((c) => c.url);
+  };
+  self.__readChapterDry = async (url) => {
+    const read = await readChapter(await fetchChapter(url), url);
+    return { chars: (read.text || "").length, pictures: (read.urls || []).length, next: read.next || null };
+  };
   // A source's chapter list read once, the way the library's "Refresh chapters" reads it, and kept as the novel's list (the editions of your novels: LibraryHost.readList).
   const readSourceList = (url) => refreshSourceList("translation:" + url + "#list", {});
 

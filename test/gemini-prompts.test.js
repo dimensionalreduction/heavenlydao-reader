@@ -73,11 +73,15 @@ async function sentWith(prompts) {
   // the reader's Custom prompt: the one chosen for this request is sent in place of the one in use, 
   const cu = load({ translate: "The one in use." }, "{}");
   await cu.t.translateText("文本 道", [{ terms: ["道"], translation: "Dao" }], "m", null, "en", { prompt: "Try this in {language}." });
-  assert.strictEqual(cu.sentTo[0], "Try this in English." + String.fromCharCode(10, 10) + "Use these exact translations whenever these terms appear, for consistency:" + String.fromCharCode(10) + "道 = Dao" + String.fromCharCode(10, 10) + "文本 道");
+  // (one that does not mention paragraphs or line breaks is told to keep them)
+  assert.strictEqual(cu.sentTo[0], "Try this in English. Keep the chapter's paragraphs and line breaks as they are in the text: in the \"translated\" field one blank line goes between paragraphs." + String.fromCharCode(10, 10) + "Use these exact translations whenever these terms appear, for consistency:" + String.fromCharCode(10) + "道 = Dao" + String.fromCharCode(10, 10) + "文本 道");
   await cu.t.translateText("文本", [], "m", null, "en");
   assert.ok(cu.sentTo[1].startsWith("The one in use."), "without one: the prompt in use");
+  assert.ok(!cu.sentTo[1].includes("Keep the chapter's paragraphs"), "the prompt in use is sent as it is");
   await cu.t.geminiTermNotes("The text.", { chapter: 4, items: [{ term: "道", english: "Dao", note: "", yours: "" }] }, "m", "Chapter {chapter}{how}Notes please: {terms}");
   assert.ok(cu.sentTo[2].startsWith("Chapter 4, already in English. Notes please: [{"), "a notes prompt chosen for the request");
+  await cu.t.translateText("文本", [], "m", null, "en", { prompt: "Keep each paragraph." });
+  assert.ok(cu.sentTo[3].startsWith("Keep each paragraph." + String.fromCharCode(10, 10)), "a custom prompt that mentions paragraphs gets no extra line");
   // saved prompts (the library's promptSets): the one in use is sent, a built-in one by its id, one of the person's own by its id; one that is gone, or none: the default
   const presets = es.t.GEMINI_PROMPT_PRESETS;
   assert.strictEqual(presets.translate.map((p) => p.id).join(), "default,every-term,one-name,no-everyday");

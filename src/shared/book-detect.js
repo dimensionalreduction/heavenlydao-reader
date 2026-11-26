@@ -13,7 +13,8 @@
 (function () {
   const isNode = typeof module !== "undefined" && module.exports;
   const Rules = typeof UserRules !== "undefined" ? UserRules : isNode ? require("./user-rules.js") : null; // (injected before this script; pagerOf and listUrlRule are in it)
-  const MAX_CANDIDATES = 130;
+  const MAX_CANDIDATES = 130; // (what is sent to the AI)
+  const MAX_LOCAL = 600; // (what is looked through with no AI, Import to library: nothing is sent, so a long page's synopsis, after a sidebar of 150 texts, is reached)
   const SNIPPET = 160;
   const SKIP = "nav, footer, form, script, style, noscript, template, select, svg, iframe";
   const MORE = /更多|查看全部|全部章|全部目|more chapters|all chapters|view all|show all|see all|full list|complete list|目录|目錄|catalog/i; // a link at the end of a list that leads to the whole of it
@@ -23,8 +24,9 @@
   const escapeCss = (v) => (typeof CSS !== "undefined" && CSS.escape ? CSS.escape(v) : String(v).replace(/[^\w-]/g, "\\$&"));
   const pathOf = (href) => String(href || "").replace(/^https?:\/\/[^/]+/, "").slice(0, 80);
 
-  // Classes that name what an element is (and will be there on another book's page too), not generated ones.
-  const stableClasses = (el) => [...(el.classList || [])].filter((c) => /^[a-zA-Z][\w-]{1,30}$/.test(c) && !/\d{3,}/.test(c)).slice(0, 3);
+  // Classes that name what an element is (and will be there on another book's page too), not generated ones (a number in them, or a framework's: svelte-iec8wt,
+  // css-x7k2, which change when the site is built again).
+  const stableClasses = (el) => [...(el.classList || [])].filter((c) => /^[a-zA-Z][\w-]{1,30}$/.test(c) && !/\d{3,}/.test(c) && !/^(svelte|css|jsx|sc|emotion|astro)-/.test(c)).slice(0, 3);
 
   function segment(el, withPosition) {
     let s = el.tagName.toLowerCase();
@@ -105,12 +107,12 @@
 
   // [{ id, kind, ... }] and { id: selector } for the page. kind "text": an element and the start of its text; "img" / "meta": a picture; "group": a set of
   // short links (genres, tags); "list": a container of many links (a chapter list), with its first and last entries; "link": a link that says next or previous.
-  function collect(doc, url) {
+  function collect(doc, url, max = MAX_CANDIDATES) {
     const candidates = [];
     const selectors = {};
     const seen = new Set();
     const add = (c, selector) => {
-      if (!selector || candidates.length >= MAX_CANDIDATES) return;
+      if (!selector || candidates.length >= max) return;
       c.id = "c" + (candidates.length + 1);
       candidates.push(c);
       selectors[c.id] = selector;
@@ -215,6 +217,9 @@
           again = null;
         }
         if (!again || again.max !== b.found.max) continue;
+        // (a book's first page shows page 2 or 3 in its bar; two chapter links of another book, /manga/x/chapter-115/ and /chapter-114/ in a box of popular books
+        // beside it, are one number changing too, but they are chapters: mangaread.org's sidebar was taken for 115 pages of the list)
+        if (b.found.min > 3 || /(chapter|chap|ch|episode|ep)[-_/.]?\{n\}/i.test(b.found.template)) continue;
         add({ kind: "pager", tag: b.el.tagName.toLowerCase(), pages: b.found.max, texts: b.anchors.slice(0, 8).map((a) => clean(a.textContent).slice(0, 12)), hrefs: [pathOf(b.anchors[0].getAttribute("href")), pathOf(b.anchors[b.anchors.length - 1].getAttribute("href"))] }, base + " a");
       }
     }
@@ -237,7 +242,7 @@
     // groups of short links: genres, categories, tags
     const groups = new Set();
     for (const parent of body.querySelectorAll("*")) {
-      if (candidates.length >= MAX_CANDIDATES || parent.closest(SKIP) || hidden(parent)) continue;
+      if (candidates.length >= max || parent.closest(SKIP) || hidden(parent)) continue;
       const kids = [...parent.children];
       const direct = kids.filter((c) => c.tagName === "A" && clean(c.textContent).length >= 2 && clean(c.textContent).length <= 30);
       const viaItems = /^(UL|OL)$/.test(parent.tagName) ? kids.filter((li) => li.tagName === "LI" && li.children.length === 1 && li.children[0].tagName === "A" && clean(li.textContent).length >= 2 && clean(li.textContent).length <= 30) : [];
@@ -260,7 +265,7 @@
 
     // groups of labels that are not links (genre badges in a list): the list's items, each short
     for (const parent of body.querySelectorAll("ul, ol")) {
-      if (candidates.length >= MAX_CANDIDATES || parent.closest(SKIP) || hidden(parent)) continue;
+      if (candidates.length >= max || parent.closest(SKIP) || hidden(parent)) continue;
       const items = [...parent.children].filter((li) => li.tagName === "LI" && clean(li.textContent).length >= 2 && clean(li.textContent).length <= 30 && !li.querySelector("a[href]"));
       if (items.length < 2 || items.length > 15 || items.length !== parent.children.length) continue;
       const base = selectorFor(parent, doc);
@@ -282,8 +287,11 @@
     const heavy = new Map();
     const listed = new Set(); // (the links of the chapter-list candidates above)
     for (const [el] of lists.slice(0, 5)) for (const a of el.querySelectorAll("a[href]")) listed.add(a);
-    for (const el of body.querySelectorAll("*")) {
-      if (candidates.length >= MAX_CANDIDATES) break;
+    // (an h1 and what is in it first: the book's title is the h1's, though a breadcrumb above it says the same words first (Home > Action > the title, on the
+    // many manga sites built on one WordPress theme: mangaread.org, yaoiscan.com), and on a long page the h1 would come after the last candidate there is room for)
+    const heads = [...body.querySelectorAll("h1")].flatMap((h) => [h, ...h.querySelectorAll("*")]);
+    for (const el of new Set([...heads, ...body.querySelectorAll("*")])) {
+      if (candidates.length >= max) break;
       if (el.closest(SKIP) || hidden(el) || (/^(IMG|BR|HR|SCRIPT|STYLE)$/.test(el.tagName))) continue;
       const text = clean(el.textContent);
       if (text.length < 2 || text.length > 1500 || seen.has(text)) continue;
@@ -305,16 +313,123 @@
   // list is a list of links; next and previous are links.
   const KINDS = { title: ["text"], author: ["text"], description: ["text"], cover: ["img", "meta"], genre: ["group", "text"], chapterList: ["list"], pager: ["pager"], next: ["link"], prev: ["link"] };
 
+  // The book's own parts on a book's page whose metadata does not say them (a comic site with an h1 and no og:novel tags: wfwf532.com has no title the popup can read, and
+  // Import to library waits for one): the title is the h1 that the page's own title carries (or, when the h1 is dressed up with a circle and a language,
+  // "[Circle] Title [English]" on nhentai.net, the part of it that the page's title carries), the cover the picture named after it, the synopsis a long text in an element
+  // called summary, the genres a group of links called genre or tag. Nothing is guessed where the page's metadata names the book. `listed`: the page has a chapter list; with
+  // none, a title alone is not enough to tell a book's page from a chapter's (its h1 is the chapter's): it takes a cover, a synopsis or genres with it. -> picks as Gemini's
+  function guessBookPicks(candidates, selectors, doc, listed) {
+    const picks = {};
+    if (!doc || (doc.querySelector && doc.querySelector('meta[property="og:novel:book_name"]'))) return picks;
+    const said = saidOf(doc);
+    const carried = (c) => c.kind === "text" && c.text.length >= 2 && said.includes(c.text.toLowerCase());
+    const elOf = (c) => {
+      try {
+        return doc.querySelector(selectors[c.id]);
+      } catch (e) {
+        return null;
+      }
+    };
+    const inH1 = (c) => { const el = elOf(c); return !!(el && el.closest && el.closest("h1")); };
+    const head = candidates.find((c) => c.tag === "h1" && c.text.length <= 100 && carried(c))
+      || candidates.filter((c) => c.text && c.text.length >= 8 && carried(c) && inH1(c)).sort((a, b) => b.text.length - a.text.length)[0]
+      // (an h1 with a badge in it, "A Dream Escape END" on toonily.com: its words without the badge are what the page's title carries; the badge is left out
+      // when it is read, bookTitleDropFor)
+      || candidates.find((c) => c.tag === "h1" && c.text.length <= 100 && !!bookTitleDropFor(elOf(c), said));
+    if (!head) return picks;
+    picks.title = head.id;
+    const t = titleWithout(elOf(head), bookTitleDropFor(elOf(head), said)).toLowerCase() || head.text.toLowerCase(); // (the title without its badge)
+    const cover = candidates.find((c) => c.kind === "img" && c.alt && (c.alt.toLowerCase() === t || (c.alt.length >= 8 && (c.alt.toLowerCase().includes(t) || t.includes(c.alt.toLowerCase())))));
+    if (cover) picks.cover = cover.id;
+    const named = (c, re) => re.test(selectors[c.id] || "");
+    // (a name that says synopsis or description before one that says summary, which on many manga sites is every box of the book's details: div.summary_content,
+    // its rating and its title, beside div.description-summary. Such a box opens with the title, or holds the labels of its rows, Rating, Status, Genre(s):
+    // three short texts or more inside it (yaoiscan.com's "4.6 Your Rating Rating 19 Days Average…"); a synopsis is sentences)
+    const SAYS = /synopsis|descr|blurb|intro/i;
+    const wrapNamed = (c) => { // (its own name, or a box around it: div.description-summary > div.summary__content > p)
+      for (let n = elOf(c), i = 0; n && i < 4; n = n.parentElement, i++) if (SAYS.test((typeof n.className === "string" ? n.className : "") + " " + (n.id || ""))) return true;
+      return false;
+    };
+    const strength = (c) => (named(c, SAYS) || wrapNamed(c) ? 2 : 1);
+    const shortEls = candidates.filter((c) => c.kind === "text" && c.text.length < 25).map(elOf).filter(Boolean);
+    // (... and a row's value beside its label, "Alternative" and the book's other names, is not one either, unless the label says it is the synopsis;
+    // yaoiscan.com's synopsis opens with the title, "19 Days manga summary: …", and is named description: only a box named summary is judged by its start)
+    const box = (c) => {
+      if (strength(c) === 1 && c.text.toLowerCase().startsWith(t)) return true;
+      const el = elOf(c);
+      if (!el) return false;
+      if (shortEls.filter((e) => e !== el && el.contains(e)).length >= 3) return true;
+      const label = el.previousElementSibling ? clean(el.previousElementSibling.textContent) : "";
+      return !!label && label.length < 25 && !/summary|synopsis|descri|plot|story|about|简介|簡介|内容/i.test(label);
+    };
+    const summary = candidates.filter((c) => c.kind === "text" && (c.longer || c.text.length) >= 40 && named(c, /summary|synopsis|descr|intro|blurb/i) && !box(c))
+      .sort((a, b) => strength(b) - strength(a))[0];
+    if (summary) picks.description = summary.id;
+    const genres = candidates.find((c) => c.kind === "group" && named(c, /genre|categor|tag/i));
+    if (genres) picks.genre = genres.id;
+    return listed || picks.cover || picks.description || picks.genre ? picks : {};
+  }
+
+  // What the page's own title and its og:title say, in small letters: the book's title is in it (or in one of them) on almost every book's page.
+  function saidOf(doc) {
+    const og = doc && doc.querySelector && doc.querySelector('meta[property="og:title"]');
+    return clean((doc ? doc.title : "") + " " + (og ? og.getAttribute("content") : "")).toLowerCase();
+  }
+
+  // The parts of the book's title element that are not its title: a badge in the h1 ("A Dream Escape <span class="manga-title-badges">END</span>",
+  // HOT, NEW on many manga sites), where the page's title (`said`, saidOf) carries the element's words without them and not with them. Selectors for those
+  // parts, inside the title element (the rule's book.titleDrop), or "" when the whole is the title or the rest is not carried either.
+  function bookTitleDropFor(el, said) {
+    if (!el || !el.children || !el.children.length) return "";
+    const whole = clean(el.textContent).toLowerCase();
+    if (!whole || said.includes(whole)) return "";
+    const said1 = " " + said.replace(/[^\p{L}\p{N}]+/gu, " ") + " ";
+    const drop = [];
+    for (const kid of el.children) {
+      const t = clean(kid.textContent).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+      if (!t || said1.includes(" " + t + " ")) continue; // (a word of the title in its own element is kept)
+      const sel = kid.tagName.toLowerCase() + stableClasses(kid).map((c) => "." + escapeCss(c)).join("");
+      if (!drop.includes(sel)) drop.push(sel);
+    }
+    if (!drop.length) return "";
+    const rest = titleWithout(el, drop.join(", ")).toLowerCase();
+    return rest.length >= 2 && said.includes(rest) ? drop.join(", ") : "";
+  }
+  // An element's text without the parts `drop` names ("" when the element is missing or the selector is bad).
+  function titleWithout(el, drop) {
+    if (!el) return "";
+    if (!drop) return clean(el.textContent);
+    const copy = el.cloneNode(true);
+    try {
+      copy.querySelectorAll(drop).forEach((n) => n.remove());
+    } catch (e) {
+      return "";
+    }
+    return clean(copy.textContent);
+  }
+
   // What the page says on its own when Gemini cannot be asked (no key, no answer) or is not wanted (Import to library): the chapter list is the list of links with the most
-  // entries whose texts have numbers in them, not cut short ("latest chapters"), and the pagination bar that gives the most pages. The book's own parts are not guessed
-  // (the popup reads them without help). -> picks as Gemini's: { chapterList: id, pager: id }
-  function guessPicks(candidates, selectors, doc) {
+  // entries whose texts have numbers in them, not cut short ("latest chapters"), and the pagination bar that gives the most pages; on a page with such a list, the book's
+  // own parts too (guessBookPicks), since the popup cannot read them from a page with no metadata. -> picks as Gemini's: { chapterList: id, pager: id, title: id, ... }
+  // opts.gallery: the page links to the book's own pages, a picture each (galleryOf): a book's page with no list, whose details are read as with one.
+  function guessPicks(candidates, selectors, doc, opts) {
     const score = (c) => c.count + (c.first && c.first.some((t) => /\d/.test(t)) ? 100000 : 0) + (c.hrefs && /\d/.test(c.hrefs[0] || "") ? 50000 : 0);
-    const lists = candidates.filter((c) => c.kind === "list" && c.count >= 5 && !c.partial).sort((a, b) => score(b) - score(a));
+    // (a list whose links lead to tags and people, /parody/original/ and /users/3476506/, is never the chapters)
+    const section = (h) => (/^\/([^/?#]*)/.exec(String(h || "")) || [])[1] || "";
+    const TAXONOMY = /^(tags?|genres?|categor(y|ies)|users?|authors?|artists?|parod(y|ies)|characters?|groups?|languages?|search|series|labels?)$/i;
+    // (... or a genre picked in the query, /browse?genres=Comedy, /novels/?genre=Fantasy: woopread.com's and wuxiaworld.com's genre lists were taken for the chapters)
+    const TAXONOMY_QUERY = /[?&](tags?|genres?|categor(y|ies)|sort|order|status|type)=/i;
+    const scattered = (c) => !!c.hrefs && c.hrefs.some((h) => TAXONOMY.test(section(h)) || TAXONOMY_QUERY.test(h));
+    // (links that go nowhere a fetch can follow, javascript:void(0) or #: novelhi.com's list opens its chapters by script)
+    const nowhere = (c) => !!c.hrefs && c.hrefs.every((h) => /^\s*(javascript:|#|$)/i.test(h));
+    // (a list of chapters says a number somewhere, in its entries or their addresses; a list of genres or sort tabs says none)
+    const numbered = (c) => (c.first || []).concat(c.last || []).some((t) => /\d/.test(t)) || (c.hrefs || []).some((h) => /\d/.test(h));
+    const lists = candidates.filter((c) => c.kind === "list" && c.count >= 5 && !c.partial && !scattered(c) && !nowhere(c) && numbered(c)).sort((a, b) => score(b) - score(a));
     const pagers = candidates.filter((c) => c.kind === "pager").sort((a, b) => b.pages - a.pages);
     const picks = {};
     if (lists[0]) picks.chapterList = lists[0].id;
     if (lists[0] && pagers[0]) picks.pager = pagers[0].id;
+    Object.assign(picks, guessBookPicks(candidates, selectors, doc, !!lists[0] || !!(opts && opts.gallery)));
     // the links in the list's box include others (a sort tab, "first episode"): when most of them share a class, only those are the chapters (div.list-sec a -> a.ep-item)
     if (lists[0] && selectors && doc && selectors[lists[0].id]) {
       try {
@@ -371,15 +486,21 @@
   }
 
   // The parts of a chapter link that are not its title (the date, in a small element or a time): selectors for them, or "" when there are none. Looked for in
-  // the first few entries: a child element with a short text that looks like a date or an age ("Aug 7, 2025", "3 days ago") and is not all of the link's text.
+  // the first few entries: a child element with a short text that looks like a date or an age ("Aug 7, 2025", "3 days ago") and is not all of the link's text;
+  // or the entry's number in an element of its own when the rest of the text says it too (novelfire.net: <span class="chapter-no">1</span> before
+  // "Chapter 1: The Black Hole", which came out "1Chapter 1: The Black Hole"; a title with no number keeps it)
   const DATEY = /\b\d{4}\b|\bago\b|\d+\s*(?:day|hour|minute|min|week|month|year)s?\b|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}|天前|小时前|分钟前|前$/i;
+  const numberSaidAgain = (t, whole) => {
+    const n = /^(\d{1,5})\.?$/.exec(t);
+    return !!n && new RegExp("(^|\\D)0*" + Number(n[1]) + "(\\D|$)").test(whole.replace(t, " "));
+  };
   function titleDropFor(entries) {
     const parts = new Set();
     for (const a of entries.slice(0, 5)) {
       const whole = clean(a.textContent);
       for (const e of a.querySelectorAll("*")) {
         const t = clean(e.textContent);
-        if (!t || t.length > 30 || t === whole || !DATEY.test(t)) continue;
+        if (!t || t.length > 30 || t === whole || !(DATEY.test(t) || numberSaidAgain(t, whole))) continue;
         const name = e.tagName.toLowerCase() + stableClasses(e).map((c) => "." + escapeCss(c)).join("");
         if (/^(i|svg|span|div|b|strong|em)$/.test(name)) continue; // (a bare tag could take the title with it)
         parts.add(name);
@@ -395,10 +516,12 @@
     const parts = {};
     const book = {};
     for (const f of ["title", "author", "description", "cover", "genre"]) if (found[f]) book[f] = found[f];
+    if (book.title && extras && extras.bookTitleDrop) book.titleDrop = extras.bookTitleDrop; // (a badge inside the title, left out of it)
     if (Object.keys(book).length) parts.book = book;
     if (found.chapterList) {
       parts.toc = { list: found.chapterList, ...(order === "desc" ? { reverse: true } : order === "asc" ? { reverse: false } : {}), pages: found.pager ? { kind: "numbered", selector: found.pager } : null, titleDrop: (extras && extras.titleDrop) || null };
       if (extras && "listUrl" in extras) parts.toc.listUrl = extras.listUrl || null; // (tried and none: an older one is dropped)
+      if (extras && extras.post && parts.toc.listUrl) parts.toc.post = true; // (its address asked with a POST, as the page's script asks it)
     }
     const nav = {};
     if (found.next) nav.next = found.next;
@@ -406,11 +529,15 @@
     if (Object.keys(nav).length) parts.nav = nav;
     // read from the site's data (a page a script fills in): the list, and the chapter's text
     if (extras && extras.dataList) parts.toc = { json: extras.dataList.json, listUrl: extras.dataList.listUrl, reverse: !!extras.dataList.reverse };
+    // a book of one chapter whose pictures are each on a page of their own: the links to its pages (and the picture's place on them, below as `images`)
+    if (extras && extras.gallery) parts.toc = { gallery: extras.gallery.selector, listUrl: extras.gallery.listUrl || null };
     if (extras && extras.dataText) parts.json = extras.dataText;
     // where a chapter's text is (a site that sends its pages whole)
     if (extras && extras.textSelector) parts.selector = extras.textSelector;
     // where a comic's pictures are (a site whose chapters are pictures)
     if (extras && extras.images) parts.images = extras.images;
+    // ... or the list of them in a chapter page's script (a page whose script draws them)
+    if (extras && extras.scriptPictures) parts.scriptPictures = extras.scriptPictures;
     return parts;
   }
 
@@ -478,7 +605,7 @@
   }
 
   const OFFSET = /^(offset|skip|start|from)$/i;
-  const PAGE = /^(page|p|pg|page_?(no|num|number|index)|pageindex|pagenum)$/i;
+  const PAGE = /^(page|p|pg|page_?(no|num|number|index)|pageindex|pagenum|[a-z]+_page)$/i; // (chapter_page: manhuatop.org's "Load more chapters"; never per_page, a size)
   const LIMIT = /^(limit|size|per_?page|page_?size|count|take|max)$/i;
   const sameAddress = (a, b) => String(a).split("#")[0].replace(/\/+$/, "") === String(b).split("#")[0].replace(/\/+$/, "");
 
@@ -509,7 +636,40 @@
           titleField = f;
         }
       }
-      if (pairs.length < Math.min(3, items.length)) continue;
+      if (pairs.length < Math.min(3, items.length)) {
+        // ... or by its address, where a field holds the chapter's own (its path or the whole address): a title the page runs into its date, "Chapter 2152 days
+        // ago" (manhuatop.org: "Chapter 215" and "2 days ago" in two elements of the link), pairs with nothing; its title is then the field each entry starts with
+        const keyOf = (u) => String(u).split("#")[0].replace(/\/+$/, "");
+        const byUrl = new Map(entries.map((e) => [keyOf(e.url), e]));
+        for (const [f, v] of fieldsOf(items[0])) {
+          if (typeof v !== "string" || !/^(https?:\/\/|\/)/.test(v)) continue;
+          const got = [];
+          for (const item of items) {
+            let u = "";
+            try {
+              u = new URL(String(Rules.jsonAt(item, f)), dataUrl).href;
+            } catch (e) {
+              continue;
+            }
+            const e = byUrl.get(keyOf(u));
+            if (e) got.push({ item, entry: e });
+          }
+          if (got.length > pairs.length) pairs = got;
+        }
+        if (pairs.length < Math.min(3, items.length)) continue;
+        titleField = "";
+        for (const [f] of fieldsOf(pairs[0].item)) {
+          const ok = pairs.filter((p) => {
+            const t = norm(Rules.jsonAt(p.item, f));
+            return t.length >= 2 && !/^[\d.]+$/.test(t) && norm(p.entry.text).startsWith(t);
+          }).length;
+          if (ok >= pairs.length * 0.8) {
+            titleField = f;
+            break;
+          }
+        }
+        if (!titleField) continue;
+      }
       // each part of the entries' addresses that is a field of their chapter (the same field for nearly all of them) becomes {field}
       let first = null;
       try {
@@ -544,7 +704,7 @@
         continue;
       }
       const keys = paramsOf(dataAt).map(([k]) => k);
-      const page = keys.find((k) => OFFSET.test(k)) || keys.find((k) => PAGE.test(k)) || "";
+      const page = keys.find((k) => OFFSET.test(k)) || keys.find((k) => PAGE.test(k) && !LIMIT.test(k)) || "";
       if (page && OFFSET.test(page)) dataAt.searchParams.set(page, "0");
       else if (page && Number(dataAt.searchParams.get(page)) > 1) dataAt.searchParams.set(page, "1");
       const listUrl = Rules.listUrlRule(dataAt.href, first.href, true);
@@ -568,6 +728,10 @@
       const partial = !json.page && ((totals.countValue > items.length) || totals.pagesValue > 1 || (!!limit && Number(dataAt.searchParams.get(limit)) === items.length));
       const order = orderOf(items.map((item) => ({ text: String(Rules.jsonAt(item, titleField) || ""), href: Rules.fillLink(link, groups, item, dataAt.href) })));
       const got = { json, listUrl, reverse: order === "desc", shown: items.length, count: totals.countValue || 0, partial, pairs: pairs.length };
+      // (part of a list whose address names no page, though the data says it is page 1 of more, "page": 1 beside its "total": 221 (manhuatop.org): that name, as the
+      // address's page, is tried by listFromLoaded before it is believed)
+      const pageField = !page && parent && typeof parent === "object" ? Object.keys(parent).find((k) => PAGE.test(k) && !LIMIT.test(k) && Number(parent[k]) === 1) : "";
+      if (partial && pageField && (totals.count || totals.pages)) got.pageGuess = { name: pageField, count: totals.count, pages: totals.pages, dataUrl: dataAt.href, first: String(Rules.jsonAt(items[0], titleField) || "") };
       if (!best || (best.partial && !got.partial) || (best.partial === got.partial && got.pairs > best.pairs)) best = got;
     }
     return best;
@@ -725,33 +889,142 @@
     return [...groups.values()].sort((x, y) => y.length - x.length)[0] || [];
   }
   function imagesSelectorFor(docA, docB, baseUrl) {
-    const groupOf = (doc) => {
+    const addressOf = (img) => {
+      const raw = img.getAttribute("data-src") || img.getAttribute("data-lazy-src") || img.getAttribute("data-original") || img.getAttribute("src") || "";
+      try {
+        const u = new URL(raw.trim(), baseUrl);
+        return /^https?:$/.test(u.protocol) ? u : null;
+      } catch (e) {
+        return null;
+      }
+    };
+    // (a picture on both chapters is the site's, not a chapter's: its logo, the covers in a sidebar of popular books, which on mangaread.org outnumber a short
+    // chapter's pages in one folder)
+    const both = new Set(docB ? [...docB.querySelectorAll("img")].map((i) => (addressOf(i) || {}).href).filter(Boolean) : []);
+    const groupsOf = (doc, skip) => {
       const groups = new Map();
       for (const img of doc.querySelectorAll("img")) {
-        const raw = img.getAttribute("data-src") || img.getAttribute("data-lazy-src") || img.getAttribute("data-original") || img.getAttribute("src") || "";
-        let u;
-        try { u = new URL(raw, baseUrl); } catch (e) { continue; }
-        if (!/^https?:$/.test(u.protocol)) continue;
+        const u = addressOf(img);
+        if (!u || skip.has(u.href)) continue;
         const key = u.host + u.pathname.replace(/[^/]*$/, "");
         (groups.get(key) || groups.set(key, []).get(key)).push(img);
       }
-      return [...groups.values()].sort((x, y) => y.length - x.length)[0] || [];
+      return [...groups.values()].sort((x, y) => y.length - x.length);
     };
     const boxOf = (imgs) => {
       let box = imgs[0].parentElement;
       while (box && !imgs.every((i) => box.contains(i))) box = box.parentElement;
       return box;
     };
-    const first = groupOf(docA);
-    if (first.length < 3) return null;
-    const box = boxOf(first);
-    if (!box || box === docA.body || box === docA.documentElement) return null;
-    for (const base of [selectorFor(box, docA), selectorFor(box, docA, true)]) {
+    // the biggest group of pictures from one folder that sits in a box of its own (not the whole page); with the pictures both chapters have left out, then, when
+    // that leaves none, with them (chapters that show the same pictures)
+    for (const skip of [both, new Set()]) {
+      for (const group of groupsOf(docA, skip).slice(0, 3)) {
+        if (group.length < 3) break;
+        const box = boxOf(group);
+        if (!box || box === docA.body || box === docA.documentElement) continue;
+        for (const base of [selectorFor(box, docA), selectorFor(box, docA, true)]) {
+          if (!base || base === "body") continue;
+          const sel = base + " img";
+          const on = (doc) => { try { return [...doc.querySelectorAll(sel)].length; } catch (e) { return 0; } };
+          const a = on(docA), b = docB ? on(docB) : 0;
+          if (a >= 3 && a <= group.length * 1.3 && (!docB || (b >= 3))) return { selector: sel, counts: [a, b] };
+        }
+      }
+    }
+    return null;
+  }
+
+  // ---------- a book of one chapter, a picture on each of its pages (a gallery) ----------
+  // A doujin's page (nhentai.net/g/<id>/) has no chapter list: the book is one chapter, and its thumbnails link to its pages, one picture each, at this page's own
+  // address with a number after it (/g/<id>/1/ ... /26/). Those links (a picture in each, no text), the numbers running 1, 2, 3... (at least 3; a cover may link to
+  // page 1 again, outside the grid), and the deepest box that holds a link to each of them: a selector for the links in that box, kept when it finds those pages and
+  // nothing else. { selector, count, urls } (urls: each page's address, in order) or null.
+  function galleryOf(doc, url) {
+    let here = null;
+    try {
+      here = new URL(url);
+    } catch (e) {
+      return null;
+    }
+    const root = here.pathname.replace(/\/+$/, "") + "/";
+    const pageOf = (a) => {
+      let u = null;
+      try {
+        u = new URL(a.getAttribute("href"), url);
+      } catch (e) {
+        return null;
+      }
+      if (u.origin !== here.origin || !u.pathname.startsWith(root)) return null;
+      const m = /^(\d{1,4})\/?$/.exec(u.pathname.slice(root.length));
+      return m && Number(m[1]) > 0 ? { n: Number(m[1]), href: u.href.split("#")[0] } : null;
+    };
+    const links = [];
+    for (const a of doc.querySelectorAll("a[href]")) {
+      const t = clean(a.textContent); // (none, or the page's number under its thumbnail: "3", "Page 3")
+      if (hidden(a) || (t && !/^\D{0,8}\d{1,4}$/.test(t)) || !a.querySelector("img")) continue;
+      const p = pageOf(a);
+      if (p) links.push({ a, ...p });
+    }
+    const numbers = new Set(links.map((l) => l.n));
+    let count = 0;
+    while (numbers.has(count + 1)) count++;
+    if (count < 3) return null;
+    const holdsAll = (el) => {
+      const inside = new Set(links.filter((l) => el.contains(l.a)).map((l) => l.n));
+      for (let n = 1; n <= count; n++) if (!inside.has(n)) return false;
+      return true;
+    };
+    let box = links.find((l) => l.n === count).a.parentElement;
+    while (box && box !== doc.body && !holdsAll(box)) box = box.parentElement;
+    if (!box || box === doc.body || box === doc.documentElement) return null;
+    for (const base of [selectorFor(box, doc), selectorFor(box, doc, true)]) {
       if (!base || base === "body") continue;
-      const sel = base + " img";
-      const on = (doc) => { try { return [...doc.querySelectorAll(sel)].length; } catch (e) { return 0; } };
-      const a = on(docA), b = docB ? on(docB) : 0;
-      if (a >= 3 && a <= first.length * 1.3 && (!docB || (b >= 3))) return { selector: sel, counts: [a, b] };
+      const sel = base + " a[href]";
+      let found = [];
+      try {
+        found = [...doc.querySelectorAll(sel)];
+      } catch (e) {
+        continue;
+      }
+      const pages = found.map(pageOf);
+      if (pages.some((p) => !p || p.n > count) || new Set(pages.map((p) => p.n)).size !== count) continue;
+      const urls = [];
+      for (let n = 1; n <= count; n++) urls.push(pages.find((p) => p.n === n).href);
+      return { selector: sel, count, urls };
+    }
+    return null;
+  }
+
+  // Where a gallery's page has its picture, from two of its pages as the site sends them: the <img> whose address is not on the other page, found by a selector
+  // that finds exactly one picture on each page, a different one on each (the site's logo and banners are the same on both). { selector, urls: [on A, on B] } or null.
+  function pagePictureFor(docA, docB, urlA, urlB) {
+    const srcOf = (img, base) => {
+      const raw = img.getAttribute("data-src") || img.getAttribute("data-lazy-src") || img.getAttribute("data-original") || img.getAttribute("src") || "";
+      try {
+        const u = new URL(raw, base);
+        return /^https?:$/.test(u.protocol) && !/\.svg(\?|$)/i.test(u.pathname) ? u.href : "";
+      } catch (e) {
+        return "";
+      }
+    };
+    const onB = new Set([...docB.querySelectorAll("img")].map((i) => srcOf(i, urlB)));
+    for (const img of docA.querySelectorAll("img")) {
+      const a = srcOf(img, urlA);
+      if (!a || onB.has(a)) continue;
+      for (const sel of [selectorFor(img, docA), selectorFor(img, docA, true)]) {
+        if (!sel) continue;
+        let inA = [];
+        let inB = [];
+        try {
+          inA = [...docA.querySelectorAll(sel)];
+          inB = [...docB.querySelectorAll(sel)];
+        } catch (e) {
+          continue;
+        }
+        const b = inB.length === 1 && inB[0].tagName === "IMG" ? srcOf(inB[0], urlB) : "";
+        if (inA.length === 1 && b && b !== a) return { selector: sel, urls: [a, b] };
+      }
     }
     return null;
   }
@@ -781,7 +1054,11 @@
     return null;
   }
 
-  if (isNode) module.exports = { collect, selectorFor, interpret, asRuleParts, orderOf, titleDropFor, stableClasses, KINDS, MAX_CANDIDATES, listFromData, textInData, dataUrlRule, nextFromData, textBoxOf, textSelectorFor, imagesSelectorFor, pictureGroup };
+  // (a comic whose pictures a script draws: the list in the page that names them, user-rules.js scriptLists / scriptPicturesFor)
+  const scriptLists = (html) => Rules.scriptLists(html);
+  const scriptPicturesFor = (html, shown, pageUrl) => Rules.scriptPicturesFor(html, shown, pageUrl);
+
+  if (isNode) module.exports = { guessPicks, collect, MAX_LOCAL, selectorIn, bookTitleDropFor, saidOf, selectorFor, interpret, asRuleParts, orderOf, titleDropFor, stableClasses, KINDS, MAX_CANDIDATES, listFromData, textInData, dataUrlRule, nextFromData, textBoxOf, textSelectorFor, imagesSelectorFor, pictureGroup, galleryOf, pagePictureFor, scriptLists, scriptPicturesFor };
   if (typeof document === "undefined" || typeof location === "undefined") return; // loaded by a test, not injected into a page
   if (!/^https?:$/.test(location.protocol)) return;
   // A bar still on the page: a run in progress is left alone; one that has finished (its answer is only showing) is replaced by this run.
@@ -825,8 +1102,15 @@
   };
 
   // Saving goes through user-rules.js (the page that injected this also injected it), then the book is recorded again from the page as it is.
+  // (window.__P2PREAD_DETECT_DRY, set by e2e/live-sites.test.js before it starts Detect: what was found is put on the bar as data, bar.dataset.result, and nothing
+  // is saved or recorded: the sites everythingmoe.com lists are checked in the dev browser without changing its rules)
+  const dry = window.__P2PREAD_DETECT_DRY === true;
   async function save(parts) {
     const before = (await ext.storage.local.get(UserRules.KEY))[UserRules.KEY] || {};
+    if (dry) {
+      bar.dataset.result = JSON.stringify(parts);
+      return before;
+    }
     await ext.storage.local.set({ [UserRules.KEY]: UserRules.withDetected(before, host, parts) });
     await rerecord();
     return before;
@@ -932,15 +1216,142 @@
     const order = orderOf([...there.querySelectorAll(found.chapterList)].map((a) => ({ text: clean(a.textContent), href: a.getAttribute("href") }))) || reply.picks.listOrder;
     const tried = tryListRule(found, order, there, url);
     if (!tried.pagesOk) delete found.pager;
-    return { found: { chapterList: found.chapterList, ...(found.pager ? { pager: found.pager } : {}) }, order, tried, url };
+    const links = [...there.querySelectorAll(found.chapterList)].map((a) => { try { return new URL(a.getAttribute("href"), url).href; } catch (e) { return ""; } }).filter((u) => /^https?:/.test(u));
+    return { found: { chapterList: found.chapterList, ...(found.pager ? { pager: found.pager } : {}) }, order, tried, url, links };
+  }
+
+  // A list the page's script asked for as a page of its own, not as data: the Madara theme's POST to <book>/ajax/chapters/, which answers with the list's
+  // elements (mangasushi.org, mangagg.com, manhwanex.com). Each address the page asked by script is asked again, with a GET and, where that does not hold
+  // the list, a POST as the script did; the one whose answer holds the list's links (`selector` on this page) is the list's address, kept when it comes back
+  // out of the book's address and a chapter's (dataUrlRule). -> as listFromListPage: { found, order, tried (with listUrl and post), url }, or null.
+  async function listFromAsked(selector) {
+    const want = new Set([...document.querySelectorAll(selector)].map((a) => a.href.split("#")[0]).filter((h) => /^https?:/.test(h)));
+    if (want.size < 5) return null;
+    const asked = [...new Set(performance.getEntriesByType("resource").filter((e) => e.initiatorType === "fetch" || e.initiatorType === "xmlhttprequest").map((e) => String(e.name).split("#")[0]))]
+      .filter((u) => Rules.sameSite(u, host)).reverse().slice(0, 12);
+    const timeout = () => (typeof AbortSignal !== "undefined" && AbortSignal.timeout ? { signal: AbortSignal.timeout(8000) } : {});
+    for (const url of asked) {
+      for (const post of [false, true]) {
+        const res = await fetch(url, { credentials: "include", ...(post ? { method: "POST", headers: { "X-Requested-With": "XMLHttpRequest" } } : {}), ...timeout() }).catch(() => null);
+        const text = res && res.ok ? await res.text().catch(() => "") : "";
+        if (!text || /^\s*[[{]/.test(text)) continue; // (data is listFromLoaded's)
+        const there = new DOMParser().parseFromString(text.replace(/<script[\s\S]*?<\/script>/gi, ""), "text/html");
+        const sel = selectorIn(there, url, selector, want);
+        if (!sel) continue;
+        const listUrl = dataUrlRule(location.href, url);
+        if (!listUrl) continue;
+        const rule = Rules.toRule({ host, selector: "p", toc: { list: sel, listUrl, ...(post ? { post: true } : {}) } }, null);
+        if (!rule.toc.url || rule.toc.url(location.href) !== url || rule.toc.url([...want][0]) !== url) continue; // (Import starts from the book, a watch from a chapter)
+        const found = { chapterList: sel };
+        const order = orderOf([...there.querySelectorAll(sel)].map((a) => ({ text: clean(a.textContent), href: a.getAttribute("href") })));
+        const tried = tryListRule(found, order, there, url);
+        tried.listUrl = listUrl;
+        tried.post = post;
+        tried.summary += ", asked for at " + url.replace(/^https?:\/\/[^/]+/, "") + (post ? " with a POST, as the page's script asks for it" : "");
+        const links = [...there.querySelectorAll(sel)].map((a) => { try { return new URL(a.getAttribute("href"), url).href; } catch (e) { return ""; } }).filter((u) => /^https?:/.test(u));
+        return { found, order, tried, url, links };
+      }
+    }
+    return null;
+  }
+
+  // The list's selector as it reads a part of a page asked for on its own (the list's elements without the page around them, `doc`, at `base`): the page's
+  // selector, else the end of it (div.c-page-content > #manga-chapters-holder ul.main a -> ul.main a), the longest that finds the list's links (`want`) there.
+  // "" when none does.
+  function selectorIn(doc, base, selector, want) {
+    const tokens = [];
+    let cur = "";
+    let depth = 0;
+    for (const ch of String(selector)) {
+      if (ch === "[" || ch === "(") depth++;
+      else if (ch === "]" || ch === ")") depth--;
+      if (!depth && (ch === " " || ch === ">")) {
+        if (cur) tokens.push(cur);
+        cur = "";
+        if (ch === ">") tokens.push(">");
+        continue;
+      }
+      cur += ch;
+    }
+    if (cur) tokens.push(cur);
+    if (selector.includes(",")) return ""; // (a list of selectors: the page's own, not cut)
+    const parts = tokens.filter((x) => x !== ">").length;
+    for (let i = 0, kept = parts; i < tokens.length; i++) {
+      if (tokens[i] === ">") continue;
+      if (kept-- < 2 && parts >= 2) break; // (cut down to the link alone, "a", it would find any link: two parts at least)
+      const sel = tokens.slice(i).join(" ");
+      let links = [];
+      try {
+        links = [...doc.querySelectorAll(sel)];
+      } catch (e) {
+        continue;
+      }
+      const hrefs = links.map((a) => {
+        try {
+          return new URL(a.getAttribute("href") || "", base).href.split("#")[0];
+        } catch (e) {
+          return "";
+        }
+      });
+      const hit = hrefs.filter((h) => want.has(h)).length;
+      if (hit >= want.size * 0.8 && links.length <= want.size * 20) return sel;
+    }
+    return "";
   }
 
   // This page as the site sends it, before any script has run (what the extension will fetch): a document without its scripts, or null when it cannot be had.
+  let sentHtml = ""; // (this page as sent, its scripts in it: where a comic's script keeps the list of its pictures)
   async function pageAsSent() {
     const res = await fetch(location.href, { credentials: "include" }).catch(() => null);
     if (!res || !res.ok) return null;
-    const html = (await res.text().catch(() => "")).replace(/<script[\s\S]*?<\/script>/gi, "");
+    sentHtml = await res.text().catch(() => "");
+    const html = sentHtml.replace(/<script[\s\S]*?<\/script>/gi, "");
     return new DOMParser().parseFromString(html, "text/html");
+  }
+
+  // The pictures a page shows once its script has run: their addresses as the browser has them (src, the address it loaded, a lazy loader's attribute).
+  const shownIn = (doc, base) => {
+    const out = [];
+    for (const img of doc.querySelectorAll("img")) {
+      for (const raw of [img.currentSrc, img.src, ...["data-src", "data-original", "data-lazy-src", "src"].map((n) => img.getAttribute(n))]) {
+        try {
+          if (raw && !/^data:/i.test(raw)) out.push(new URL(raw, base).href);
+        } catch (e) {
+          // not an address
+        }
+      }
+    }
+    return out;
+  };
+  // A chapter whose pictures its script draws (a page as sent with a list of pictures in its script, `html`): the rule that reads that list (scriptPicturesFor), from
+  // the pictures the page shows: this page's own, or another chapter's page opened in a hidden frame of this one (same site: its script runs there as it does in a
+  // tab; sandboxed, so it cannot move this tab or open windows), waited for until its pictures are there (20 s at most). { scriptPictures, count } or null.
+  async function scriptPicturesOn(html, url) {
+    if (!scriptLists(html).length) return null; // (no list of pictures in its script: nothing to open)
+    if (url.split("#")[0] === location.href.split("#")[0]) return scriptPicturesFor(html, shownIn(document, location.href), url);
+    const frame = document.createElement("iframe");
+    frame.setAttribute("sandbox", "allow-scripts allow-same-origin");
+    frame.setAttribute("aria-hidden", "true");
+    frame.style.cssText = "position:fixed;left:-12000px;top:0;width:1000px;height:1400px;border:0;visibility:hidden;pointer-events:none";
+    frame.src = url;
+    document.documentElement.appendChild(frame);
+    try {
+      for (let t = 0; t < 40; t++) {
+        await new Promise((r) => setTimeout(r, 500));
+        let doc = null;
+        try {
+          doc = frame.contentDocument;
+        } catch (e) {
+          return null; // (another site after all: not readable)
+        }
+        if (!doc || !doc.body || doc.location.href === "about:blank") continue;
+        const found = scriptPicturesFor(html, shownIn(doc, url), url);
+        if (found) return found;
+      }
+      return null;
+    } finally {
+      frame.remove();
+    }
   }
 
   // The data (JSON) this page loaded from its own site, fetched again: [{ url, data }], the latest first (what was opened last, like the whole list). At most 20.
@@ -977,6 +1388,24 @@
       if (got && (!best || (best.partial && !got.partial) || (best.partial === got.partial && got.pairs > best.pairs))) best = got;
     }
     if (!best) return null;
+    // part of the list, whose data says its page (pageGuess): that page's name in the address is tried, page 2, and believed when it brings other chapters
+    if (best.partial && best.pageGuess) {
+      const g = best.pageGuess;
+      try {
+        const u = new URL(g.dataUrl);
+        u.searchParams.set(g.name, "2");
+        const res = await fetch(u.href, { credentials: "include" }).catch(() => null);
+        const next = res && res.ok ? JSON.parse(await res.text()) : null;
+        const items = next ? Rules.jsonAt(next, best.json.items || "") : null;
+        const first = Array.isArray(items) && items.length ? String(Rules.jsonAt(items[0], best.json.title) || "") : "";
+        if (first && first !== g.first) {
+          best.json = { ...best.json, page: g.name, ...(g.count ? { count: g.count } : { pages: g.pages }) };
+          best.partial = false;
+        }
+      } catch (e) {
+        // no second page by that name: the list stays part of it
+      }
+    }
     if (best.partial) return { partial: best };
     const spec = { host, toc: { json: best.json, listUrl: best.listUrl, ...(best.reverse ? { reverse: true } : {}) } };
     const v = Rules.validate(spec, null);
@@ -1027,31 +1456,43 @@
   // Where a chapter's text is, for a site that sends its pages whole (what the add-on downloads chapters with): on a chapter's page, from this page as sent
   // (`sent`) and the chapter next to it (`neighbour`); on a book's page, from the first two chapters of its list. { selector, summary } or null; nothing when
   // the site's saved rule already finds the text (a selector the person set is kept).
-  async function chapterTextRule(sent, found, neighbour, thisOnly) {
+  async function chapterTextRule(sent, found, neighbour, thisOnly, listLinks) {
+    const raws = new Map(); // a chapter's address -> its page as sent, scripts and all
     const fetchDoc = async (url) => {
       const res = await fetch(url, { credentials: "include" }).catch(() => null);
       if (!res || !res.ok) return null;
-      return new DOMParser().parseFromString((await res.text().catch(() => "")).replace(/<script[\s\S]*?<\/script>/gi, ""), "text/html");
+      const raw = await res.text().catch(() => "");
+      raws.set(url, raw);
+      return new DOMParser().parseFromString(raw.replace(/<script[\s\S]*?<\/script>/gi, ""), "text/html");
     };
     let docA = null;
     let docB = null;
+    let urlA = "";
+    let urlB = "";
     let where = "";
     if (thisOnly) {
       docA = sent;
+      urlA = location.href;
       where = "this chapter";
     } else if (found.next || found.prev) {
       docA = sent;
+      urlA = location.href;
+      urlB = neighbour || "";
       docB = neighbour ? await fetchDoc(neighbour) : null;
       where = "this chapter and the " + (found.next ? "next" : "previous") + " one";
     } else if (found.chapterList) {
-      const links = [...new Set([...document.querySelectorAll(found.chapterList)].map((a) => a.href).filter((u) => /^https?:/.test(u)))];
+      // (the list's links here, or where the list was found: its own page, or what the page's script asked for, mangasushi.org's POST)
+      const links = [...new Set(listLinks && listLinks.length ? listLinks : [...document.querySelectorAll(found.chapterList)].map((a) => a.href).filter((u) => /^https?:/.test(u)))];
       if (links.length < 2) return null;
       // (two from the middle of the list: the newest chapters may be the odd ones, with their pictures put in by a script and only the banners in the page as sent)
       const at = links.length >= 6 ? Math.floor(links.length / 2) : 0;
-      docA = await fetchDoc(links[at]);
-      docB = await fetchDoc(links[at + 1]);
+      urlA = links[at];
+      urlB = links[at + 1];
+      docA = await fetchDoc(urlA);
+      docB = await fetchDoc(urlB);
       where = at ? "two chapters from the middle of its list" : "its first two chapters";
     }
+    if (urlA === location.href) raws.set(urlA, sentHtml);
     if (!docA || (!docB && !thisOnly)) return null;
     const mine = ((((await ext.storage.local.get(UserRules.KEY))[UserRules.KEY] || {})[host] || {}).spec || {}).selector;
     if (mine) {
@@ -1064,16 +1505,63 @@
     }
     // (on a book's page, the selector must find nothing here: the book-recording script takes a page where it finds something for a chapter)
     const got = textSelectorFor(docA, docB, found.next || found.prev ? null : document);
-    if (got) return { selector: got.selector, summary: got.selector + ", " + got.sizes[0] + " and " + got.sizes[1] + " characters on " + where };
-    // (no chapter text: a comic, whose chapters are pictures)
+    // (no chapter text, or a short one beside a run of pictures, a comic's notes or disclaimer (rawkuma.net: 974 characters beside 10 and 29 pictures): a comic,
+    // whose chapters are pictures)
     const pics = imagesSelectorFor(docA, docB, location.href);
+    const comic = pics && Math.min(...pics.counts.filter((n, i) => i === 0 || docB)) >= 5 && (!got || Math.max(...got.sizes) < 1500);
+    if (!pics && (!got || Math.max(...got.sizes) < 1500)) {
+      // no pictures in the pages as sent, and little or no text: a comic whose script draws its pictures from a list in the page (the rule is kept when the other
+      // chapter's page has such a list too)
+      const scripted = await scriptPicturesOn(raws.get(urlA) || "", urlA).catch(() => null);
+      const there = scripted && docB ? Rules.picturesInScript(raws.get(urlB) || "", scripted.scriptPictures, urlB).length : 0;
+      if (scripted && (!docB || there >= 3)) {
+        const sp = scripted.scriptPictures;
+        return { scriptPictures: sp, summary: "the list in the page's script, " + sp.name + (sp.base64 ? " (base64)" : "") + (sp.prefix ? " on " + sp.prefix.replace(/^https:\/\//, "") : "") + ", " + scripted.count + (docB ? " and " + there : "") + " pictures on " + where };
+      }
+    }
+    if (got && !comic) return { selector: got.selector, summary: got.selector + ", " + got.sizes[0] + " and " + got.sizes[1] + " characters on " + where };
     return pics ? { images: pics.selector, summary: pics.selector + ", " + pics.counts[0] + " and " + pics.counts[1] + " pictures on " + where } : null;
+  }
+
+  // A page as the site sends it (its scripts out), or null.
+  async function fetchDocAsSent(url) {
+    const res = await fetch(url, { credentials: "include" }).catch(() => null);
+    if (!res || !res.ok) return null;
+    return new DOMParser().parseFromString((await res.text().catch(() => "")).replace(/<script[\s\S]*?<\/script>/gi, ""), "text/html");
+  }
+
+  // A book of one chapter, a picture on each of its pages (galleryOf found the links to them here): kept when the links are in the page as the site sends it (what
+  // Refresh chapters and the chapter's download read) and its first two pages show one picture each in the same place (pagePictureFor). { selector, count, images,
+  // listUrl } (listUrl: how to reach this page from a page's address, when that holds up) or null.
+  async function confirmGallery(gallery) {
+    const sent = await pageAsSent().catch(() => null);
+    let listed = 0;
+    try {
+      listed = sent ? sent.querySelectorAll(gallery.selector).length : 0;
+    } catch (e) {
+      listed = 0;
+    }
+    if (!listed) return null;
+    const [a, b] = await Promise.all([fetchDocAsSent(gallery.urls[0]), fetchDocAsSent(gallery.urls[1])]);
+    const picture = a && b ? pagePictureFor(a, b, gallery.urls[0], gallery.urls[1]) : null;
+    if (!picture) return null;
+    const pageUrl = location.href.split("#")[0];
+    let listUrl = null;
+    const wanted = Rules.listUrlRule(pageUrl, gallery.urls[0]);
+    if (wanted) {
+      const rule = Rules.toRule({ host, selector: "p", toc: { gallery: gallery.selector, listUrl: wanted } }, null);
+      const back = rule.toc.url ? rule.toc.url(gallery.urls[0]) : null;
+      if (back && back.split(/[?#]/)[0] === pageUrl.split(/[?#]/)[0]) listUrl = wanted;
+    }
+    return { selector: gallery.selector, count: gallery.count, images: picture.selector, listUrl };
   }
 
   (async () => {
     say("Looking at the page…");
-    const { candidates, selectors } = collect(document, location.href);
+    const { candidates, selectors } = collect(document, location.href, window.__P2PREAD_DETECT_LOCAL ? MAX_LOCAL : MAX_CANDIDATES);
     if (!candidates.length) return say("Nothing on this page looks like a book's details or a chapter. Open the book's page or a chapter and try again.", "#ff9d8f");
+    // (a book of one chapter whose pictures are each on a page of their own: found on the page itself, never asked of the AI)
+    const gallery = galleryOf(document, location.href);
     let reply;
     let chapterPage = false;
     if (window.__P2PREAD_DETECT_LOCAL) { // (no Gemini: Import to library, or no key)
@@ -1082,25 +1570,54 @@
       // (pictures that are big, loaded or waiting to be by a lazy loader: a list page's banners are small and not lazy)
       const lazy = (im) => ["data-src", "data-lazy-src", "data-original"].some((n) => im.hasAttribute(n));
       const big = (im) => (im.naturalWidth >= 300 && im.naturalHeight >= 300) || (lazy(im) && im.naturalWidth < 300 && im.getBoundingClientRect().width >= 200);
-      chapterPage = pictureGroup(document, location.href, big).length >= 6;
-      say(chapterPage ? "This is a comic's chapter: looking for where its pictures are…" : "Looking for the chapter list on the page (" + candidates.length + " elements)…");
-      reply = { picks: chapterPage ? {} : guessPicks(candidates, selectors, document) };
+      // (not on a page the popup shows as a book's, Import to library's: a book's page with a grid of big covers, recommended books, is not a chapter: zinmanga.net, mangadot.net)
+      chapterPage = !window.__P2PREAD_DETECT_BOOK && !gallery && pictureGroup(document, location.href, big).length >= 6;
+      say(chapterPage ? "This is a comic's chapter: looking for where its pictures are…" : "Looking for the chapter list and the book's details on the page (" + candidates.length + " elements)…");
+      reply = { picks: chapterPage ? {} : guessPicks(candidates, selectors, document, { gallery: !!gallery }) };
     } else {
-      say("Asking Gemini which parts of this page are the book's details, its chapter list and the chapter links (" + candidates.length + " elements)…");
+      say("Asking the AI which parts of this page are the book's details, its chapter list and the chapter links (" + candidates.length + " elements)…");
       reply = await ext.runtime.sendMessage({ type: "book:detect", candidates, page: { host, title: document.title } }).catch((e) => ({ error: e.message }));
       if (!reply || reply.error) {
         const why = (reply && reply.error) || "no answer";
-        reply = { picks: guessPicks(candidates, selectors, document) };
-        if (!reply.picks.chapterList) return say("Gemini could not tell: " + why + ", and no list of chapters could be found on this page.", "#ff9d8f");
-        say("Gemini could not tell (" + why + "): the chapter list was found by looking at the page.");
+        reply = { picks: guessPicks(candidates, selectors, document, { gallery: !!gallery }) };
+        if (!reply.picks.chapterList && !reply.picks.title && !gallery) return say("The AI could not tell: " + why + ", and no list of chapters could be found on this page.", "#ff9d8f");
+        say("The AI could not tell (" + why + "): the chapter list was found by looking at the page.");
       }
     }
-    if (!reply.picks.chapterList && window.__P2PREAD_DETECT_LOCAL && !chapterPage) return say("No list of chapters could be found on this page. Detect with AI may do better.", "#ff9d8f");
+    if (!reply.picks.chapterList && !reply.picks.title && window.__P2PREAD_DETECT_LOCAL && !chapterPage && !gallery) return say("No list of chapters could be found on this page. Detect with AI may do better.", "#ff9d8f");
     const { found, skipped } = interpret(reply.picks, candidates, selectors);
     // each selector is checked on the page once more, as the extension will use it
     for (const field of Object.keys(found)) if (!present(field, found[field])) delete found[field];
+    // a "synopsis" that holds the title is the box of all the book's details (nhentai.net's: the title, the tags and their counts), not a synopsis
+    if (found.description && found.title) {
+      try {
+        const d = document.querySelector(found.description);
+        const t = document.querySelector(found.title);
+        if (d && t && d.contains(t)) delete found.description;
+      } catch (e) {
+        // a selector the browser cannot use: present() has dropped it already
+      }
+    }
+    // a badge in the title's element is left out of the title (bookTitleDropFor: "A Dream Escape END")
+    let bookTitleDrop = "";
+    if (found.title) {
+      try {
+        bookTitleDrop = bookTitleDropFor(document.querySelector(found.title), saidOf(document));
+      } catch (e) {
+        bookTitleDrop = "";
+      }
+    }
+    // a book of one chapter, a picture on each of its pages: no chapter list or chapter links (a list here would be other books: related ones, tags)
+    let galleryFound = null;
+    let galleryNote = "";
+    if (gallery) {
+      say("This book is one chapter of " + gallery.count + " pages: looking for where a page's picture is…");
+      galleryFound = await confirmGallery(gallery).catch(() => null);
+      if (galleryFound) for (const f of ["chapterList", "pager", "next", "prev"]) delete found[f];
+      else galleryNote = " The links to its " + gallery.count + " pages were found, but not one picture in the same place on its first two pages.";
+    }
     let fromListPage = null;
-    if (!found.chapterList) {
+    if (!found.chapterList && !galleryFound) {
       const there = listPageLink();
       if (there) {
         say("This page has no chapter list, only a link to the page that does. Reading " + there.replace(/^https?:\/\/[^/]+/, "") + "…");
@@ -1116,9 +1633,18 @@
     if (sent && found.chapterList && !fromListPage && !present("chapterList", found.chapterList, sent)) {
       say("The chapter list is filled in by the page's script. Looking for it in the data the page loaded…");
       const got = await listFromLoaded(found.chapterList).catch(() => null);
+      // (... or in a page of its own the script asked for, the list's elements: the Madara theme's POST to <book>/ajax/chapters/)
+      let asked = null;
+      if (!(got && got.dataList)) {
+        say("The chapter list is filled in by the page's script. Looking for it in what the script asked the site for…");
+        asked = await listFromAsked(found.chapterList).catch(() => null);
+      }
       delete found.chapterList;
       delete found.pager;
-      if (got && got.dataList) fromData = got;
+      if (asked) {
+        fromListPage = asked;
+        Object.assign(found, asked.found);
+      } else if (got && got.dataList) fromData = got;
       else if (got && got.partial) dataNote = " The chapter list was left out: the data this page loaded holds only " + got.partial.shown + (got.partial.count ? " of its " + got.partial.count : "") + " chapters. Show the whole list on the page, then run this again.";
       else dataNote = " The chapter list was left out: the page's script fills it in, and it was not found in the data the page loaded.";
     }
@@ -1133,12 +1659,12 @@
     if (sent && (found.next || found.prev)) textData = await textFromLoaded(sent, linkOf(found.next), linkOf(found.prev)).catch(() => null);
     // where a chapter's text is, for a site that sends its pages whole (one whose text comes from its data has it above)
     let textSel = null;
-    if (!textData && !fromData && (found.next || found.prev || chapterPage || (found.chapterList && !fromListPage))) {
+    if (!textData && !fromData && (found.next || found.prev || chapterPage || found.chapterList)) {
       say("Looking for where a chapter's text is…");
-      textSel = await chapterTextRule(sent, found, linkOf(found.next) || linkOf(found.prev), chapterPage).catch(() => null);
+      textSel = await chapterTextRule(sent, found, linkOf(found.next) || linkOf(found.prev), chapterPage, fromListPage && fromListPage.links).catch(() => null);
     }
     const names = Object.keys(found);
-    if (!names.length && !fromData && !textData && !textSel) return say("Gemini found none of the details, the chapter list or the chapter links on this page." + dataNote, "#ff9d8f");
+    if (!names.length && !fromData && !textData && !textSel && !galleryFound) return say("The AI found none of the details, the chapter list or the chapter links on this page." + dataNote + galleryNote, "#ff9d8f");
     // the list's order is read from its own numbers when they say; Gemini's guess is only for lists whose entries carry none. Read on the page as the site
     // sends it (what Refresh chapters reads): a page's script may turn the list round on screen (69shuba sends it newest first and shows it oldest first)
     let order = fromListPage ? fromListPage.order : reply.picks && reply.picks.listOrder;
@@ -1148,13 +1674,13 @@
     if (tried) {
       if (!tried.pagesOk) delete found.pager;
     }
-    const before = await save(asRuleParts(found, order, { ...(tried ? { listUrl: tried.listUrl, titleDrop: tried.titleDrop } : {}), dataList: fromData && fromData.dataList, dataText: textData && textData.dataText, textSelector: textSel && textSel.selector, images: textSel && textSel.images }));
-    const missing = Object.keys(KINDS).filter((f) => !found[f] && !((fromData || dataNote) && (f === "chapterList" || f === "pager"))).map((f) => LABEL[f]);
+    const before = await save(asRuleParts(found, order, { bookTitleDrop, ...(tried ? { listUrl: tried.listUrl, titleDrop: tried.titleDrop, post: !!tried.post } : {}), dataList: fromData && fromData.dataList, dataText: textData && textData.dataText, textSelector: textSel && textSel.selector, images: (textSel && textSel.images) || (galleryFound && galleryFound.images), scriptPictures: textSel && textSel.scriptPictures, gallery: galleryFound }));
+    const missing = Object.keys(KINDS).filter((f) => !found[f] && !((fromData || dataNote) && (f === "chapterList" || f === "pager")) && !(galleryFound && ["chapterList", "pager", "next", "prev"].includes(f))).map((f) => LABEL[f]);
     const partial = !fromListPage && skipped.chapterList && /^only the latest/.test(skipped.chapterList) ? " The chapter list was left out: " + skipped.chapterList + "." : "";
-    const saved = Object.keys(found).map((f) => LABEL[f]).concat(fromData ? ["chapter list (from the site's data)"] : [], textData ? ["chapter text (from the site's data)"] : [], textSel ? [textSel.images ? "chapter pictures" : "chapter text"] : []);
-    say("Found and saved for " + host + ": " + saved.join(", ") + "." + (tried ? " Chapter list tried on " + (fromListPage ? "its own page" : "this page") + ": " + tried.summary + "." : "") + (fromData ? " Chapter list tried on the site's data: " + fromData.summary + "." : "") + (textData ? " Chapter text: " + textData.summary + "." : "") + (textSel ? (textSel.images ? " Chapter pictures: " : " Chapter text: ") + textSel.summary + "." : "") + dataNote + (missing.length ? " Not on this page: " + missing.join(", ") + ". (The details and the chapter list are on a book's page; the next and previous links are on a chapter's page: run it there too.)" : "") + partial + " The book is being recorded again.", "#7ed17e");
+    const saved = Object.keys(found).map((f) => LABEL[f]).concat(galleryFound ? ["one chapter of " + galleryFound.count + " pages, a picture each"] : [], fromData ? ["chapter list (from the site's data)"] : [], textData ? ["chapter text (from the site's data)"] : [], textSel ? [textSel.images || textSel.scriptPictures ? "chapter pictures" : "chapter text"] : []);
+    say((dry ? "Found (a dry run: nothing saved) for " : "Found and saved for ") + host + ": " + saved.join(", ") + "." + (galleryFound ? " A page's picture: " + galleryFound.images + (galleryFound.listUrl ? "; this page is found from a page's address" : "") + "." : "") + (tried ? " Chapter list tried on " + (fromListPage ? "its own page" : "this page") + ": " + tried.summary + "." : "") + (fromData ? " Chapter list tried on the site's data: " + fromData.summary + "." : "") + (textData ? " Chapter text: " + textData.summary + "." : "") + (textSel ? (textSel.images || textSel.scriptPictures ? " Chapter pictures: " : " Chapter text: ") + textSel.summary + "." : "") + dataNote + galleryNote + (missing.length ? " Not on this page: " + missing.join(", ") + ". (The details and the chapter list are on a book's page; the next and previous links are on a chapter's page: run it there too.)" : "") + partial + (dry ? "" : " The book is being recorded again."), "#7ed17e");
     action.textContent = "Undo";
-    action.hidden = false;
+    action.hidden = dry; // (nothing to undo)
     action.onclick = async () => {
       action.disabled = true;
       await ext.storage.local.set({ [UserRules.KEY]: before });

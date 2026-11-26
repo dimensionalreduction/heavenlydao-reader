@@ -89,21 +89,21 @@ var OriginalTranslate = (function () {
     // Best effort, like the in-page translator: a library that is slow to answer just means the cached terms are used.
     await Promise.race([GlossaryServer.pull().catch(() => null), new Promise((r) => setTimeout(r, 2500))]);
     const glossary = await termsFor(job.url, job.saveUrl ? WtrTerms.bookOf(job.saveUrl) : undefined);
-    // A chapter a watch fetched (job.watched), of a novel translated with a profile (profile-translate.js): its model and prompt, as the library's page would
-    // translate it; a profile paid by the extension is this Gemini with the profile's prompt (below, as a Custom prompt).
+    // A chapter a watch fetched (job.watched), of a novel translated with a profile (profile-translate.js): the profile's prompt, and the model Settings › Model rules' Translation card
+    // gives (the next row when one fails), as the library's page would translate it. A novel with no profile is this Gemini, below.
     const profile = job.watched && typeof ProfileTranslate !== "undefined" ? await ProfileTranslate.forChapter(job.saveUrl || job.url) : null;
-    if (profile && profile.pay !== "extension") {
+    if (profile) {
       const r = await ProfileTranslate.translate(job, profile, lang === "en" ? glossary : await ProfileTranslate.languageGlossary(job.url, lang, job.saveUrl ? WtrTerms.bookOf(job.saveUrl) : undefined), lang);
       if (r.error) return r;
       await noteMentions(job, glossary, {}).catch(() => {});
       await ext.storage.local.set({
-        [key]: { translated: r.text, suggestions: [], savedAt: Date.now(), model: profile.model + " (" + profile.name + ")", pageTitle: job.pageTitle || "", novelName: job.novelName || "", ...(job.next ? { next: job.next } : {}) }
+        [key]: { translated: r.text, suggestions: [], savedAt: Date.now(), model: r.used.kind === "free" ? r.used.rule : r.used.rule + " (" + profile.name + ")", pageTitle: job.pageTitle || "", novelName: job.novelName || "", ...(job.next ? { next: job.next } : {}) }
       });
       return { ok: true, lang, profile: profile.name };
     }
     const { selectedModel } = await ext.storage.local.get("selectedModel");
     // The reader's Custom prompt: the prompt chosen and what goes with it.
-    const custom = job.custom && job.custom.prompt ? { prompt: job.custom.prompt, notes: !!job.custom.notes, glossary: job.custom.glossary !== false } : profile ? ProfileTranslate.customOf(profile) : null;
+    const custom = job.custom && job.custom.prompt ? { prompt: job.custom.prompt, notes: !!job.custom.notes, glossary: job.custom.glossary !== false } : null;
     if (pictures && pictures.marks.length) job = { ...job, text: pictures.text };
     const response = await TermNotes.translate({ text: String(job.text).slice(0, MAX_CHARS), glossary, model: selectedModel, url: job.url, title: job.pageTitle, novelName: job.novelName, notes: job.notes, lang, english: !!job.english, ...(custom ? { custom } : {}) });
     if (!response || response.error) return { error: (response && response.error) || "no answer from Gemini" };

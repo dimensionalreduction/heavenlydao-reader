@@ -442,6 +442,7 @@
       const found = absolute(href, url);
       if (!found || found === url || hostOf(found) !== host) return null;
       if (canon(rule, found) === canon(rule, url)) return null;
+      if (/^https?:\/\/[^/?#]+\/?(#.*)?$/i.test(found)) return null; // (the site's home page: what the last chapter's "next" leads to on some sites, mh160mh.com's "/")
       return here && chapterId(found) === here ? null : canon(rule, found);
     };
     const named = (ruleFor(url) || {}).nav;

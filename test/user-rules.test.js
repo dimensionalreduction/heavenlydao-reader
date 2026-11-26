@@ -66,6 +66,51 @@ const links = UR.toRule(UR.validate({ host: "example.com", selector: "p", toc: {
 const link = (u) => ({ getAttribute: (k) => (k === "href" ? u : null) });
 assert.deepStrictEqual(Array.from(links.toc.pages({ querySelectorAll: () => [link("?page=2"), link("https://cdn.example.net/x")] }, "https://example.com/list")), ["https://example.com/list?page=2"], "links to the pages, on the site only");
 
+// a book of one chapter, a picture on each of its pages (a gallery: nhentai.net/g/<id>/ and /g/<id>/1/ ... ): no list of links, no order, no list pages
+v = UR.validate({ host: "example.com", images: "#image-container > a > img", toc: { gallery: "#thumbnail-container a[href]", list: "ul a", reverse: true, titleDrop: ".x", pages: { kind: "numbered", selector: ".pg a" }, listUrl: { match: "^https://(?:www\\.)?example\\.com/g/([^/?#]+)(?:[/?#]|$)", to: "https://example.com/g/$1/" } } });
+assert.ok(v.ok, JSON.stringify(v.errors));
+assert.deepStrictEqual(v.spec.toc, { gallery: "#thumbnail-container a[href]", listUrl: { match: "^https://(?:www\\.)?example\\.com/g/([^/?#]+)(?:[/?#]|$)", to: "https://example.com/g/$1/" } }, "the gallery's links and the list's address; a list, its order, its title parts and its pages are not a gallery's");
+assert.ok(UR.validate({ host: "example.com", images: "img", toc: { gallery: "#t a" } }).ok, "a gallery needs no list's links");
+assert.deepStrictEqual(UR.validate({ host: "example.com", images: "img", toc: { gallery: "x".repeat(600) } }).errors.map((e) => e.field), ["toc.gallery"], "an absurd selector");
+const gallery = UR.toRule(UR.validate({ host: "example.com", images: "#image-container img", book: { title: "h1 > span.pretty" }, toc: { gallery: "#t a", listUrl: { match: "^https://(?:www\\.)?example\\.com/g/([^/?#]+)(?:[/?#]|$)", to: "https://example.com/g/$1/" } } }).spec);
+const thumb = (u) => ({ getAttribute: (k) => (k === "href" ? u : null) });
+const galleryDoc = (links, title) => ({ title: "Book » site", querySelector: (s) => (s === "h1 > span.pretty" && title ? { textContent: "  " + title + " " } : s === "h1" ? { textContent: "[Circle] " + title + " [English]" } : null), querySelectorAll: (s) => (s === "#t a" ? links : []) });
+const pagesHere = [thumb("/g/7/1/"), thumb("/g/7/2/"), thumb("https://example.com/g/7/3/#x"), thumb("/g/7/2/"), thumb("https://evil.example.org/g/7/4/"), thumb("/g/7/")];
+assert.deepStrictEqual(Array.from(gallery.toc.galleryPages(galleryDoc(pagesHere, "A Book"), "https://example.com/g/7/")), ["https://example.com/g/7/1/", "https://example.com/g/7/2/", "https://example.com/g/7/3/"], "its pages in order, each once, on the site, not the book's page itself");
+assert.deepStrictEqual(JSON.parse(JSON.stringify(gallery.toc.list(galleryDoc(pagesHere, "A Book"), "https://example.com/g/7/#top"))), [{ title: "A Book", url: "https://example.com/g/7/" }], "the list is one chapter: the book's page, named by the book's title");
+assert.deepStrictEqual(JSON.parse(JSON.stringify(gallery.toc.list(galleryDoc(pagesHere, ""), "https://example.com/g/7/"))), [{ title: "[Circle] [English]", url: "https://example.com/g/7/" }], "with no title of its own, the page's h1 (its spaces as one)");
+assert.deepStrictEqual(Array.from(gallery.toc.list(galleryDoc([], "A Book"), "https://example.com/g/7/")), [], "a page without the links has no chapter (a page of the book, not the book's page)");
+assert.strictEqual(gallery.toc.url("https://example.com/g/7/12/"), "https://example.com/g/7/", "the book's page from one of its pages");
+const RSg = { rule: gallery, url: "https://example.com/g/7/" };
+assert.deepStrictEqual(RS.tocChapters(galleryDoc(pagesHere, "A Book"), RSg, "").map((c) => [c.num, c.url]), [[1, "https://example.com/g/7/"]], "numbered as a list is");
+// what Detect finds replaces what was saved: a gallery replaces a list, a list replaces a gallery
+let st = UR.withDetected({ "example.com": { spec: { host: "example.com", toc: { list: "ul a", reverse: true, pages: { kind: "numbered", selector: ".pg a" }, gap: 2000 } }, enabled: true } }, "example.com", { toc: { gallery: "#t a", listUrl: null }, images: "#ic img" }, 1);
+assert.deepStrictEqual(st["example.com"].spec.toc, { gallery: "#t a", gap: 2000 }, "a found gallery replaces the list (the pause set by hand stays)");
+assert.strictEqual(st["example.com"].spec.images, "#ic img");
+st = UR.withDetected(st, "example.com", { toc: { list: "ul.chapters a" } }, 2);
+assert.ok(!st["example.com"].spec.toc.gallery && st["example.com"].spec.toc.list === "ul.chapters a", "and a found list replaces the gallery");
+// a badge in the title (book.titleDrop) is kept with the title, and goes when a title is found without one
+st = UR.withDetected(st, "example.com", { book: { title: "div.post-title > h1", titleDrop: "span.manga-title-badges.hot" } }, 3);
+assert.deepStrictEqual(st["example.com"].spec.book, { title: "div.post-title > h1", titleDrop: "span.manga-title-badges.hot" }, "the badge is saved with the title");
+assert.strictEqual(UR.validate(st["example.com"].spec).spec.book.titleDrop, "span.manga-title-badges.hot", "and kept by the rule's check");
+assert.ok(!UR.validate({ host: "example.com", book: { author: "a.author", titleDrop: "span.badge" } }).spec.book.titleDrop, "with no title it is not kept");
+st = UR.withDetected(st, "example.com", { book: { author: "a.author" } }, 4);
+assert.strictEqual(st["example.com"].spec.book.titleDrop, "span.manga-title-badges.hot", "another part found keeps it");
+st = UR.withDetected(st, "example.com", { book: { title: "h1.entry-title" } }, 5);
+assert.ok(!("titleDrop" in st["example.com"].spec.book), "a new title found without a badge drops it");
+// a list found in what the page's script asked for with a POST (the Madara theme's <book>/ajax/chapters/): kept with its address, gone when a list is found otherwise
+const ajax = { match: "^https://(?:www\\.)?example\\.com/manga/([^/?#]+)(?:[/?#]|$)", to: "https://example.com/manga/$1/ajax/chapters/" };
+st = UR.withDetected(st, "example.com", { toc: { list: "ul.main a", reverse: true, listUrl: ajax, post: true } }, 6);
+assert.ok(st["example.com"].spec.toc.post === true && st["example.com"].spec.toc.listUrl.to === ajax.to, "a POST list is saved with its address");
+const postRule = UR.toRule(UR.validate(st["example.com"].spec).spec);
+assert.ok(postRule.toc.post("https://example.com/manga/moon-river/ajax/chapters/", "https://example.com/manga/moon-river/chapter-2/"), "the rule says its own list address is asked with a POST");
+assert.ok(!postRule.toc.post("https://example.com/other/", "https://example.com/manga/moon-river/"), "and no other address");
+st = UR.withDetected(st, "example.com", { toc: { list: "ul.chapters a", listUrl: null } }, 7);
+assert.ok(!("post" in st["example.com"].spec.toc), "a list found on a page drops it");
+st = UR.withDetected(st, "example.com", { toc: { list: "ul.main a", listUrl: ajax, post: true } }, 8);
+st = UR.withDetected(st, "example.com", { toc: { gallery: "#t a", listUrl: null } }, 9);
+assert.ok(!("post" in st["example.com"].spec.toc), "and so does a gallery");
+
 // ---- saved rules: switched on, valid, applied to the engine ----
 const stored = {
   "example.com": { spec: good, enabled: true },

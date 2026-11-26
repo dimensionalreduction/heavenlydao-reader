@@ -171,15 +171,7 @@ const watch = (over = {}) => ({ id: "wtr-lab:1|wtr-lab.com", novel: "wtr-lab:1",
   assert.deepStrictEqual(W.splitTitle("001傅家三爷，信佛如魔新书求收（2/3）"), { prefixed: false, body: "傅家三爷，信佛如魔新书求收（2/3）" }, "a leading list number before Chinese words is dropped");
   assert.strictEqual(W.composeTitle(2, "001傅家三爷，信佛如魔新书求收（2/3）", ""), "Chapter 2: 傅家三爷，信佛如魔新书求收（2/3）", "the index first, the site's words after it");
 
-  // ---- titles are translated once and remembered ----
-  const area = { data: {}, get: async (k) => ({ [k]: area.data[k] }), set: async (o) => Object.assign(area.data, o) };
-  const asked = [];
-  const tr = async (texts) => { asked.push(texts.slice()); return texts.map((t) => "EN:" + t); };
-  assert.deepStrictEqual(await W.cachedTitles(area, tr, ["a", "b", "a"]), ["EN:a", "EN:b", "EN:a"]);
-  assert.deepStrictEqual(asked, [["a", "b"]], "each distinct title is asked for once");
-  assert.deepStrictEqual(await W.cachedTitles(area, tr, ["b", "c"]), ["EN:b", "EN:c"]);
-  assert.deepStrictEqual(asked[1], ["c"], "only the title not seen before is asked for");
-  assert.deepStrictEqual(await W.cachedTitles(area, async () => { throw new Error("must not be called"); }, ["a", "c"]), ["EN:a", "EN:c"], "a list looked at again asks for nothing");
+  // (titles are translated once and remembered: gemini.js titlesOnce, test/title-cache.test.js)
 
   // ---- a source with a chapter-list page ----
   const tocList = (n) => Array.from({ length: n }, (_, i) => [i + 1, "第" + (i + 1) + "章 标题" + (i + 1), "https://www.uuread.tw/chapter/9/" + (100 + i) + ".html"]);

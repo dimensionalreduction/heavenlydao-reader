@@ -67,11 +67,72 @@
   // The synopsis as paragraphs: the description may carry <br /> tags.
   const paragraphs = (text) => String(text || "").split(/<br\s*\/?>|\n+/i).map((l) => l.replace(/<[^>]*>/g, "").trim()).filter(Boolean);
 
-  // What the page says about its book (nothing translated yet), or null if it is not a book's page.
-  function readBook(doc, href) {
+  // A book's record in the library is named by its page: its site and path ("69shuba.com/book/74649"), and the book's part of the query when the path does not
+  // name it ("wftoon236.com/list?toon=75724": every book of that site is at /list). The query's numbers that are not a page's name it, as WtrTerms.bookQuery
+  // reads them (this script is loaded without it).
+  const NOT_BOOK_FIELD = /^(?:p|pg|page|page_?(?:no|num|size)|part|vol|volume|sort|order|limit|offset|size|t|v|ver|ts|time|_|lang|hl|ref|from|utm_\w+)$/i;
+  function bookIdOf(href) {
+    const u = new URL(href);
+    const id = u.hostname.replace(/^www\./, "") + u.pathname.replace(/\.[a-z]+$/i, "").replace(/\/+$/, "");
+    if (/\d{3,}/.test(u.pathname)) return id;
+    const book = [];
+    u.searchParams.forEach((v, k) => { // (forEach: a Firefox content script cannot iterate the page's URLSearchParams)
+      if (/^\d{1,15}$/.test(v) && !NOT_BOOK_FIELD.test(k) && !book.some((f) => f[0] === k)) book.push([k, v]);
+    });
+    return book.length ? id + "?" + book.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map((f) => encodeURIComponent(f[0]) + "=" + f[1]).join("&") : id;
+  }
+
+  // The book as the page describes it in the web's standard data, whatever the site: a schema.org Book (or a series of them) in its JSON-LD, else og:type "book" with
+  // its og:title, the site's name taken off. { title, author, description, cover, genres } (any may be empty), or null. novelfull.net's book page has its title in
+  // an h1.tit its built-in rule does not know (h3.title), and a Book in its JSON-LD; a site with no rule has no selectors at all. `html`: the page's text, for a
+  // document parsed with its scripts taken out (p2p-host.js), where the JSON-LD is gone.
+  const BOOK_TYPE = /^(Book|BookSeries|ComicSeries|CreativeWorkSeries|Novel|ComicStory)$/i;
+  function standardBook(doc, html) {
+    const blocks = [...doc.querySelectorAll('script[type="application/ld+json"]')].map((s) => s.textContent);
+    if (!blocks.length && html) for (const m of String(html).matchAll(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) blocks.push(m[1]);
+    const items = [];
+    const walk = (x) => {
+      if (!x || typeof x !== "object" || items.length > 200) return;
+      if (Array.isArray(x)) return x.forEach(walk);
+      items.push(x);
+      if (x["@graph"]) walk(x["@graph"]);
+    };
+    for (const b of blocks) {
+      try {
+        walk(JSON.parse(b));
+      } catch (e) {
+        // not JSON
+      }
+    }
+    const nameOf = (v) => (Array.isArray(v) ? v.map(nameOf).filter(Boolean).join(", ") : v && typeof v === "object" ? String(v.name || "") : String(v || "")).replace(/\s+/g, " ").trim();
+    const urlOf = (v) => (Array.isArray(v) ? urlOf(v[0]) : v && typeof v === "object" ? String(v.url || v.contentUrl || "") : String(v || "")).trim();
+    const ld = items.find((x) => [].concat(x["@type"] || []).some((t) => BOOK_TYPE.test(String(t))) && nameOf(x.name));
+    if (ld) return { title: nameOf(ld.name), author: nameOf(ld.author || ld.creator), description: typeof ld.description === "string" ? ld.description.trim() : nameOf(ld.description), cover: urlOf(ld.image), genres: [].concat(ld.genre || []).map(nameOf).filter(Boolean) };
     const m = metas(doc);
-    const title = m["og:novel:book_name"] || "";
-    if (!title || !(m["og:novel:author"] || m["og:novel:category"])) return null;
+    if (/^book$/i.test(m["og:type"] || "") && m["og:title"]) {
+      const site = String(m["og:site_name"] || "").trim();
+      const title = site ? m["og:title"].replace(new RegExp("\\s*[|\\-–—:·]\\s*" + site.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*$", "i"), "").trim() : m["og:title"].trim();
+      return { title, author: m["book:author"] || "", description: m["og:description"] || "", cover: m["og:image"] || "", genres: [] };
+    }
+    return null;
+  }
+
+  // What the page says about its book (nothing translated yet), or null if it is not a book's page: its og:novel tags, else its standard data (standardBook).
+  function readBook(doc, href, html) {
+    const m = metas(doc);
+    let title = m["og:novel:book_name"] || "";
+    if (!title || !(m["og:novel:author"] || m["og:novel:category"])) {
+      const sb = standardBook(doc, html);
+      if (!sb || !sb.title || !(sb.author || sb.cover || sb.description)) return null;
+      const url = new URL(href);
+      let cover = "";
+      try {
+        cover = sb.cover ? new URL(sb.cover, href).href : "";
+      } catch (e) {
+        cover = "";
+      }
+      return { id: bookIdOf(href), source: url.hostname.replace(/^www\./, ""), url: href.split("#")[0], rawTitle: sb.title, authorRaw: sb.author, synopsis: paragraphs(sb.description), category: sb.genres.slice(0, 8).join(" / "), status: "", cover: /^https:\/\//.test(cover) ? cover : "", listUrl: href.split("#")[0] };
+    }
     const url = new URL(href);
     const host = url.hostname.replace(/^www\./, "");
     let list = m["og:novel:read_url"] || "";
@@ -96,7 +157,7 @@
       }
     };
     return {
-      id: host + url.pathname.replace(/\.[a-z]+$/i, "").replace(/\/+$/, ""), // "69shuba.com/book/74649"
+      id: bookIdOf(href), // "69shuba.com/book/74649"
       source: host,
       url: href.split("#")[0],
       rawTitle: title,
@@ -110,6 +171,28 @@
   }
 
   const clean = (t) => String(t || "").replace(/\s+/g, " ").trim();
+
+  // The book's title from its page's h1, where nothing else names it (a rule with no title selector: the built-in Madara-theme sites, wuxiaworld.site,
+  // manhwatop.com; no metadata): the h1 whose words the page's own title or og:title carries, or its words without a badge in it ("A Dream Escape END": the
+  // parts the page's title does not carry left out). "" when no h1 is carried, as on a chapter's page whose h1 is the chapter's own and its title the book's.
+  function headingTitle(doc) {
+    if (!doc || !doc.querySelectorAll) return "";
+    const og = doc.querySelector && doc.querySelector('meta[property="og:title"]');
+    const said = clean((doc.title || "") + " " + (og ? og.getAttribute("content") : "")).toLowerCase();
+    const words = " " + said.replace(/[^\p{L}\p{N}]+/gu, " ") + " ";
+    for (const h of [...doc.querySelectorAll("h1")].slice(0, 3)) {
+      const whole = clean(h.textContent);
+      if (whole.length >= 2 && whole.length <= 200 && said.includes(whole.toLowerCase())) return whole;
+      const copy = h.cloneNode(true);
+      for (const kid of [...copy.children]) {
+        const t = clean(kid.textContent).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+        if (t && !words.includes(" " + t + " ")) kid.remove();
+      }
+      const rest = clean(copy.textContent);
+      if (rest.length >= 2 && rest !== whole && said.includes(rest.toLowerCase())) return rest;
+    }
+    return "";
+  }
   // `drop`: parts of the element that are not the text wanted (ranobes.top's title carries the original names in a subtitle)
   const firstText = (doc, sel, drop) => {
     try {
@@ -169,7 +252,7 @@
   function fillGaps(book, doc, href, builtin, mine) {
     if (!book) return book;
     const read = {
-      title: (sel) => firstText(doc, sel),
+      title: (sel, from) => firstText(doc, sel, from && from.titleDrop), // (a badge in the title left out of it)
       author: (sel) => authorOf(doc, sel),
       cover: (sel) => coverOf(doc, sel, href),
       description: (sel) => descriptionOf(doc, sel),
@@ -178,10 +261,10 @@
     const field = { title: "rawTitle", author: "authorRaw", cover: "cover", description: "synopsis", genre: "category" };
     const empty = (v) => !v || (Array.isArray(v) && !v.length);
     for (const key of Object.keys(field)) {
-      const mineValue = mine && mine[key] ? read[key](mine[key]) : "";
+      const mineValue = mine && mine[key] ? read[key](mine[key], mine) : "";
       if (!empty(mineValue)) book[field[key]] = mineValue;
       else if (empty(book[field[key]]) && builtin && builtin[key]) {
-        const v = read[key](builtin[key]);
+        const v = read[key](builtin[key], builtin);
         if (!empty(v)) book[field[key]] = v;
       }
     }
@@ -207,9 +290,20 @@
       return (!v || !v.length) && f[key] && f[key] !== b[key] ? how(f[key], f) : v;
     };
     const astro = b.astro && b.astro.component ? fromAstro(doc, b.astro) : null; // (the page's own data, when the rule says where: it is believed first)
-    const title = (astro && astro.title) || read("title", (sel, from) => firstText(doc, sel, from.titleDrop));
+    // (no title from the rule on a page the person said is a book's: its h1, as the page's title carries it, headingTitle)
+    const title = (astro && astro.title) || read("title", (sel, from) => firstText(doc, sel, from.titleDrop)) || (opts.asBook ? headingTitle(doc) : "");
     const author = (astro && astro.author) || read("author", (sel) => authorOf(doc, sel));
-    let description = astro && astro.description.length ? astro.description : read("description", (sel) => descriptionOf(doc, sel));
+    // (a "synopsis" that holds the title is the box of all the book's details, its tags and their counts with it: nhentai.net's #info, saved by an earlier Detect)
+    const holdsTitle = (sel, from) => {
+      try {
+        const d = sel && doc.querySelector(sel);
+        const t = from.title && doc.querySelector(from.title);
+        return !!(d && t && d !== t && d.contains(t));
+      } catch (err) {
+        return false;
+      }
+    };
+    let description = astro && astro.description.length ? astro.description : read("description", (sel, from) => (holdsTitle(sel, from) ? [] : descriptionOf(doc, sel)));
     // (a site whose synopsis is only in the page's description tag: wfwf528.com, a comic site)
     if (!description.length) {
       const md = doc.querySelector('meta[property="og:description"], meta[name="description"]');
@@ -222,7 +316,7 @@
     const url = new URL(href);
     const host = url.hostname.replace(/^www\./, "");
     return {
-      id: host + url.pathname.replace(/\.[a-z]+$/i, "").replace(/\/+$/, ""),
+      id: bookIdOf(href),
       source: host,
       url: href.split("#")[0],
       rawTitle: title,
@@ -258,8 +352,8 @@
     };
   }
 
-  if (isNode) module.exports = { readBook, readBookByRule, fillGaps, toNovelInfo, textsOf, statusOf };
-  else if (typeof window !== "undefined") window.BookCapture = { readBook, readBookByRule, fillGaps, toNovelInfo, textsOf }; // (the extension's own pages use these: the rules page, and the sync page when a book's details are read again)
+  if (isNode) module.exports = { standardBook, headingTitle, readBook, readBookByRule, fillGaps, toNovelInfo, textsOf, statusOf, bookIdOf };
+  else if (typeof window !== "undefined") window.BookCapture = { standardBook, headingTitle, readBook, readBookByRule, fillGaps, toNovelInfo, textsOf, bookIdOf }; // (the extension's own pages use these: the rules page, the popup (a book's record id), and the sync page when a book's details are read again)
   if (typeof document === "undefined" || typeof location === "undefined") return; // loaded by a test, not injected into a page
   if (!/^https?:$/.test(location.protocol)) return; // an extension page that loaded this only for the functions above: nothing to record here
 
@@ -282,7 +376,11 @@
     // Gemini says what a title means; a build without it answers nothing, and the batch translator (Google) does it instead
     let reply = await ext.runtime.sendMessage({ type: "translateBook", texts }).catch(() => null);
     if (!ok(reply)) reply = await ext.runtime.sendMessage({ type: "translateTitles", texts }).catch(() => null);
-    const english = ok(reply) ? reply.texts : texts;
+    const english = (ok(reply) ? reply.texts : texts).slice();
+    // the title is the name the popup shows beside it (each title translated once and kept: translateTitle), not the details' own translation of it, so the
+    // library names the book as the popup did, and the chapters saved from its pages (content.js) are under the same name
+    const named = await ext.runtime.sendMessage({ type: "translateTitle", text: texts[0] }).catch(() => null);
+    if (named && named.text && named.text !== texts[0]) english[0] = named.text;
     const info = toNovelInfo(book, english);
     const saved = await ext.runtime.sendMessage({ type: "novel:save", info }).catch(() => null);
     if (saved && saved.ok) {

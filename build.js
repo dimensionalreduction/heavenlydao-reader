@@ -64,6 +64,9 @@ function addDevSite(manifestFile, target) {
   const hostsKey = manifest.host_permissions ? "host_permissions" : "permissions";
   // (the library site on this computer as a permission too: a temporary add-on, as the Firefox tests install it, is not granted a content script's matches)
   for (const h of ["https://127.0.0.1/*", "http://127.0.0.1/*", ...sites]) if (!manifest[hostsKey].includes(h)) manifest[hostsKey].push(h);
+  // --all-sites (a dev build only, for e2e/live-sites.test.js): every site allowed at install, as if Allow had been pressed on each, since a test cannot answer
+  // the browser's question. Build again without it to have the questions back (the e2e tests need them: access-card).
+  if (process.argv.includes("--all-sites")) for (const h of ["https://*/*", "http://*/*"]) if (!manifest[hostsKey].includes(h)) manifest[hostsKey].push(h);
   fs.writeFileSync(manifestFile, JSON.stringify(manifest, null, 2) + "\n");
 }
 // The same addresses for the extension's pages that check who is asking (library-host.js, p2p-host.js, notice-bg.js): Chrome's offscreen page
@@ -111,6 +114,11 @@ for (const target of targets) {
   }
   // how chapters are put together into novels: the library site's own code (share-lists.js, the notifications)
   copyFile(path.join(root, "vendor", "chapters.js"), distDir);
+  // who pays for a model, and which one is used (Settings › Model rules): the library site's own code (the comic's pictures and Listen's voice follow it)
+  copyFile(path.join(root, "vendor", "pay.js"), distDir);
+  // how a glossary's terms are found in a chapter's English (word edges, case, plurals): the library site's own code, so a chapter translated in its page marks what the
+  // library's reader marks (content.js)
+  copyFile(path.join(root, "vendor", "terms.js"), distDir);
   // how a translation profile translates (the playground's own code: profile-translate.js uses it for the chapters a watch fetches)
   fs.writeFileSync(path.join(distDir, "profile-model.js"), profileModelText());
   // the engine and every site's rules, as the one file the extension loads

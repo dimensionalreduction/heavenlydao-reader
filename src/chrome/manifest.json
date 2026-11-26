@@ -4,8 +4,8 @@
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
   },
   "name": "heavenlydao.com Reader",
-  "version": "1.0.8",
-  "description": "Fetch web-novel chapters, translate them with Gemini, and keep them in your heavenlydao.com library on all your devices.",
+  "version": "1.1.0",
+  "description": "Fetch web-novel and comic chapters, translate them with AI, and keep them in your heavenlydao.com library.",
   "icons": {
     "16": "icon-16.png",
     "32": "icon-32.png",

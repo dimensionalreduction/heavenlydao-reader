@@ -203,6 +203,8 @@ assert.strictEqual(RS.nextChapter(doc(a("javascript:void(0)", "下一章"), a("#
 assert.strictEqual(RS.nextChapter(doc(a("/txt/1/3", "下一頁")), "https://www.69shuba.com/txt/1/2"), null, "'next page' is not 'next chapter'");
 assert.strictEqual(RS.nextChapter({ querySelector: (sel) => (sel === 'a[rel="next"]' ? a("/txt/1/3", "") : null), querySelectorAll: () => [] }, "https://www.69shuba.com/txt/1/2"), "https://www.69shuba.com/txt/1/3", "a rel=next link is used");
 assert.strictEqual(RS.nextChapter(doc(), "https://www.69shuba.com/txt/1/2"), null, "the last chapter has none");
+assert.strictEqual(RS.nextChapter(doc(a("/", "下一章")), "https://www.69shuba.com/txt/1/2"), null, "a 'next chapter' that leads to the site's home page (the last chapter's, on mh160mh.com) is none");
+assert.strictEqual(RS.nextChapter(doc(a("/?chapter=3", "下一章")), "https://www.69shuba.com/?chapter=2"), "https://www.69shuba.com/?chapter=3", "(a chapter named in the home page's query is still one)");
 
 // ---- the previous chapter, the same way ----
 assert.strictEqual(RS.prevChapter(doc(a("/txt/77582/38804611", "上一章"), a("/txt/77582/38804613", "下一章")), "https://www.69shuba.com/txt/77582/38804612"), "https://www.69shuba.com/txt/77582/38804611", "69shuba: the 'previous chapter' link");
