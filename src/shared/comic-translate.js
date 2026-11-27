@@ -683,29 +683,58 @@ For each give "x0", "y0", "x1", "y1": a tight box round the text itself: left, t
   // big as the region (the bubble's outline and the art do one or the other), so a box drawn too tight still gets its whole letters.
   // text (optional): { own, others }, boxes in the region: own, the item's lines (its letters are the groups whose middle is in one); others, the text of the other
   // items round it (a group whose middle is in one and in none of own is theirs, never taken: an item whose box ran over a bubble beside it erased that bubble's English)
+  // The paper is the commonest colour in the box, unless that is the letters' own: big bold letters on a gradient or over art (a title on a shaded label, black letters in a
+  // see-through bubble) fill more of a tight box than any one shade of what is behind them. Then the "letters" found were the holes in them (the insides of ㅇ, ㅁ, ㅎ),
+  // filled with the letters' colour: the old text stayed, in blobs, under the English. The paper is the colour round the letters: most of it is one patch round them
+  // (a bubble's inside, or the page round a caption), where the letters' colour is many small ones, a stroke each. So when most of the commonest colour in the box is in
+  // small patches, the next colours are tried, and the one most in big patches is the paper.
   function letters(data, w, h, box, text = {}) {
-    const own = text.own || [], others = text.others || [];
     const bx0 = Math.max(0, box.x0), by0 = Math.max(0, box.y0), bx1 = Math.min(w, box.x1), by1 = Math.min(h, box.y1);
-    const counts = new Map();
-    let best = -1, n = 0;
+    const bins = new Map();
+    let best = null;
     for (let y = by0; y < by1; y++) for (let x = bx0; x < bx1; x++) {
       const i = (y * w + x) * 4, k = ((data[i] >> 4) << 8) | ((data[i + 1] >> 4) << 4) | (data[i + 2] >> 4);
-      const c = (counts.get(k) || 0) + 1;
-      counts.set(k, c);
-      if (c > n) { n = c; best = k; }
+      let e = bins.get(k);
+      if (!e) bins.set(k, (e = { n: 0, sum: [0, 0, 0] }));
+      e.n++; e.sum[0] += data[i]; e.sum[1] += data[i + 1]; e.sum[2] += data[i + 2];
+      if (!best || e.n > best.n) best = e;
     }
-    if (best < 0) return { plain: false };
-    // the paper: the mean of the commonest bin
-    const sum = [0, 0, 0];
-    let m = 0;
-    for (let y = by0; y < by1; y++) for (let x = bx0; x < bx1; x++) {
-      const i = (y * w + x) * 4;
-      if ((((data[i] >> 4) << 8) | ((data[i + 1] >> 4) << 4) | (data[i + 2] >> 4)) !== best) continue;
-      sum[0] += data[i]; sum[1] += data[i + 1]; sum[2] += data[i + 2]; m++;
+    if (!best) return { plain: false };
+    // (each colour: the mean of its bin)
+    const colourOf = (e) => e.sum.map((v) => Math.round(v / e.n));
+    const first = lettersOn(data, w, h, box, text, colourOf(best));
+    if (first.round >= 0.5) return first.found;
+    const others = [];
+    for (const e of [...bins.values()].sort((a, b) => b.n - a.n)) {
+      const c = colourOf(e);
+      if ([colourOf(best), ...others].every((o) => Math.max(Math.abs(o[0] - c[0]), Math.abs(o[1] - c[1]), Math.abs(o[2] - c[2])) > INK)) others.push(c);
+      if (others.length >= 2) break;
     }
-    const paper = sum.map((v) => Math.round(v / m));
+    let pick = first;
+    for (const c of others) {
+      const got = lettersOn(data, w, h, box, text, c);
+      if (got.found.mask && got.round >= 0.5 && (pick === first || got.round > pick.round)) pick = got;
+    }
+    return pick.found;
+  }
+
+  // letters with the paper given -> { found: what letters gives, round: how much of the paper in the box is in a big patch (one that reaches the region's edge, or is half
+  // the box or more) }. With the item's lines given, a group of ink is not followed further than half a line's height from them: letters touching art a shade off the paper
+  // (a cloud on a label under a title) were one group with it, reaching the region's edge, and were never taken
+  function lettersOn(data, w, h, box, text, paper) {
+    const own = text.own || [], others = text.others || [];
+    const bx0 = Math.max(0, box.x0), by0 = Math.max(0, box.y0), bx1 = Math.min(w, box.x1), by1 = Math.min(h, box.y1);
     const N = w * h, ink = new Uint8Array(N), group = new Int32Array(N).fill(-1), keep = [], groups = [];
     for (let p = 0; p < N; p++) ink[p] = near(data, p * 4, paper, INK) ? 0 : 1;
+    let zone = null;
+    if (own.length) {
+      zone = new Uint8Array(N);
+      for (const l of own) {
+        const g = Math.max(4, Math.round(Math.min(l.x1 - l.x0, l.y1 - l.y0) * 0.5));
+        const zx0 = Math.max(0, Math.floor(l.x0 - g)), zx1 = Math.min(w, Math.ceil(l.x1 + g));
+        if (zx1 > zx0) for (let y = Math.max(0, Math.floor(l.y0 - g)); y < Math.min(h, Math.ceil(l.y1 + g)); y++) zone.fill(1, y * w + zx0, y * w + zx1);
+      }
+    }
     const stack = [];
     // the box's middle half: a bubble's letters are there, and its corners (outside the oval) are not the bubble
     const mx0 = bx0 + (bx1 - bx0) / 4, mx1 = bx1 - (bx1 - bx0) / 4, my0 = by0 + (by1 - by0) / 4, my1 = by1 - (by1 - by0) / 4;
@@ -720,8 +749,24 @@ For each give "x0", "y0", "x1", "y1": a tight box round the text itself: left, t
       }
       n++;
     }
+    // how much of the paper in the box is in a big patch
+    const seaSize = new Map(), seaOut = new Set();
+    for (let p = 0; p < N; p++) {
+      if (sea[p] < 0) continue;
+      seaSize.set(sea[p], (seaSize.get(sea[p]) || 0) + 1);
+      const x = p % w, y = (p - x) / w;
+      if (x === 0 || y === 0 || x === w - 1 || y === h - 1) seaOut.add(sea[p]);
+    }
+    let inBoxPaper = 0, inBig = 0;
+    for (let y = by0; y < by1; y++) for (let x = bx0; x < bx1; x++) {
+      const s = sea[y * w + x];
+      if (s < 0) continue;
+      inBoxPaper++;
+      if (seaOut.has(s) || seaSize.get(s) >= (bx1 - bx0) * (by1 - by0) * 0.5) inBig++;
+    }
+    const round = inBoxPaper ? inBig / inBoxPaper : 0;
     for (let p0 = 0; p0 < N; p0++) {
-      if (!ink[p0] || group[p0] >= 0) continue;
+      if (!ink[p0] || group[p0] >= 0 || (zone && !zone[p0])) continue;
       const g = keep.length;
       let minx = w, maxx = 0, miny = h, maxy = 0, edge = false, inBox = false, inMiddle = false;
       const around = new Map(); // the paper patches it touches, and how much
@@ -736,7 +781,7 @@ For each give "x0", "y0", "x1", "y1": a tight box round the text itself: left, t
           const nx = x + dx, ny = y + dy;
           if ((dx || dy) && nx >= 0 && ny >= 0 && nx < w && ny < h) {
             const q = ny * w + nx;
-            if (ink[q] && group[q] < 0) { group[q] = g; stack.push(q); } else if (!ink[q]) around.set(sea[q], (around.get(sea[q]) || 0) + 1);
+            if (ink[q] && group[q] < 0 && (!zone || zone[q])) { group[q] = g; stack.push(q); } else if (!ink[q]) around.set(sea[q], (around.get(sea[q]) || 0) + 1);
           }
         }
       }
@@ -774,7 +819,7 @@ For each give "x0", "y0", "x1", "y1": a tight box round the text itself: left, t
       const x = p % w, y = (p - x) / w;
       if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
     }
-    if (!any) return { plain: false, paper };
+    if (!any) return { found: { plain: false, paper }, round };
     const mask = new Uint8Array(N);
     for (let p = 0; p < N; p++) if (core[p]) {
       const x = p % w, y = (p - x) / w;
@@ -824,7 +869,7 @@ For each give "x0", "y0", "x1", "y1": a tight box round the text itself: left, t
       for (let y = y0; y <= y1 && !has && x <= x1; y++) if (core[y * w + x]) has = true;
       if (has) { if (gap >= 2) columns++; gap = 0; } else gap++;
     }
-    return { lines, columns, plain: other > 0 && flatN / other >= 0.95 && lettered < (bx1 - bx0) * (by1 - by0) * 0.55, paper, ink: inkColour, mask, area, open, bbox: { x0, y0, x1: x1 + 1, y1: y1 + 1 } };
+    return { found: { lines, columns, plain: other > 0 && flatN / other >= 0.95 && lettered < (bx1 - bx0) * (by1 - by0) * 0.55, paper, ink: inkColour, mask, area, open, bbox: { x0, y0, x1: x1 + 1, y1: y1 + 1 } }, round };
   }
 
   // About how big the old letters were (px), for the English to be sized by: text across the page is as tall as a line (the letters' height over their lines); text set down the page

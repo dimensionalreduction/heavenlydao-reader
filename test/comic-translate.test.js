@@ -320,6 +320,33 @@ const strip = (H, gutters, quiet) => {
   assert.deepStrictEqual([one.bbox.x0, one.bbox.x1], [20, 60]);
 }
 
+// ---- big bold letters on a gradient: the paper is what is round them, not their own colour (the commonest in a tight box) ----
+{
+  // a see-through bubble shaded 190 to 250 across, three bold black letters with a hole each (ㅁ), nearly all of the box: black is its commonest colour
+  const w = 120, h = 80, d = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const v = Math.round(190 + x / 2); d.set([v, v, v, 255], (y * w + x) * 4); }
+  const isStroke = (x, y) => y >= 32 && y < 48 && [24, 50, 76].some((l) => x >= l && x < l + 20 && !(x >= l + 6 && x < l + 14 && y >= 38 && y < 42));
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (isStroke(x, y)) d.set([0, 0, 0, 255], (y * w + x) * 4);
+  const got = CT.letters(d, w, h, { x0: 22, y0: 31, x1: 98, y1: 49 });
+  assert.ok(got.paper[0] > 150, "the paper is the shade round the letters, not their black: " + got.paper);
+  assert.ok(got.mask[33 * w + 25] && got.mask[45 * w + 60] && got.mask[35 * w + 95], "the letters' strokes are what is taken out (not only the holes in them)");
+  assert.deepStrictEqual(got.bbox, { x0: 24, y0: 32, x1: 96, y1: 48 });
+  assert.ok(!got.mask[10 * w + 60], "not the bubble round them");
+}
+
+// ---- letters touching art a shade off the paper that runs to the region's edge (a cloud on a label under a title): with the item's lines, still its letters ----
+{
+  const w = 160, h = 90, d = new Uint8ClampedArray(w * h * 4);
+  for (let p = 0; p < w * h; p++) d.set([110, 170, 220, 255], p * 4);
+  for (let y = 44; y < h; y++) for (let x = 20; x < 60; x++) d.set([225, 245, 255, 255], (y * w + x) * 4); // (the cloud, under the first word and down to the edge)
+  const rect = (x0, y0, x1, y1) => { for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) d.set([10, 40, 90, 255], (y * w + x) * 4); };
+  for (let x = 30; x < 130; x += 12) rect(x, 30, x + 8, 46);
+  const line = { x0: 28, y0: 28, x1: 132, y1: 48 };
+  const got = CT.letters(d, w, h, line, { own: [line], others: [] });
+  assert.ok(got.mask[38 * w + 33] && got.mask[38 * w + 123], "the first word, on the cloud, as well as the last");
+  assert.ok(!got.mask[85 * w + 40], "not the cloud far from the line");
+}
+
 // ---- where the text is, from a vision model: a chunk's request, its boxes on the strip (only those whose middle is in the chunk's core) ----
 {
   const glm = CT.findBody("data:image/jpeg;base64,AA", { model: "z-ai/glm-5.3-flash", from: "Korean" });
